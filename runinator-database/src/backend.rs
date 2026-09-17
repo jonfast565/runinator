@@ -22,13 +22,6 @@ const DELETE_RETRY_LIMIT: usize = 4;
 const DELETE_RETRY_BASE_DELAY: Duration = Duration::from_millis(10);
 
 /// sql generated exclusively from the database dialect and repository-owned templates.
-pub struct RenderedSql(String);
-
-impl SqlSafeStr for &RenderedSql {
-    fn into_sql_str(self) -> SqlStr {
-        AssertSqlSafe(self.0.as_str()).into_sql_str()
-    }
-}
 
 /// retry a delete when the database chose it as the victim of a transient lock conflict.
 ///
@@ -90,57 +83,8 @@ pub(super) fn is_transient_delete_database_error(code: Option<&str>, message: &s
 ///
 /// each driver exposes `rows_affected` as an inherent method on its own `QueryResult`; this trait
 /// lets generic code read it through `Database::QueryResult`.
-pub trait RowsAffected {
-    fn affected(&self) -> u64;
-}
-
-#[cfg(feature = "sqlite")]
-impl RowsAffected for SqliteQueryResult {
-    fn affected(&self) -> u64 {
-        self.rows_affected()
-    }
-}
-
-#[cfg(feature = "postgres")]
-impl RowsAffected for PgQueryResult {
-    fn affected(&self) -> u64 {
-        self.rows_affected()
-    }
-}
-
-#[cfg(feature = "mariadb")]
-impl RowsAffected for MySqlQueryResult {
-    fn affected(&self) -> u64 {
-        self.rows_affected()
-    }
-}
 
 /// the connection + dialect a generic database operation runs against.
-pub trait SqlBackend: Send + Sync + 'static {
-    /// the concrete sqlx database driver.
-    type Db: Database;
-
-    /// the pool generic operations execute against.
-    fn pool(&self) -> &Pool<Self::Db>;
-
-    /// Rebuild this backend around an already-connected pool. Pack imports use this to create an
-    /// isolated single-connection pool whose connection remains inside one outer transaction.
-    fn from_pool(pool: Pool<Self::Db>) -> Self;
-
-    /// the sql dialect used to render queries.
-    fn dialect(&self) -> SqlDialect;
-
-    /// render a `?`-placeholder template for this backend's dialect.
-    fn render(&self, sql: &str) -> RenderedSql {
-        RenderedSql(self.dialect().render(sql))
-    }
-
-    /// run embedded bootstrap work and any extra init scripts.
-    ///
-    /// sql bootstrap files are embedded per backend (the `sqlx::migrate!` macro is dir-specific),
-    /// so this stays backend-owned rather than living in the generic operations blanket impl.
-    fn init(&self, paths: &[String]) -> impl Future<Output = Result<(), SendableError>> + Send;
-}
 
 /// a backend wearing the `DatabaseImpl` contract.
 ///
@@ -151,38 +95,14 @@ pub trait SqlBackend: Send + Sync + 'static {
 ///
 /// each driver module aliases this (`pub type SqliteDb = SqlStore<SqliteBackend>`) and supplies its
 /// own `new`, so callers keep naming `SqliteDb`/`PostgresDb`/`MariaDb` exactly as before.
-pub struct SqlStore<B: SqlBackend> {
-    backend: B,
-}
+mod rendered_sql;
+pub use rendered_sql::RenderedSql;
 
-impl<B: SqlBackend> SqlStore<B> {
-    /// wrap an already-connected backend. driver modules expose a `new` that connects first; this
-    /// is the seam a test or a caller with its own pool uses.
-    pub fn from_backend(backend: B) -> Self {
-        Self { backend }
-    }
+mod rows_affected;
+pub use rows_affected::RowsAffected;
 
-    pub fn backend(&self) -> &B {
-        &self.backend
-    }
-}
+mod sql_backend;
+pub use sql_backend::SqlBackend;
 
-impl<B: SqlBackend> SqlBackend for SqlStore<B> {
-    type Db = B::Db;
-
-    fn pool(&self) -> &Pool<Self::Db> {
-        self.backend.pool()
-    }
-
-    fn from_pool(pool: Pool<Self::Db>) -> Self {
-        SqlStore::from_backend(B::from_pool(pool))
-    }
-
-    fn dialect(&self) -> SqlDialect {
-        self.backend.dialect()
-    }
-
-    fn init(&self, paths: &[String]) -> impl Future<Output = Result<(), SendableError>> + Send {
-        self.backend.init(paths)
-    }
-}
+mod sql_store;
+pub use sql_store::SqlStore;

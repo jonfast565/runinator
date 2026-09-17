@@ -82,33 +82,6 @@ pub async fn get_pipeline<
 const DEFAULT_REVISION_LIMIT: i64 = 50;
 const MAX_REVISION_LIMIT: i64 = 500;
 
-#[derive(Debug, Deserialize)]
-pub struct PipelineRevisionListQuery {
-    limit: Option<i64>,
-}
-
-#[derive(Debug, Deserialize)]
-pub struct PipelineEnableRequest {
-    pub enabled: bool,
-}
-impl runinator_models::validation::Validate for PipelineEnableRequest {
-    fn validate(&self) -> Result<(), runinator_models::validation::ValidationError> {
-        Ok(())
-    }
-}
-
-#[derive(Debug, Deserialize)]
-pub struct PipelineRexRapRequest {
-    pub source: String,
-}
-
-impl runinator_models::validation::Validate for PipelineRexRapRequest {
-    fn validate(&self) -> Result<(), runinator_models::validation::ValidationError> {
-        runinator_models::validation::required_text("source", &self.source, 2 * 1024 * 1024)?;
-        runinator_models::validation::bounded_text("source", &self.source, 2 * 1024 * 1024)
-    }
-}
-
 pub async fn get_pipeline_revisions<
     T: AuthorizationStore + DefinitionStore + RuntimeStore + ScheduleStore + WorkflowVmStore,
 >(
@@ -1033,3 +1006,12 @@ pub fn routes<
             post(retry_pipeline_member::<T>).layer(Extension(pool.clone())),
         )
 }
+
+mod pipeline_revision_list_query;
+pub use pipeline_revision_list_query::PipelineRevisionListQuery;
+
+mod pipeline_enable_request;
+pub use pipeline_enable_request::PipelineEnableRequest;
+
+mod pipeline_rex_rap_request;
+pub use pipeline_rex_rap_request::PipelineRexRapRequest;

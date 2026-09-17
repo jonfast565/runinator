@@ -1,0 +1,2927 @@
+#[allow(unused_imports)]
+use super::*;
+
+/// Asynchronous API client that wraps `reqwest::Client` and a service locator.
+#[derive(Clone)]
+pub struct AsyncApiClient<L> {
+    pub(super) client: Client,
+    pub(super) circuit: ApiCircuit,
+    pub(super) locator: L,
+}
+
+impl<L> AsyncApiClient<L>
+where
+    L: ServiceLocator,
+{
+    pub async fn publish_runtime_logs(&self, batch: &RuntimeLogBatch) -> Result<()> {
+        let url = self.build_url(API_DIAGNOSTIC_LOGS).await?;
+        let response = self.send(self.http_post(url.clone()).json(batch)).await?;
+        Self::handle_response(url, response).await?;
+        Ok(())
+    }
+
+    pub async fn fetch_runtime_logs(&self, query: &RuntimeLogQuery) -> Result<RuntimeLogPage> {
+        let mut url = self.build_url(API_DIAGNOSTIC_LOGS).await?;
+        if let Some(id) = query.workflow_run_id {
+            url.query_pairs_mut()
+                .append_pair("workflow_run_id", &id.to_string());
+        }
+        if let Some(id) = query.effect_id {
+            url.query_pairs_mut()
+                .append_pair("effect_id", &id.to_string());
+        }
+        if let Some(source) = &query.source {
+            url.query_pairs_mut().append_pair("source", source);
+        }
+        if let Some(level) = &query.level {
+            url.query_pairs_mut().append_pair("level", level);
+        }
+        if let Some(text) = &query.text {
+            url.query_pairs_mut().append_pair("text", text);
+        }
+        if let Some(from) = query.from {
+            url.query_pairs_mut()
+                .append_pair("from", &from.to_rfc3339());
+        }
+        if let Some(until) = query.until {
+            url.query_pairs_mut()
+                .append_pair("until", &until.to_rfc3339());
+        }
+        if let Some(cursor) = &query.cursor {
+            url.query_pairs_mut().append_pair("cursor", cursor);
+        }
+        if let Some(limit) = query.limit {
+            url.query_pairs_mut()
+                .append_pair("limit", &limit.to_string());
+        }
+        let response = self.send(self.http_get(url.clone())).await?;
+        Ok(Self::handle_response(url, response).await?.json().await?)
+    }
+    pub(super) async fn get_json_path<T: DeserializeOwned>(&self, path: &str) -> Result<T> {
+        let url = self.build_url(path).await?;
+        let response = self.send(self.http_get(url.clone())).await?;
+        let response = Self::handle_response(url, response).await?;
+        Ok(response.json().await?)
+    }
+
+    /// List console sessions visible to the authenticated principal.
+    pub async fn console_sessions(&self) -> Result<Vec<ConsoleSession>> {
+        let url = self.build_url("/console/sessions").await?;
+        let response = self.send(self.http_get(url.clone())).await?;
+        let response = Self::handle_response(url, response).await?;
+        Ok(response.json::<Vec<ConsoleSession>>().await?)
+    }
+
+    /// Create a durable console session.
+    pub async fn create_console_session(&self, name: &str) -> Result<ConsoleSession> {
+        let url = self.build_url("/console/sessions").await?;
+        let response = self
+            .send(self.http_post(url.clone()).json(&json!({ "name": name })))
+            .await?;
+        let response = Self::handle_response(url, response).await?;
+        Ok(response.json::<ConsoleSession>().await?)
+    }
+
+    /// Fetch a session with its cells and bindings.
+    pub async fn console_session(&self, session_id: Uuid) -> Result<ConsoleSessionDetail> {
+        let url = self
+            .build_url(&format!("/console/sessions/{session_id}"))
+            .await?;
+        let response = self.send(self.http_get(url.clone())).await?;
+        let response = Self::handle_response(url, response).await?;
+        Ok(response.json::<ConsoleSessionDetail>().await?)
+    }
+
+    /// Append a cell to a durable session.
+    pub async fn create_console_cell(
+        &self,
+        session_id: Uuid,
+        cell: &NewConsoleCell,
+    ) -> Result<ConsoleCell> {
+        let url = self
+            .build_url(&format!("/console/sessions/{session_id}/cells"))
+            .await?;
+        let response = self.send(self.http_post(url.clone()).json(cell)).await?;
+        let response = Self::handle_response(url, response).await?;
+        Ok(response.json::<ConsoleCell>().await?)
+    }
+
+    /// Run a persisted console cell.
+    pub async fn run_console_cell(&self, cell_id: Uuid) -> Result<ConsoleCell> {
+        let url = self
+            .build_url(&format!("/console/cells/{cell_id}/run"))
+            .await?;
+        let response = self.send(self.http_post(url.clone())).await?;
+        let response = Self::handle_response(url, response).await?;
+        Ok(response.json::<ConsoleCell>().await?)
+    }
+
+    /// Read and, when terminal, settle a console cell.
+    pub async fn console_cell(&self, cell_id: Uuid) -> Result<ConsoleCell> {
+        let url = self.build_url(&format!("/console/cells/{cell_id}")).await?;
+        let response = self.send(self.http_get(url.clone())).await?;
+        let response = Self::handle_response(url, response).await?;
+        Ok(response.json::<ConsoleCell>().await?)
+    }
+
+    /// Cancel the durable workflow behind a running console cell.
+    pub async fn cancel_console_cell(&self, cell_id: Uuid) -> Result<TaskResponse> {
+        let url = self
+            .build_url(&format!("/console/cells/{cell_id}/cancel"))
+            .await?;
+        let response = self.send(self.http_post(url.clone())).await?;
+        let response = Self::handle_response(url, response).await?;
+        Ok(response.json::<TaskResponse>().await?)
+    }
+
+    pub async fn replay_console_cell(&self, cell_id: Uuid) -> Result<ConsoleCell> {
+        let url = self
+            .build_url(&format!("/console/cells/{cell_id}/replay"))
+            .await?;
+        let response = self.send(self.http_post(url.clone())).await?;
+        let response = Self::handle_response(url, response).await?;
+        Ok(response.json::<ConsoleCell>().await?)
+    }
+
+    /// Invoke a packaged function through its generated workflow adapter.
+    pub async fn invoke_function(
+        &self,
+        package: &str,
+        export: &str,
+        alias: Option<&str>,
+        version: Option<i64>,
+        input: &Value,
+    ) -> Result<Value> {
+        let mut path = format!("/functions/{package}/{export}/invocations");
+        if let Some(alias) = alias {
+            path.push_str(&format!("?alias={alias}"));
+        } else if let Some(version) = version {
+            path.push_str(&format!("?version={version}"));
+        }
+        let url = self.build_url(&path).await?;
+        let response = self.send(self.http_post(url.clone()).json(input)).await?;
+        let response = Self::handle_response(url, response).await?;
+        Ok(response.json::<Value>().await?)
+    }
+
+    pub async fn fetch_pipelines(&self) -> Result<Vec<Pipeline>> {
+        let url = self.build_url("/pipelines").await?;
+        let response = self.send(self.http_get(url.clone())).await?;
+        let response = Self::handle_response(url, response).await?;
+        Ok(response.json::<Vec<Pipeline>>().await?)
+    }
+
+    pub async fn create_pipeline_run(
+        &self,
+        pipeline_id: Uuid,
+        parameters: Value,
+    ) -> Result<PipelineRun> {
+        self.create_pipeline_run_at_revision(pipeline_id, parameters, None)
+            .await
+    }
+
+    pub async fn create_pipeline_run_at_revision(
+        &self,
+        pipeline_id: Uuid,
+        parameters: Value,
+        revision: Option<i64>,
+    ) -> Result<PipelineRun> {
+        self.create_pipeline_run_with_context(pipeline_id, parameters, revision, None)
+            .await
+    }
+
+    pub async fn create_pipeline_run_with_context(
+        &self,
+        pipeline_id: Uuid,
+        parameters: Value,
+        revision: Option<i64>,
+        start_member: Option<&str>,
+    ) -> Result<PipelineRun> {
+        let url = self
+            .build_url(&format!("/pipelines/{pipeline_id}/runs"))
+            .await?;
+        let response = self
+            .send(self.http_post(url.clone()).json(&json!({
+                "parameters": parameters,
+                "revision": revision,
+                "start_member": start_member,
+            })))
+            .await?;
+        let response = Self::handle_response(url, response).await?;
+        Ok(response.json::<PipelineRun>().await?)
+    }
+
+    /// Submit a generic pipeline ingress event. Managed pipelines turn the accepted event into a
+    /// durable orchestration binding; ordinary pipelines start their normal ingress run.
+    pub async fn ingress_pipeline(
+        &self,
+        pipeline_id: Uuid,
+        request: &PipelineIngressRequest,
+    ) -> Result<IngressResponse> {
+        let url = self
+            .build_url(&format!("/pipelines/{pipeline_id}/ingress"))
+            .await?;
+        let response = self.send(self.http_post(url.clone()).json(request)).await?;
+        let response = Self::handle_response(url, response).await?;
+        Ok(response.json::<IngressResponse>().await?)
+    }
+
+    pub async fn fetch_orchestrations(
+        &self,
+        status: Option<&str>,
+        pipeline_id: Option<Uuid>,
+        scope: Option<&str>,
+        correlation_key: Option<&str>,
+    ) -> Result<Vec<OrchestrationBinding>> {
+        self.fetch_orchestrations_filtered(OrchestrationListQuery {
+            status,
+            pipeline_id,
+            adapter_id: None,
+            scope,
+            correlation_key,
+            ..Default::default()
+        })
+        .await
+    }
+
+    pub async fn fetch_orchestrations_filtered(
+        &self,
+        filter: OrchestrationListQuery<'_>,
+    ) -> Result<Vec<OrchestrationBinding>> {
+        let mut url = self.build_url("/orchestrations").await?;
+        {
+            let mut query = url.query_pairs_mut();
+            if let Some(status) = filter.status {
+                query.append_pair("status", status);
+            }
+            if let Some(pipeline_id) = filter.pipeline_id {
+                query.append_pair("pipeline_id", &pipeline_id.to_string());
+            }
+            if let Some(adapter_id) = filter.adapter_id {
+                query.append_pair("adapter_id", &adapter_id.to_string());
+            }
+            if let Some(scope) = filter.scope {
+                query.append_pair("scope", scope);
+            }
+            if let Some(key) = filter.correlation_key {
+                query.append_pair("correlation_key", key);
+            }
+            if let Some(limit) = filter.limit {
+                query.append_pair("limit", &limit.to_string());
+            }
+            if let Some(scope_prefix) = filter.scope_prefix {
+                query.append_pair("scope_prefix", scope_prefix);
+            }
+        }
+        let response = self.send(self.http_get(url.clone())).await?;
+        let response = Self::handle_response(url, response).await?;
+        Ok(response.json().await?)
+    }
+
+    pub async fn fetch_orchestration(&self, id: Uuid) -> Result<OrchestrationBinding> {
+        self.get_json_path(&format!("/orchestrations/{id}")).await
+    }
+
+    pub async fn fetch_orchestration_epochs(&self, id: Uuid) -> Result<Vec<OrchestrationEpoch>> {
+        self.get_json_path(&format!("/orchestrations/{id}/epochs"))
+            .await
+    }
+
+    pub async fn fetch_orchestration_events(
+        &self,
+        id: Uuid,
+    ) -> Result<Vec<OrchestrationEventReduction>> {
+        self.get_json_path(&format!("/orchestrations/{id}/events"))
+            .await
+    }
+
+    pub async fn fetch_orchestration_evidence(
+        &self,
+        id: Uuid,
+    ) -> Result<Vec<OrchestrationEvidence>> {
+        self.get_json_path(&format!("/orchestrations/{id}/evidence"))
+            .await
+    }
+
+    pub async fn fetch_orchestration_commands(
+        &self,
+        id: Uuid,
+    ) -> Result<Vec<OrchestrationCommand>> {
+        self.get_json_path(&format!("/orchestrations/{id}/commands"))
+            .await
+    }
+
+    pub async fn fetch_orchestration_workspaces(&self, id: Uuid) -> Result<Vec<WorkspaceLease>> {
+        self.get_json_path(&format!("/orchestrations/{id}/workspaces"))
+            .await
+    }
+
+    pub async fn fetch_orchestration_aliases(
+        &self,
+        id: Uuid,
+    ) -> Result<Vec<OrchestrationCorrelationAlias>> {
+        self.get_json_path(&format!("/orchestrations/{id}/aliases"))
+            .await
+    }
+
+    pub async fn add_orchestration_alias(
+        &self,
+        id: Uuid,
+        source: &str,
+        scope: &str,
+        correlation_key: &str,
+    ) -> Result<OrchestrationCorrelationAlias> {
+        let url = self
+            .build_url(&format!("/orchestrations/{id}/aliases"))
+            .await?;
+        let response = self
+            .send(self.http_post(url.clone()).json(&json!({
+                "source": source,
+                "scope": scope,
+                "correlation_key": correlation_key,
+            })))
+            .await?;
+        let response = Self::handle_response(url, response).await?;
+        Ok(response.json().await?)
+    }
+
+    pub async fn delete_orchestration_alias(
+        &self,
+        id: Uuid,
+        alias_id: Uuid,
+    ) -> Result<TaskResponse> {
+        let url = self
+            .build_url(&format!("/orchestrations/{id}/aliases/{alias_id}"))
+            .await?;
+        let response = self.send(self.http_delete(url.clone())).await?;
+        let response = Self::handle_response(url, response).await?;
+        Ok(response.json().await?)
+    }
+
+    pub async fn send_orchestration_intent(
+        &self,
+        id: Uuid,
+        intent: &str,
+        payload: Value,
+        reason: &str,
+        idempotency_key: &str,
+    ) -> Result<Value> {
+        let url = self
+            .build_url(&format!("/orchestrations/{id}/intents"))
+            .await?;
+        let response = self
+            .send(self.http_post(url.clone()).json(&json!({
+                "intent": intent,
+                "payload": payload,
+                "reason": reason,
+                "idempotency_key": idempotency_key,
+            })))
+            .await?;
+        let response = Self::handle_response(url, response).await?;
+        Ok(response.json().await?)
+    }
+
+    pub async fn steer_mission(&self, id: Uuid, message: &str) -> Result<TaskResponse> {
+        let url = self
+            .build_url(&format!("/orchestrations/{id}/steer"))
+            .await?;
+        let response = self
+            .send(self.http_post(url.clone()).json(&json!({
+                "type": "input",
+                "data": message,
+            })))
+            .await?;
+        let response = Self::handle_response(url, response).await?;
+        Ok(response.json().await?)
+    }
+
+    pub async fn requeue_orchestration(
+        &self,
+        id: Uuid,
+        reason: &str,
+        idempotency_key: &str,
+    ) -> Result<OrchestrationBinding> {
+        let url = self
+            .build_url(&format!("/orchestrations/{id}/requeue"))
+            .await?;
+        let response = self
+            .send(
+                self.http_post(url.clone())
+                    .json(&json!({ "reason": reason, "idempotency_key": idempotency_key })),
+            )
+            .await?;
+        let response = Self::handle_response(url, response).await?;
+        Ok(response.json().await?)
+    }
+
+    pub async fn fetch_orchestration_adapter_kinds(&self) -> Result<Vec<AdapterKindCatalogEntry>> {
+        self.get_json_path("/orchestrations/adapters/kinds").await
+    }
+
+    pub async fn fetch_orchestration_adapters(&self) -> Result<Vec<AdapterDefinition>> {
+        self.get_json_path("/orchestrations/adapters").await
+    }
+
+    pub async fn fetch_orchestration_adapter(&self, id: Uuid) -> Result<AdapterDefinition> {
+        self.get_json_path(&format!("/orchestrations/adapters/{id}"))
+            .await
+    }
+
+    pub async fn fetch_orchestration_adapter_revisions(
+        &self,
+        id: Uuid,
+    ) -> Result<Vec<AdapterRevision>> {
+        self.get_json_path(&format!("/orchestrations/adapters/{id}/revisions"))
+            .await
+    }
+
+    pub async fn fetch_orchestration_adapter_poll_status(
+        &self,
+        id: Uuid,
+    ) -> Result<runinator_models::orchestration::AdapterPollStatus> {
+        self.get_json_path(&format!("/orchestrations/adapters/{id}/poll-status"))
+            .await
+    }
+
+    pub async fn apply_orchestration_adapter(
+        &self,
+        id: Option<Uuid>,
+        definition: &Value,
+    ) -> Result<AdapterDefinition> {
+        let path = id
+            .map(|id| format!("/orchestrations/adapters/{id}"))
+            .unwrap_or_else(|| "/orchestrations/adapters".into());
+        let url = self.build_url(&path).await?;
+        let response = self
+            .send(self.http_post(url.clone()).json(definition))
+            .await?;
+        let response = Self::handle_response(url, response).await?;
+        Ok(response.json().await?)
+    }
+
+    pub async fn test_orchestration_adapter(&self, id: Uuid, sample: &Value) -> Result<Value> {
+        let url = self
+            .build_url(&format!("/orchestrations/adapters/{id}/test"))
+            .await?;
+        let response = self.send(self.http_post(url.clone()).json(sample)).await?;
+        let response = Self::handle_response(url, response).await?;
+        Ok(response.json().await?)
+    }
+
+    pub async fn delete_orchestration_adapter(&self, id: Uuid) -> Result<TaskResponse> {
+        let url = self
+            .build_url(&format!("/orchestrations/adapters/{id}"))
+            .await?;
+        let response = self.send(self.http_delete(url.clone())).await?;
+        let response = Self::handle_response(url, response).await?;
+        Ok(response.json().await?)
+    }
+
+    pub async fn set_orchestration_adapter_enabled(
+        &self,
+        id: Uuid,
+        enabled: bool,
+    ) -> Result<AdapterDefinition> {
+        let url = self
+            .build_url(&format!("/orchestrations/adapters/{id}/enabled"))
+            .await?;
+        let response = self
+            .send(
+                self.http_post(url.clone())
+                    .json(&json!({ "enabled": enabled })),
+            )
+            .await?;
+        let response = Self::handle_response(url, response).await?;
+        Ok(response.json().await?)
+    }
+
+    pub async fn reload_orchestration_adapters(&self) -> Result<Value> {
+        let url = self.build_url("/orchestrations/adapters/reload").await?;
+        let response = self
+            .send(self.http_post(url.clone()).json(&json!({})))
+            .await?;
+        let response = Self::handle_response(url, response).await?;
+        Ok(response.json().await?)
+    }
+
+    pub async fn fetch_pipeline_run(&self, run_id: Uuid) -> Result<PipelineRunDetail> {
+        let url = self.build_url(&format!("/pipeline_runs/{run_id}")).await?;
+        let response = self.send(self.http_get(url.clone())).await?;
+        let response = Self::handle_response(url, response).await?;
+        Ok(response.json::<PipelineRunDetail>().await?)
+    }
+
+    pub async fn delete_pipeline_run(&self, run_id: Uuid) -> Result<TaskResponse> {
+        let url = self.build_url(&format!("/pipeline_runs/{run_id}")).await?;
+        let response = self.send(self.http_delete(url.clone())).await?;
+        let response = Self::handle_response(url, response).await?;
+        Ok(response.json::<TaskResponse>().await?)
+    }
+
+    pub async fn fetch_pipeline(&self, pipeline_id: Uuid) -> Result<Pipeline> {
+        let url = self.build_url(&format!("/pipelines/{pipeline_id}")).await?;
+        let response = self.send(self.http_get(url.clone())).await?;
+        let response = Self::handle_response(url, response).await?;
+        Ok(response.json::<Pipeline>().await?)
+    }
+
+    pub async fn upsert_pipeline(&self, pipeline: &Pipeline) -> Result<Pipeline> {
+        let url = match pipeline.id {
+            Some(id) => self.build_url(&format!("/pipelines/{id}")).await?,
+            None => self.build_url("/pipelines").await?,
+        };
+        let response = match pipeline.id {
+            Some(_) => {
+                self.send(self.http_patch(url.clone()).json(pipeline))
+                    .await?
+            }
+            None => {
+                self.send(self.http_post(url.clone()).json(pipeline))
+                    .await?
+            }
+        };
+        let response = Self::handle_response(url, response).await?;
+        Ok(response.json::<Pipeline>().await?)
+    }
+
+    pub async fn set_pipeline_enabled(&self, pipeline_id: Uuid, enabled: bool) -> Result<Pipeline> {
+        let url = self
+            .build_url(&format!("/pipelines/{pipeline_id}/enabled"))
+            .await?;
+        let response = self
+            .send(
+                self.http_post(url.clone())
+                    .json(&json!({ "enabled": enabled })),
+            )
+            .await?;
+        let response = Self::handle_response(url, response).await?;
+        Ok(response.json::<Pipeline>().await?)
+    }
+
+    pub async fn fetch_pipeline_revisions(
+        &self,
+        pipeline_id: Uuid,
+        limit: Option<i64>,
+    ) -> Result<Vec<PipelineRevision>> {
+        let mut url = self
+            .build_url(&format!("/pipelines/{pipeline_id}/revisions"))
+            .await?;
+        if let Some(limit) = limit {
+            url.query_pairs_mut()
+                .append_pair("limit", &limit.to_string());
+        }
+        let response = self.send(self.http_get(url.clone())).await?;
+        let response = Self::handle_response(url, response).await?;
+        Ok(response.json::<Vec<PipelineRevision>>().await?)
+    }
+
+    pub async fn fetch_pipeline_revision(
+        &self,
+        pipeline_id: Uuid,
+        revision: i64,
+    ) -> Result<PipelineRevision> {
+        let url = self
+            .build_url(&format!("/pipelines/{pipeline_id}/revisions/{revision}"))
+            .await?;
+        let response = self.send(self.http_get(url.clone())).await?;
+        let response = Self::handle_response(url, response).await?;
+        Ok(response.json::<PipelineRevision>().await?)
+    }
+
+    pub async fn delete_pipeline(&self, pipeline_id: Uuid) -> Result<()> {
+        let url = self.build_url(&format!("/pipelines/{pipeline_id}")).await?;
+        let response = self.send(self.http_delete(url.clone())).await?;
+        Self::handle_response(url, response).await?;
+        Ok(())
+    }
+
+    pub async fn fetch_pipeline_runs(&self, pipeline_id: Option<Uuid>) -> Result<Vec<PipelineRun>> {
+        let path = match pipeline_id {
+            Some(pipeline_id) => format!("/pipeline_runs?pipeline_id={pipeline_id}"),
+            None => "/pipeline_runs".to_string(),
+        };
+        let url = self.build_url(&path).await?;
+        let response = self.send(self.http_get(url.clone())).await?;
+        let response = Self::handle_response(url, response).await?;
+        Ok(response.json::<Vec<PipelineRun>>().await?)
+    }
+
+    pub async fn cancel_pipeline_run(&self, run_id: Uuid) -> Result<TaskResponse> {
+        let url = self
+            .build_url(&format!("/pipeline_runs/{run_id}/cancel"))
+            .await?;
+        let response = self.send(self.http_post(url.clone())).await?;
+        let response = Self::handle_response(url, response).await?;
+        Ok(response.json::<TaskResponse>().await?)
+    }
+
+    pub async fn pause_pipeline_run(&self, run_id: Uuid) -> Result<TaskResponse> {
+        let url = self
+            .build_url(&format!("/pipeline_runs/{run_id}/pause"))
+            .await?;
+        let response =
+            Self::handle_response(url.clone(), self.send(self.http_post(url)).await?).await?;
+        Ok(response.json::<TaskResponse>().await?)
+    }
+
+    pub async fn resume_pipeline_run(&self, run_id: Uuid) -> Result<TaskResponse> {
+        let url = self
+            .build_url(&format!("/pipeline_runs/{run_id}/resume"))
+            .await?;
+        let response =
+            Self::handle_response(url.clone(), self.send(self.http_post(url)).await?).await?;
+        Ok(response.json::<TaskResponse>().await?)
+    }
+
+    /// resolve an open `inquire` pause on a pipeline run: continue the pipeline or abort it.
+    pub async fn resolve_pipeline_run(
+        &self,
+        run_id: Uuid,
+        decision: &str,
+        resolved_by: Option<&str>,
+        message: Option<&str>,
+    ) -> Result<PipelineRun> {
+        let url = self
+            .build_url(&format!("/pipeline_runs/{run_id}/resolve"))
+            .await?;
+        let response = self
+            .send(self.http_post(url.clone()).json(&json!({
+                "decision": decision,
+                "resolved_by": resolved_by,
+                "message": message,
+            })))
+            .await?;
+        let response = Self::handle_response(url, response).await?;
+        Ok(response.json::<PipelineRun>().await?)
+    }
+
+    pub async fn retry_pipeline_member(
+        &self,
+        run_id: Uuid,
+        member_key: &str,
+        parameters: Value,
+    ) -> Result<runinator_models::pipelines::PipelineMemberAttempt> {
+        let mut url = self
+            .build_url(&format!("/pipeline_runs/{run_id}/members"))
+            .await?;
+        url.path_segments_mut()
+            .map_err(|_| {
+                ApiError::UnexpectedResponse("pipeline retry URL cannot be a base URL".into())
+            })?
+            .push(member_key)
+            .push("retry");
+        let response = self
+            .send(
+                self.http_post(url.clone())
+                    .json(&json!({ "parameters": parameters })),
+            )
+            .await?;
+        let response = Self::handle_response(url, response).await?;
+        Ok(response.json().await?)
+    }
+
+    /// redeem a self-authenticating agent enrollment request. the endpoint is public; this client's
+    /// configured API credential, if any, is irrelevant to the proof inside `request`.
+    pub async fn enroll_agent(&self, request: &EnrollAgentRequest) -> Result<EnrollAgentResponse> {
+        let url = self.build_url("/agents/enroll").await?;
+        let response = self.send(self.http_post(url.clone()).json(request)).await?;
+        let response = Self::handle_response(url, response).await?;
+        Ok(response.json::<EnrollAgentResponse>().await?)
+    }
+
+    pub async fn create_agent_enrollment_token(
+        &self,
+        request: &CreateAgentEnrollmentTokenRequest,
+    ) -> Result<CreateAgentEnrollmentTokenResponse> {
+        let url = self.build_url("/agents/enrollment_tokens").await?;
+        let response = self.send(self.http_post(url.clone()).json(request)).await?;
+        let response = Self::handle_response(url, response).await?;
+        Ok(response
+            .json::<CreateAgentEnrollmentTokenResponse>()
+            .await?)
+    }
+
+    pub async fn list_agent_enrollment_tokens(&self) -> Result<Vec<AgentEnrollmentToken>> {
+        let url = self.build_url("/agents/enrollment_tokens").await?;
+        let response = self.send(self.http_get(url.clone())).await?;
+        let response = Self::handle_response(url, response).await?;
+        Ok(response.json::<Vec<AgentEnrollmentToken>>().await?)
+    }
+
+    pub async fn delete_agent_enrollment_token(&self, token_id: &str) -> Result<TaskResponse> {
+        let url = self
+            .build_url(&format!("/agents/enrollment_tokens/{token_id}"))
+            .await?;
+        let response = self.send(self.http_delete(url.clone())).await?;
+        let response = Self::handle_response(url, response).await?;
+        Ok(response.json::<TaskResponse>().await?)
+    }
+
+    pub async fn list_agent_machines(&self) -> Result<Vec<AgentMachineEnrollment>> {
+        let url = self.build_url("/agents/machines").await?;
+        let response = self.send(self.http_get(url.clone())).await?;
+        let response = Self::handle_response(url, response).await?;
+        Ok(response.json::<Vec<AgentMachineEnrollment>>().await?)
+    }
+
+    pub async fn invalidate_agent_machine(&self, machine_id: Uuid) -> Result<TaskResponse> {
+        let url = self
+            .build_url(&format!("/agents/machines/{machine_id}"))
+            .await?;
+        let response = self.send(self.http_delete(url.clone())).await?;
+        let response = Self::handle_response(url, response).await?;
+        Ok(response.json::<TaskResponse>().await?)
+    }
+
+    pub async fn kick_replica(&self, replica_id: Uuid) -> Result<ReplicaRecord> {
+        let url = self
+            .build_url(&format!("/replicas/{replica_id}/kick"))
+            .await?;
+        let response = self.send(self.http_post(url.clone())).await?;
+        let response = Self::handle_response(url, response).await?;
+        Ok(response.json::<ReplicaRecord>().await?)
+    }
+
+    pub async fn create_agent_directive(
+        &self,
+        replica_id: Uuid,
+        kind: &AgentDirectiveKind,
+        expires_in_seconds: Option<u64>,
+    ) -> Result<AgentDirectiveRecord> {
+        let url = self
+            .build_url(&format!("/replicas/{replica_id}/directives"))
+            .await?;
+        let response = self
+            .send(
+                self.http_post(url.clone())
+                    .json(&json!({ "kind": kind, "expires_in_seconds": expires_in_seconds })),
+            )
+            .await?;
+        let response = Self::handle_response(url, response).await?;
+        Ok(response.json::<AgentDirectiveRecord>().await?)
+    }
+
+    pub async fn list_agent_directives(
+        &self,
+        replica_id: Uuid,
+        limit: Option<i64>,
+    ) -> Result<Vec<AgentDirectiveRecord>> {
+        let mut url = self
+            .build_url(&format!("/replicas/{replica_id}/directives"))
+            .await?;
+        if let Some(limit) = limit {
+            url.query_pairs_mut()
+                .append_pair("limit", &limit.to_string());
+        }
+        let response = self.send(self.http_get(url.clone())).await?;
+        let response = Self::handle_response(url, response).await?;
+        Ok(response.json::<Vec<AgentDirectiveRecord>>().await?)
+    }
+
+    /// Construct a client with default request/connect timeouts applied.
+    pub fn new(locator: L) -> reqwest::Result<Self> {
+        let client = timed_client_builder().build()?;
+        Ok(Self {
+            client,
+            circuit: ApiCircuit::from_env(),
+            locator,
+        })
+    }
+
+    /// Construct a client that presents `token` as `Authorization: Bearer …` on every request. A
+    /// `None`/empty token yields an unauthenticated client (for stacks with auth disabled). Both
+    /// JWTs and API keys are accepted as bearer tokens by the web service.
+    pub fn with_credentials(locator: L, token: Option<String>) -> reqwest::Result<Self> {
+        let mut builder = timed_client_builder();
+        if let Some(token) = token.filter(|t| !t.is_empty()) {
+            if let Ok(value) = reqwest::header::HeaderValue::from_str(&format!("Bearer {token}")) {
+                let mut headers = reqwest::header::HeaderMap::new();
+                headers.insert(reqwest::header::AUTHORIZATION, value);
+                builder = builder.default_headers(headers);
+            }
+        }
+        Ok(Self {
+            client: builder.build()?,
+            circuit: ApiCircuit::from_env(),
+            locator,
+        })
+    }
+
+    /// Construct a client using a preconfigured HTTP client instance.
+    pub fn with_client(locator: L, client: Client) -> Self {
+        Self {
+            client,
+            circuit: ApiCircuit::from_env(),
+            locator,
+        }
+    }
+
+    /// Send one request through the shared client-side circuit. A circuit-open result is explicit
+    /// rather than a synthetic remote response: callers can distinguish a request never sent from
+    /// an actual web-service `503` and defer work for the advertised cooldown.
+    pub(super) async fn send(&self, builder: reqwest::RequestBuilder) -> Result<Response> {
+        let request = builder.build()?;
+        if !self.circuit.enabled {
+            return Ok(self.client.execute(request).await?);
+        }
+        let client = self.client.clone();
+        let service = service_fn(move |request| {
+            let client = client.clone();
+            async move { client.execute(request).await }
+        });
+        match self.circuit.layer.layer_fn(service).oneshot(request).await {
+            Ok(response) => Ok(response),
+            Err(CircuitBreakerError::OpenCircuit) => Err(ApiError::CircuitOpen {
+                target: "runinator_api".into(),
+                retry_after_seconds: self.circuit.cooldown.as_secs().max(1),
+            }),
+            Err(CircuitBreakerError::Inner(error)) => Err(ApiError::Request(error)),
+        }
+    }
+
+    // inject the active w3c trace context (e.g. `traceparent`) into an outbound request so the web
+    // service continues this trace. a no-op when otel is off (no headers added). all request helpers
+    // below route through this so every outbound call is traced uniformly.
+    pub(super) fn traced(&self, builder: reqwest::RequestBuilder) -> reqwest::RequestBuilder {
+        let mut headers = reqwest::header::HeaderMap::new();
+        runinator_observability::telemetry::inject_into_headers(&mut headers);
+        builder.headers(headers)
+    }
+
+    pub(super) fn http_get<U: reqwest::IntoUrl>(&self, url: U) -> reqwest::RequestBuilder {
+        self.traced(self.client.get(url))
+    }
+
+    pub(super) fn http_post<U: reqwest::IntoUrl>(&self, url: U) -> reqwest::RequestBuilder {
+        self.traced(self.client.post(url))
+    }
+
+    pub(super) fn http_patch<U: reqwest::IntoUrl>(&self, url: U) -> reqwest::RequestBuilder {
+        self.traced(self.client.patch(url))
+    }
+
+    pub(super) fn http_put<U: reqwest::IntoUrl>(&self, url: U) -> reqwest::RequestBuilder {
+        self.traced(self.client.put(url))
+    }
+
+    pub(super) fn http_delete<U: reqwest::IntoUrl>(&self, url: U) -> reqwest::RequestBuilder {
+        self.traced(self.client.delete(url))
+    }
+
+    /// Fetch provider/action metadata for task authoring.
+    pub async fn fetch_providers(&self) -> Result<Vec<ProviderMetadata>> {
+        let url = self.build_url(API_PROVIDERS).await?;
+        let response = self.send(self.http_get(url.clone())).await?;
+        let response = Self::handle_response(url, response).await?;
+        Ok(response.json::<Vec<ProviderMetadata>>().await?)
+    }
+
+    /// Register provider/action metadata with the web service.
+    pub async fn upsert_provider(&self, provider: &ProviderMetadata) -> Result<ProviderMetadata> {
+        let url = self.build_url(API_PROVIDERS).await?;
+        let response = self
+            .send(self.http_post(url.clone()).json(provider))
+            .await?;
+        let response = Self::handle_response(url, response).await?;
+        Ok(response.json::<ProviderMetadata>().await?)
+    }
+
+    pub async fn register_replica(
+        &self,
+        request: &ReplicaRegistrationRequest,
+    ) -> Result<ReplicaRecord> {
+        let url = self.build_url(&format!("{API_REPLICAS}/register")).await?;
+        let response = self.send(self.http_post(url.clone()).json(request)).await?;
+        let response = Self::handle_response(url, response).await?;
+        Ok(response.json::<ReplicaRecord>().await?)
+    }
+
+    pub async fn heartbeat_replica(
+        &self,
+        replica_id: Uuid,
+        request: &ReplicaHeartbeatRequest,
+    ) -> Result<ReplicaRecord> {
+        let url = self.build_url(&api_replica_heartbeat(replica_id)).await?;
+        let response = self.send(self.http_post(url.clone()).json(request)).await?;
+        let response = Self::handle_response(url, response).await?;
+        Ok(response.json::<ReplicaRecord>().await?)
+    }
+
+    pub async fn mark_replica_offline(
+        &self,
+        replica_id: Uuid,
+        request: &ReplicaOfflineRequest,
+    ) -> Result<ReplicaRecord> {
+        let url = self.build_url(&api_replica_offline(replica_id)).await?;
+        let response = self.send(self.http_post(url.clone()).json(request)).await?;
+        let response = Self::handle_response(url, response).await?;
+        Ok(response.json::<ReplicaRecord>().await?)
+    }
+
+    pub async fn register_replica_provider(
+        &self,
+        replica_id: Uuid,
+        request: &ReplicaProviderRegistrationRequest,
+    ) -> Result<ReplicaProviderRegistration> {
+        let url = self.build_url(&api_replica_providers(replica_id)).await?;
+        let response = self.send(self.http_post(url.clone()).json(request)).await?;
+        let response = Self::handle_response(url, response).await?;
+        Ok(response.json::<ReplicaProviderRegistration>().await?)
+    }
+
+    pub async fn fetch_replica_providers(
+        &self,
+        replica_id: Uuid,
+    ) -> Result<Vec<ReplicaProviderRegistration>> {
+        let url = self.build_url(&api_replica_providers(replica_id)).await?;
+        let response = self.send(self.http_get(url.clone())).await?;
+        let response = Self::handle_response(url, response).await?;
+        Ok(response.json::<Vec<ReplicaProviderRegistration>>().await?)
+    }
+
+    pub async fn fetch_replicas(
+        &self,
+        replica_type: Option<ReplicaKind>,
+        status: Option<ReplicaStatus>,
+    ) -> Result<ReplicaListResponse> {
+        let mut url = self.build_url(API_REPLICAS).await?;
+        if let Some(replica_type) = replica_type {
+            url.query_pairs_mut()
+                .append_pair("replica_type", replica_type.as_str());
+        }
+        if let Some(status) = status {
+            url.query_pairs_mut().append_pair("status", status.as_str());
+        }
+        let response = self.send(self.http_get(url.clone())).await?;
+        let response = Self::handle_response(url, response).await?;
+        Ok(response.json::<ReplicaListResponse>().await?)
+    }
+
+    /// One replica's recent telemetry samples, over the given look-back window in seconds.
+    pub async fn fetch_replica_samples(
+        &self,
+        replica_id: Uuid,
+        since_seconds: Option<i64>,
+    ) -> Result<ReplicaSampleSeries> {
+        let mut url = self
+            .build_url(&format!("{API_REPLICAS}/{replica_id}/samples"))
+            .await?;
+        if let Some(since_seconds) = since_seconds {
+            url.query_pairs_mut()
+                .append_pair("since_seconds", &since_seconds.to_string());
+        }
+        let response = self.send(self.http_get(url.clone())).await?;
+        let response = Self::handle_response(url, response).await?;
+        Ok(response.json::<ReplicaSampleSeries>().await?)
+    }
+
+    /// list configured node-provisioning backends and the kinds they support.
+    pub async fn fetch_node_backends(&self) -> Result<NodeBackendsResponse> {
+        let url = self.build_url("/nodes/backends").await?;
+        let response = self.send(self.http_get(url.clone())).await?;
+        let response = Self::handle_response(url, response).await?;
+        Ok(response.json::<NodeBackendsResponse>().await?)
+    }
+
+    /// list current node groups (desired/available counts) across every backend.
+    pub async fn fetch_nodes(&self) -> Result<Vec<ProvisionedGroup>> {
+        let url = self.build_url("/nodes").await?;
+        let response = self.send(self.http_get(url.clone())).await?;
+        let response = Self::handle_response(url, response).await?;
+        Ok(response.json::<Vec<ProvisionedGroup>>().await?)
+    }
+
+    /// set the desired node count for a kind on a backend.
+    pub async fn scale_nodes(&self, request: &ScaleNodesRequest) -> Result<ProvisionedGroup> {
+        let url = self.build_url("/nodes/scale").await?;
+        let response = self.send(self.http_post(url.clone()).json(request)).await?;
+        let response = Self::handle_response(url, response).await?;
+        Ok(response.json::<ProvisionedGroup>().await?)
+    }
+
+    /// stop/remove a single provisioned node instance.
+    pub async fn stop_node(&self, request: &StopNodeRequest) -> Result<Value> {
+        let url = self.build_url("/nodes/stop").await?;
+        let response = self.send(self.http_post(url.clone()).json(request)).await?;
+        let response = Self::handle_response(url, response).await?;
+        Ok(response.json::<Value>().await?)
+    }
+
+    /// create an organization; the caller becomes its owner.
+    pub async fn create_org(&self, name: &str) -> Result<Value> {
+        let url = self.build_url("/orgs").await?;
+        let response = self
+            .send(self.http_post(url.clone()).json(&json!({ "name": name })))
+            .await?;
+        let response = Self::handle_response(url, response).await?;
+        Ok(response.json::<Value>().await?)
+    }
+
+    /// Rename an organization without changing its stable slug or identifier.
+    pub async fn rename_org(&self, org_id: Uuid, name: &str) -> Result<Value> {
+        let url = self.build_url(&format!("/orgs/{org_id}")).await?;
+        let response = self
+            .send(
+                self.http_patch(url.clone())
+                    .header("x-org-id", org_id.to_string())
+                    .json(&json!({ "name": name })),
+            )
+            .await?;
+        let response = Self::handle_response(url, response).await?;
+        Ok(response.json::<Value>().await?)
+    }
+
+    /// list the caller's org memberships (org + role).
+    pub async fn list_my_orgs(&self) -> Result<Value> {
+        let url = self.build_url("/orgs/me").await?;
+        let response = self.send(self.http_get(url.clone())).await?;
+        let response = Self::handle_response(url, response).await?;
+        Ok(response.json::<Value>().await?)
+    }
+
+    /// an org's dedicated node allocations and projected monthly cost.
+    pub async fn fetch_org_nodes(&self, org_id: Uuid) -> Result<Value> {
+        let url = self.build_url(&format!("/orgs/{org_id}/nodes")).await?;
+        let response = self
+            .send(
+                self.http_get(url.clone())
+                    .header("x-org-id", org_id.to_string()),
+            )
+            .await?;
+        let response = Self::handle_response(url, response).await?;
+        Ok(response.json::<Value>().await?)
+    }
+
+    /// set an org's dedicated node allocation for a (backend, kind); enforced against its quota.
+    pub async fn scale_org_nodes(
+        &self,
+        org_id: Uuid,
+        request: &ScaleOrgNodesRequest,
+    ) -> Result<Value> {
+        let url = self
+            .build_url(&format!("/orgs/{org_id}/nodes/scale"))
+            .await?;
+        let response = self
+            .send(
+                self.http_post(url.clone())
+                    .header("x-org-id", org_id.to_string())
+                    .json(request),
+            )
+            .await?;
+        let response = Self::handle_response(url, response).await?;
+        Ok(response.json::<Value>().await?)
+    }
+
+    /// an org's accrued usage and cost over the trailing 30 days.
+    pub async fn fetch_org_usage(&self, org_id: Uuid) -> Result<Value> {
+        let url = self.build_url(&format!("/orgs/{org_id}/usage")).await?;
+        let response = self
+            .send(
+                self.http_get(url.clone())
+                    .header("x-org-id", org_id.to_string()),
+            )
+            .await?;
+        let response = Self::handle_response(url, response).await?;
+        Ok(response.json::<Value>().await?)
+    }
+
+    pub async fn fetch_workflow(&self, workflow_id: Uuid) -> Result<WorkflowDefinition> {
+        let url = self.build_url(&api_workflow(workflow_id)).await?;
+        let response = self.send(self.http_get(url.clone())).await?;
+        let response = Self::handle_response(url, response).await?;
+        Ok(response.json::<WorkflowDefinition>().await?)
+    }
+
+    pub async fn fetch_workflows(&self) -> Result<Vec<WorkflowDefinition>> {
+        let url = self.build_url(API_WORKFLOWS).await?;
+        let response = self.send(self.http_get(url.clone())).await?;
+        let response = Self::handle_response(url, response).await?;
+        Ok(response.json::<Vec<WorkflowDefinition>>().await?)
+    }
+
+    pub async fn fetch_workflow_by_name(&self, name: &str) -> Result<WorkflowDefinition> {
+        let mut url = self.build_url(API_WORKFLOWS).await?;
+        url.query_pairs_mut().append_pair("name", name);
+        let response = self.send(self.http_get(url.clone())).await?;
+        let response = Self::handle_response(url, response).await?;
+        Ok(response.json::<WorkflowDefinition>().await?)
+    }
+
+    pub async fn upsert_workflow(
+        &self,
+        workflow: &WorkflowDefinition,
+    ) -> Result<WorkflowDefinition> {
+        self.publish_workflow(workflow, None).await
+    }
+
+    pub async fn publish_workflow(
+        &self,
+        workflow: &WorkflowDefinition,
+        contract_override_reason: Option<&str>,
+    ) -> Result<WorkflowDefinition> {
+        let mut url = match workflow.id {
+            Some(id) => self.build_url(&api_workflow(id)).await?,
+            None => self.build_url(API_WORKFLOWS).await?,
+        };
+        if let Some(reason) = contract_override_reason {
+            url.query_pairs_mut()
+                .append_pair("contract_override_reason", reason);
+        }
+        let response = match workflow.id {
+            Some(_) => {
+                self.send(self.http_patch(url.clone()).json(workflow))
+                    .await?
+            }
+            None => {
+                self.send(self.http_post(url.clone()).json(workflow))
+                    .await?
+            }
+        };
+        let response = Self::handle_response(url, response).await?;
+        Ok(response.json::<WorkflowDefinition>().await?)
+    }
+
+    /// list a workflow's revision history, newest first.
+    pub async fn fetch_workflow_revisions(
+        &self,
+        workflow_id: Uuid,
+        limit: Option<i64>,
+    ) -> Result<Vec<WorkflowRevision>> {
+        let mut url = self.build_url(&api_workflow_revisions(workflow_id)).await?;
+        if let Some(limit) = limit {
+            url.query_pairs_mut()
+                .append_pair("limit", &limit.to_string());
+        }
+        let response = self.send(self.http_get(url.clone())).await?;
+        let response = Self::handle_response(url, response).await?;
+        Ok(response.json::<Vec<WorkflowRevision>>().await?)
+    }
+
+    /// fetch one revision, including the definition it captured.
+    pub async fn fetch_workflow_revision(
+        &self,
+        workflow_id: Uuid,
+        revision: i64,
+    ) -> Result<WorkflowRevision> {
+        let url = self
+            .build_url(&api_workflow_revision(workflow_id, revision))
+            .await?;
+        let response = self.send(self.http_get(url.clone())).await?;
+        let response = Self::handle_response(url, response).await?;
+        Ok(response.json::<WorkflowRevision>().await?)
+    }
+
+    /// restore an earlier revision as the workflow's current definition. the restore is saved as a
+    /// new revision rather than rewriting history.
+    pub async fn restore_workflow_revision(
+        &self,
+        workflow_id: Uuid,
+        revision: i64,
+    ) -> Result<WorkflowDefinition> {
+        let url = self
+            .build_url(&api_workflow_revision_restore(workflow_id, revision))
+            .await?;
+        let response = self.send(self.http_post(url.clone())).await?;
+        let response = Self::handle_response(url, response).await?;
+        Ok(response.json::<WorkflowDefinition>().await?)
+    }
+
+    /// duplicate a workflow into a new version sharing its name, bumped by `bump`.
+    pub async fn duplicate_workflow(
+        &self,
+        workflow_id: Uuid,
+        bump: runinator_models::semver::SemVerBump,
+    ) -> Result<WorkflowDefinition> {
+        let mut url = self.build_url(&api_workflow_duplicate(workflow_id)).await?;
+        url.query_pairs_mut().append_pair("bump", bump.as_str());
+        let response = self.send(self.http_post(url.clone())).await?;
+        let response = Self::handle_response(url, response).await?;
+        Ok(response.json::<WorkflowDefinition>().await?)
+    }
+
+    pub async fn validate_workflow(
+        &self,
+        workflow: &WorkflowDefinition,
+    ) -> Result<WorkflowDefinition> {
+        let url = self.build_url(API_WORKFLOWS_VALIDATE).await?;
+        let response = self
+            .send(self.http_post(url.clone()).json(workflow))
+            .await?;
+        let response = Self::handle_response(url, response).await?;
+        Ok(response.json::<WorkflowDefinition>().await?)
+    }
+
+    /// server-side dry-run: walk `request.workflow` with the VM's evaluators against live
+    /// config (optionally replaying a prior run), publishing no actions. Returns the raw
+    /// `SimulationRun` JSON (status, ordered steps, branch targets, final output).
+    pub async fn simulate_workflow(
+        &self,
+        request: &WorkflowSimulateRequest,
+    ) -> Result<serde_json::Value> {
+        let url = self.build_url(API_WORKFLOWS_SIMULATE).await?;
+        let response = self.send(self.http_post(url.clone()).json(request)).await?;
+        let response = Self::handle_response(url, response).await?;
+        Ok(response.json::<serde_json::Value>().await?)
+    }
+
+    /// POST a typed bundle to its associated import endpoint.
+    pub async fn import_bundle<B: Bundle>(&self, bundle: &B) -> Result<B> {
+        let url = self.build_url(B::RESOURCE).await?;
+        let response = self.send(self.http_post(url.clone()).json(bundle)).await?;
+        let response = Self::handle_response(url, response).await?;
+        Ok(response.json::<B>().await?)
+    }
+
+    /// Build a compiled pack zip (workflows + optional settings/profiles + pipelines) and POST it to
+    /// `/packs/import`.
+    pub async fn import_pack(
+        &self,
+        workflows: &WorkflowBundle,
+        settings: Option<&SettingsBundle>,
+        pipelines: Option<&PipelineBundle>,
+        overwrite: bool,
+    ) -> Result<PackImportResult> {
+        self.import_pack_zip(
+            runinator_pack_wire::pack::PackBuilder::new(workflows)
+                .settings(settings)
+                .pipelines(pipelines)
+                .build()
+                .map_err(|err| ApiError::Pack(err.to_string()))?,
+            overwrite,
+        )
+        .await
+    }
+
+    /// Import a pack that also carries packaged functions.
+    ///
+    /// The artifacts are uploaded by digest *first*, and only the ones the server reports missing
+    /// ride in the zip. A pack that carried every artifact every time would push megabytes through
+    /// the 10 MB request limit to re-send bytes the server already holds — and the digest is
+    /// computed client-side, so asking is cheap.
+    pub async fn import_pack_with_functions(
+        &self,
+        workflows: &WorkflowBundle,
+        settings: Option<&SettingsBundle>,
+        pipelines: Option<&PipelineBundle>,
+        functions: Vec<NewFunctionVersion>,
+        artifacts: Vec<(String, Vec<u8>)>,
+        overwrite: bool,
+    ) -> Result<PackImportResult> {
+        let mut builder = runinator_pack_wire::pack::PackBuilder::new(workflows)
+            .settings(settings)
+            .pipelines(pipelines)
+            .functions(functions);
+
+        for (digest, bytes) in artifacts {
+            if self.fetch_function_artifact(&digest).await?.is_some() {
+                continue;
+            }
+
+            builder = builder.function_artifact(digest, bytes);
+        }
+
+        self.import_pack_zip(
+            builder
+                .build()
+                .map_err(|err| ApiError::Pack(err.to_string()))?,
+            overwrite,
+        )
+        .await
+    }
+
+    pub(super) async fn import_pack_zip(
+        &self,
+        body: Vec<u8>,
+        overwrite: bool,
+    ) -> Result<PackImportResult> {
+        self.import_reviewed_pack_zip(body, overwrite, None).await
+    }
+
+    pub async fn import_reviewed_pack_zip(
+        &self,
+        body: Vec<u8>,
+        overwrite: bool,
+        contract_override_reason: Option<&str>,
+    ) -> Result<PackImportResult> {
+        let mut url = self.build_url(API_PACKS_IMPORT).await?;
+        if overwrite {
+            url.set_query(Some("overwrite=true"));
+        }
+        if let Some(reason) = contract_override_reason {
+            url.query_pairs_mut()
+                .append_pair("contract_override_reason", reason);
+        }
+        let response = self
+            .send(
+                self.http_post(url.clone())
+                    .header(reqwest::header::CONTENT_TYPE, "application/zip")
+                    .body(body),
+            )
+            .await?;
+        let response = Self::handle_response(url, response).await?;
+        Ok(response.json::<PackImportResult>().await?)
+    }
+
+    /// upload artifact bytes and get back the URI to record against them.
+    ///
+    /// stores bytes only. the artifact row is created by whoever already accounts for the artifact —
+    /// for a worker-produced one, the result-event path — so this must not create a second.
+    pub async fn upload_artifact_content(
+        &self,
+        run_id: Uuid,
+        name: &str,
+        mime_type: &str,
+        bytes: Vec<u8>,
+    ) -> Result<ArtifactContentResponse> {
+        let mut url = self.build_url(API_ARTIFACTS_CONTENT).await?;
+        {
+            let mut query = url.query_pairs_mut();
+            query.append_pair("run_id", &run_id.to_string());
+            query.append_pair("name", name);
+            query.append_pair("mime_type", mime_type);
+        }
+        let response = self
+            .send(
+                self.http_post(url.clone())
+                    .header(reqwest::header::CONTENT_TYPE, mime_type)
+                    .body(bytes),
+            )
+            .await?;
+        let response = Self::handle_response(url, response).await?;
+        Ok(response.json::<ArtifactContentResponse>().await?)
+    }
+
+    pub async fn create_durable_workspace(
+        &self,
+        key: &str,
+    ) -> Result<runinator_models::workspaces::DurableWorkspace> {
+        let url = self.build_url("/workspaces").await?;
+        let response = self
+            .send(
+                self.http_post(url.clone())
+                    .json(&serde_json::json!({"key":key})),
+            )
+            .await?;
+        Ok(Self::handle_response(url, response).await?.json().await?)
+    }
+    pub async fn list_durable_workspaces(
+        &self,
+        offset: i64,
+    ) -> Result<Vec<runinator_models::workspaces::WorkspaceView>> {
+        self.get_json_path(&format!("/workspaces?limit=50&offset={offset}"))
+            .await
+    }
+    pub async fn workspace_snapshot(
+        &self,
+        workspace: Uuid,
+        version: i64,
+    ) -> Result<runinator_models::workspaces::WorkspaceSnapshot> {
+        self.get_json_path(&format!("/workspaces/{workspace}/versions/{version}"))
+            .await
+    }
+    pub async fn workspace_versions(
+        &self,
+        id: Uuid,
+        offset: i64,
+    ) -> Result<Vec<runinator_models::workspaces::WorkspaceSnapshot>> {
+        self.get_json_path(&format!(
+            "/workspaces/{id}/versions?limit=50&offset={offset}"
+        ))
+        .await
+    }
+    pub async fn delete_durable_workspace(&self, id: Uuid, version: Option<i64>) -> Result<()> {
+        let path = version.map_or_else(
+            || format!("/workspaces/{id}"),
+            |v| format!("/workspaces/{id}/versions/{v}"),
+        );
+        let url = self.build_url(&path).await?;
+        let response = self.send(self.http_delete(url.clone())).await?;
+        Self::handle_response(url, response).await?;
+        Ok(())
+    }
+    pub async fn workspace_object(
+        &self,
+        checkout: Uuid,
+        replica: Uuid,
+        id: &str,
+    ) -> Result<Option<Vec<u8>>> {
+        let url = self
+            .build_url(&format!(
+                "/workspaces/checkouts/{checkout}/objects/{id}?replica_id={replica}"
+            ))
+            .await?;
+        let response = self.send(self.http_get(url.clone())).await?;
+        if response.status() == reqwest::StatusCode::NOT_FOUND {
+            return Ok(None);
+        }
+        let response = Self::handle_response(url, response).await?;
+        Ok(Some(response.bytes().await?.to_vec()))
+    }
+    pub async fn download_workspace_checkout(
+        &self,
+        checkout: Uuid,
+        replica: Uuid,
+        timeout: Duration,
+    ) -> Result<Vec<u8>> {
+        let url = self
+            .build_url(&format!(
+                "/workspaces/checkouts/{checkout}/content?replica_id={replica}"
+            ))
+            .await?;
+        let response = self
+            .send(self.http_get(url.clone()).timeout(timeout))
+            .await?;
+        let response = Self::handle_response(url, response).await?;
+        Ok(response.bytes().await?.to_vec())
+    }
+    pub async fn upload_workspace_pack(
+        &self,
+        checkout: Uuid,
+        replica: Uuid,
+        bytes: Vec<u8>,
+    ) -> Result<()> {
+        let url = self
+            .build_url(&format!(
+                "/workspaces/checkouts/{checkout}/packs?replica_id={replica}"
+            ))
+            .await?;
+        let response = self
+            .send(
+                self.http_post(url.clone())
+                    .header(
+                        reqwest::header::CONTENT_TYPE,
+                        "application/vnd.runinator.workspace.pack.v1",
+                    )
+                    .body(bytes),
+            )
+            .await?;
+        Self::handle_response(url, response).await?;
+        Ok(())
+    }
+    pub async fn seal_workspace(
+        &self,
+        checkout: Uuid,
+        replica: Uuid,
+        revision_id: String,
+        timeout: Duration,
+    ) -> Result<runinator_models::workspaces::WorkspaceReceipt> {
+        let url = self
+            .build_url(&format!(
+                "/workspaces/checkouts/{checkout}/seal?replica_id={replica}"
+            ))
+            .await?;
+        let response = self
+            .send(
+                self.http_post(url.clone())
+                    .timeout(timeout)
+                    .json(&runinator_models::workspaces::WorkspaceSeal { revision_id }),
+            )
+            .await?;
+        Ok(Self::handle_response(url, response).await?.json().await?)
+    }
+    pub async fn workspace_directory(
+        &self,
+        workspace: Uuid,
+        version: i64,
+        path: &str,
+        cursor: Option<&str>,
+    ) -> Result<runinator_models::workspaces::WorkspaceDirectory> {
+        let mut url = self
+            .build_url(&format!(
+                "/workspaces/{workspace}/versions/{version}/entries"
+            ))
+            .await?;
+        url.query_pairs_mut().append_pair("path", path);
+        if let Some(cursor) = cursor {
+            url.query_pairs_mut().append_pair("cursor", cursor);
+        }
+        let response = self.send(self.http_get(url.clone())).await?;
+        Ok(Self::handle_response(url, response).await?.json().await?)
+    }
+
+    pub async fn workspace_results(
+        &self,
+        workspace: Uuid,
+        version: i64,
+        cursor: Option<&str>,
+    ) -> Result<runinator_models::workspaces::WorkspaceDirectory> {
+        let mut url = self
+            .build_url(&format!(
+                "/workspaces/{workspace}/versions/{version}/results"
+            ))
+            .await?;
+        if let Some(cursor) = cursor {
+            url.query_pairs_mut().append_pair("cursor", cursor);
+        }
+        let response = self.send(self.http_get(url.clone())).await?;
+        Ok(Self::handle_response(url, response).await?.json().await?)
+    }
+    pub async fn workspace_diff(
+        &self,
+        workspace: Uuid,
+        before: i64,
+        after: i64,
+        cursor: Option<&str>,
+    ) -> Result<runinator_models::workspaces::WorkspaceDiff> {
+        let mut url = self
+            .build_url(&format!(
+                "/workspaces/{workspace}/versions/{after}/diff?before={before}"
+            ))
+            .await?;
+        if let Some(cursor) = cursor {
+            url.query_pairs_mut().append_pair("cursor", cursor);
+        }
+        let response = self.send(self.http_get(url.clone())).await?;
+        Ok(Self::handle_response(url, response).await?.json().await?)
+    }
+    pub async fn create_workspace_transfer(
+        &self,
+        workspace: Uuid,
+        version: i64,
+        importing: bool,
+        filesystem: bool,
+    ) -> Result<runinator_models::workspaces::WorkspaceTransfer> {
+        let url = self
+            .build_url(&format!("/workspaces/{workspace}/transfers"))
+            .await?;
+        let response = self.send(self.http_post(url.clone()).json(&serde_json::json!({"version":version,"importing":importing,"filesystem":filesystem}))).await?;
+        Ok(Self::handle_response(url, response).await?.json().await?)
+    }
+    pub async fn workspace_transfer(
+        &self,
+        id: Uuid,
+    ) -> Result<runinator_models::workspaces::WorkspaceTransfer> {
+        let url = self
+            .build_url(&format!("/workspace-transfers/{id}"))
+            .await?;
+        let response = self.send(self.http_get(url.clone())).await?;
+        Ok(Self::handle_response(url, response).await?.json().await?)
+    }
+    pub async fn cancel_workspace_transfer(&self, id: Uuid) -> Result<()> {
+        let url = self
+            .build_url(&format!("/workspace-transfers/{id}"))
+            .await?;
+        let response = self.send(self.http_delete(url.clone())).await?;
+        Self::handle_response(url, response).await?;
+        Ok(())
+    }
+    pub async fn workspace_transfer_stream(&self, id: Uuid) -> Result<reqwest::Response> {
+        let url = self
+            .build_url(&format!("/workspace-transfers/{id}/content"))
+            .await?;
+        let response = self
+            .send(
+                self.http_get(url.clone())
+                    .timeout(Duration::from_secs(7 * 24 * 60 * 60)),
+            )
+            .await?;
+        Self::handle_response(url, response).await
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    pub async fn upload_workspace_transfer(
+        &self,
+        id: Uuid,
+        file: tokio::fs::File,
+    ) -> Result<runinator_models::workspaces::WorkspaceTransfer> {
+        let url = self
+            .build_url(&format!("/workspace-transfers/{id}/content"))
+            .await?;
+        let body = reqwest::Body::from(file);
+        let response = self
+            .send(
+                self.http_put(url.clone())
+                    .timeout(Duration::from_secs(7 * 24 * 60 * 60))
+                    .body(body),
+            )
+            .await?;
+        Ok(Self::handle_response(url, response).await?.json().await?)
+    }
+    pub async fn workspace_download_stream(
+        &self,
+        workspace: Uuid,
+        version: i64,
+        path: Option<&str>,
+        result: bool,
+    ) -> Result<reqwest::Response> {
+        let route = if result { "result" } else { "content" };
+        let mut url = self
+            .build_url(&format!(
+                "/workspaces/{workspace}/versions/{version}/{route}"
+            ))
+            .await?;
+        if let Some(path) = path {
+            url.query_pairs_mut()
+                .append_pair(if result { "name" } else { "path" }, path);
+        }
+        let response = self
+            .send(
+                self.http_get(url.clone())
+                    .timeout(Duration::from_secs(7 * 24 * 60 * 60)),
+            )
+            .await?;
+        Self::handle_response(url, response).await
+    }
+    pub async fn workspace_preview(
+        &self,
+        workspace: Uuid,
+        version: i64,
+        path: &str,
+        result: bool,
+    ) -> Result<Vec<u8>> {
+        let route = if result { "result" } else { "content" };
+        let mut url = self
+            .build_url(&format!(
+                "/workspaces/{workspace}/versions/{version}/{route}"
+            ))
+            .await?;
+        if result {
+            url.query_pairs_mut()
+                .append_pair("name", path)
+                .append_pair("preview", "true");
+        } else {
+            url.query_pairs_mut()
+                .append_pair("path", path)
+                .append_pair("length", "1048576");
+        }
+        let response = self.send(self.http_get(url.clone())).await?;
+        Ok(Self::handle_response(url, response)
+            .await?
+            .bytes()
+            .await?
+            .to_vec())
+    }
+
+    // ---- packaged functions ----
+
+    /// List published function packages.
+    pub async fn fetch_function_packages(&self) -> Result<Vec<FunctionPackage>> {
+        let url = self.build_url(API_FUNCTIONS).await?;
+        let response = self.send(self.http_get(url.clone())).await?;
+        let response = Self::handle_response(url, response).await?;
+        Ok(response.json::<Vec<FunctionPackage>>().await?)
+    }
+
+    /// Fetch one package with its versions, aliases, and current exports.
+    pub async fn fetch_function_package(&self, package: &str) -> Result<FunctionPackageDetail> {
+        let url = self
+            .build_url(&format!("{API_FUNCTIONS}/{package}"))
+            .await?;
+        let response = self.send(self.http_get(url.clone())).await?;
+        let response = Self::handle_response(url, response).await?;
+        Ok(response.json::<FunctionPackageDetail>().await?)
+    }
+
+    pub async fn move_function_package(
+        &self,
+        package_id: Uuid,
+        namespace: Option<&str>,
+        name: &str,
+    ) -> Result<FunctionPackage> {
+        let url = self
+            .build_url(&format!("/function_packages/{package_id}"))
+            .await?;
+        let response = self
+            .send(
+                self.http_patch(url.clone())
+                    .json(&json!({ "namespace": namespace, "name": name })),
+            )
+            .await?;
+        let response = Self::handle_response(url, response).await?;
+        Ok(response.json::<FunctionPackage>().await?)
+    }
+
+    /// The flattened catalog of every published export.
+    pub async fn fetch_function_catalog(&self) -> Result<Vec<FunctionCatalogEntry>> {
+        let url = self.build_url(API_FUNCTIONS_CATALOG).await?;
+        let response = self.send(self.http_get(url.clone())).await?;
+        let response = Self::handle_response(url, response).await?;
+        Ok(response.json::<Vec<FunctionCatalogEntry>>().await?)
+    }
+
+    /// Publish one version. The artifact must already be uploaded.
+    pub async fn publish_function_version(
+        &self,
+        request: &NewFunctionVersion,
+    ) -> Result<FunctionVersion> {
+        let url = self.build_url(API_FUNCTIONS).await?;
+        let response = self.send(self.http_post(url.clone()).json(request)).await?;
+        let response = Self::handle_response(url, response).await?;
+        Ok(response.json::<FunctionVersion>().await?)
+    }
+
+    /// Delete a package and everything under it.
+    pub async fn delete_function_package(&self, package: &str) -> Result<Value> {
+        let url = self
+            .build_url(&format!("{API_FUNCTIONS}/{package}"))
+            .await?;
+        let response = self.send(self.http_delete(url.clone())).await?;
+        let response = Self::handle_response(url, response).await?;
+        Ok(response.json::<Value>().await?)
+    }
+
+    pub async fn restore_function_package(&self, package: &str) -> Result<Value> {
+        let url = self
+            .build_url(&format!("{API_FUNCTIONS}/{package}/restore"))
+            .await?;
+        let response = self.send(self.http_post(url.clone())).await?;
+        let response = Self::handle_response(url, response).await?;
+        Ok(response.json::<Value>().await?)
+    }
+
+    /// Point an alias at a version.
+    pub async fn set_function_alias(
+        &self,
+        package: &str,
+        alias: &str,
+        version: Option<i64>,
+        from_alias: Option<&str>,
+    ) -> Result<FunctionAlias> {
+        let url = self
+            .build_url(&format!("{API_FUNCTIONS}/{package}/aliases"))
+            .await?;
+        let body = json!({ "alias": alias, "version": version, "from_alias": from_alias });
+        let response = self.send(self.http_post(url.clone()).json(&body)).await?;
+        let response = Self::handle_response(url, response).await?;
+        Ok(response.json::<FunctionAlias>().await?)
+    }
+
+    /// Delete an alias, leaving the version it named untouched.
+    pub async fn delete_function_alias(&self, package: &str, alias: &str) -> Result<Value> {
+        let url = self
+            .build_url(&format!("{API_FUNCTIONS}/{package}/aliases/{alias}"))
+            .await?;
+        let response = self.send(self.http_delete(url.clone())).await?;
+        let response = Self::handle_response(url, response).await?;
+        Ok(response.json::<Value>().await?)
+    }
+
+    /// Resolve one export to the handler, runtime, limits, and digest needed to run it.
+    pub async fn resolve_function_export(
+        &self,
+        export_id: Uuid,
+    ) -> Result<FunctionInvocationTarget> {
+        let url = self
+            .build_url(&format!("{API_FUNCTION_EXPORTS}/{export_id}"))
+            .await?;
+        let response = self.send(self.http_get(url.clone())).await?;
+        let response = Self::handle_response(url, response).await?;
+        Ok(response.json::<FunctionInvocationTarget>().await?)
+    }
+
+    /// Whether the server already holds these bytes.
+    ///
+    /// This is what makes republishing unchanged code cheap: the digest is computed client-side, so
+    /// the upload can be skipped entirely when the answer is yes.
+    pub async fn fetch_function_artifact(&self, digest: &str) -> Result<Option<FunctionArtifact>> {
+        let url = self
+            .build_url(&format!("{API_FUNCTION_ARTIFACTS}/{digest}"))
+            .await?;
+        let response = self.send(self.http_get(url.clone())).await?;
+        if response.status() == reqwest::StatusCode::NOT_FOUND {
+            return Ok(None);
+        }
+        let response = Self::handle_response(url, response).await?;
+        Ok(Some(response.json::<FunctionArtifact>().await?))
+    }
+
+    /// Upload package archive bytes under their digest.
+    pub async fn upload_function_artifact(
+        &self,
+        digest: &str,
+        bytes: Vec<u8>,
+    ) -> Result<FunctionArtifact> {
+        let url = self
+            .build_url(&format!("{API_FUNCTION_ARTIFACTS}/{digest}"))
+            .await?;
+        let response = self
+            .send(
+                self.http_post(url.clone())
+                    .header(reqwest::header::CONTENT_TYPE, ARTIFACT_MEDIA_TYPE)
+                    .body(bytes),
+            )
+            .await?;
+        let response = Self::handle_response(url, response).await?;
+        Ok(response.json::<FunctionArtifact>().await?)
+    }
+
+    /// Download a package archive's bytes. This is the worker's fetch path.
+    pub async fn download_function_artifact(&self, digest: &str) -> Result<Vec<u8>> {
+        let url = self
+            .build_url(&format!("{API_FUNCTION_ARTIFACTS}/{digest}/content"))
+            .await?;
+        let response = self.send(self.http_get(url.clone())).await?;
+        let response = Self::handle_response(url, response).await?;
+        Ok(response.bytes().await?.to_vec())
+    }
+
+    /// Download one VM-native user file for worker-side materialization.
+    pub async fn download_workflow_file(&self, file_id: Uuid) -> Result<Vec<u8>> {
+        let url = self
+            .build_url(&format!("{API_WORKFLOW_FILES}/{file_id}/content"))
+            .await?;
+        let response = self.send(self.http_get(url.clone())).await?;
+        let response = Self::handle_response(url, response).await?;
+        Ok(response.bytes().await?.to_vec())
+    }
+
+    pub async fn download_workflow_file_for_run(
+        &self,
+        file_id: Uuid,
+        run_id: Uuid,
+    ) -> Result<Vec<u8>> {
+        let mut url = self
+            .build_url(&format!("{API_WORKFLOW_FILES}/{file_id}/content"))
+            .await?;
+        url.query_pairs_mut()
+            .append_pair("consumer_run_id", &run_id.to_string());
+        let response = self.send(self.http_get(url.clone())).await?;
+        let response = Self::handle_response(url, response).await?;
+        Ok(response.bytes().await?.to_vec())
+    }
+
+    /// Resolve the current metadata for a named execution profile in this worker's organization.
+    pub async fn resolve_execution_profile(&self, name: &str) -> Result<ExecutionProfile> {
+        let mut url = self
+            .build_url(&format!("{API_EXECUTION_PROFILES}/resolve"))
+            .await?;
+        url.query_pairs_mut().append_pair("name", name);
+        let response = self.send(self.http_get(url.clone())).await?;
+        let response = Self::handle_response(url, response).await?;
+        Ok(response.json::<ExecutionProfile>().await?)
+    }
+
+    pub async fn resolve_execution_profile_for_run(
+        &self,
+        name: &str,
+        run_id: Uuid,
+    ) -> Result<ExecutionProfile> {
+        let mut url = self
+            .build_url(&format!("{API_EXECUTION_PROFILES}/resolve"))
+            .await?;
+        url.query_pairs_mut()
+            .append_pair("name", name)
+            .append_pair("consumer_run_id", &run_id.to_string());
+        let response = self.send(self.http_get(url.clone())).await?;
+        let response = Self::handle_response(url, response).await?;
+        Ok(response.json::<ExecutionProfile>().await?)
+    }
+
+    /// Fetch a profile by its stable workflow binding identity.
+    pub async fn fetch_execution_profile(&self, id: Uuid) -> Result<ExecutionProfile> {
+        self.get_json_path(&format!("{API_EXECUTION_PROFILES}/{id}"))
+            .await
+    }
+
+    pub async fn fetch_execution_profile_for_run(
+        &self,
+        id: Uuid,
+        run_id: Uuid,
+    ) -> Result<ExecutionProfile> {
+        let mut url = self
+            .build_url(&format!("{API_EXECUTION_PROFILES}/{id}"))
+            .await?;
+        url.query_pairs_mut()
+            .append_pair("consumer_run_id", &run_id.to_string());
+        let response = self.send(self.http_get(url.clone())).await?;
+        let response = Self::handle_response(url, response).await?;
+        Ok(response.json::<ExecutionProfile>().await?)
+    }
+
+    pub async fn fetch_execution_profile_for_adapter_dispatch(
+        &self,
+        id: Uuid,
+        dispatch_id: Uuid,
+    ) -> Result<ExecutionProfile> {
+        let mut url = self
+            .build_url(&format!("{API_EXECUTION_PROFILES}/{id}"))
+            .await?;
+        url.query_pairs_mut()
+            .append_pair("consumer_adapter_dispatch_id", &dispatch_id.to_string());
+        let response = self.send(self.http_get(url.clone())).await?;
+        let response = Self::handle_response(url, response).await?;
+        Ok(response.json::<ExecutionProfile>().await?)
+    }
+
+    /// List the execution-profile definitions assigned to this agent's organization.
+    pub async fn list_execution_profiles(&self) -> Result<Vec<ExecutionProfile>> {
+        self.get_json_path(API_EXECUTION_PROFILES).await
+    }
+
+    /// List author-facing desktop collection status without downloading profile contents.
+    pub async fn list_execution_profile_collection_statuses(
+        &self,
+    ) -> Result<Vec<ExecutionProfileCollectionStatus>> {
+        self.get_json_path(&format!("{API_EXECUTION_PROFILES}/collection-statuses"))
+            .await
+    }
+
+    /// List operations an enrolled desktop agent may claim after checking local approval.
+    pub async fn list_pending_execution_profile_operations(
+        &self,
+    ) -> Result<Vec<ExecutionProfileOperation>> {
+        self.get_json_path(&format!(
+            "{API_EXECUTION_PROFILES}/collection-operations/pending"
+        ))
+        .await
+    }
+
+    pub async fn configure_execution_profile(
+        &self,
+        id: Uuid,
+        request: &ExecutionProfilePutRequest,
+    ) -> Result<ExecutionProfile> {
+        let url = self
+            .build_url(&format!("{API_EXECUTION_PROFILES}/{id}"))
+            .await?;
+        let response = self.send(self.http_put(url.clone()).json(request)).await?;
+        let response = Self::handle_response(url, response).await?;
+        Ok(response.json::<ExecutionProfile>().await?)
+    }
+
+    pub async fn delete_execution_profile(&self, id: Uuid) -> Result<Value> {
+        let url = self
+            .build_url(&format!("{API_EXECUTION_PROFILES}/{id}"))
+            .await?;
+        let response = self.send(self.http_delete(url.clone())).await?;
+        let response = Self::handle_response(url, response).await?;
+        Ok(response.json::<Value>().await?)
+    }
+
+    pub async fn rotate_execution_profile(&self, id: Uuid) -> Result<Value> {
+        let url = self
+            .build_url(&format!("{API_EXECUTION_PROFILES}/{id}/rotate"))
+            .await?;
+        let response = self.send(self.http_post(url.clone())).await?;
+        let response = Self::handle_response(url, response).await?;
+        Ok(response.json::<Value>().await?)
+    }
+
+    pub async fn test_execution_profile(&self, id: Uuid) -> Result<Value> {
+        let url = self
+            .build_url(&format!("{API_EXECUTION_PROFILES}/{id}/test"))
+            .await?;
+        let response = self.send(self.http_post(url.clone())).await?;
+        let response = Self::handle_response(url, response).await?;
+        Ok(response.json::<Value>().await?)
+    }
+
+    /// Atomically publish one deterministic profile archive. The service encrypts it before blob
+    /// storage and deduplicates it against the current plaintext digest.
+    pub async fn publish_execution_profile(
+        &self,
+        id: Uuid,
+        request: &ExecutionProfilePublishRequest,
+        bytes: Vec<u8>,
+    ) -> Result<ExecutionProfileRevision> {
+        let mut url = self
+            .build_url(&format!("{API_EXECUTION_PROFILES}/{id}/publish"))
+            .await?;
+        {
+            let mut query = url.query_pairs_mut();
+            query.append_pair("digest", &request.digest);
+            if let Some(expires_at) = request.expires_at {
+                query.append_pair("expires_at", &expires_at.to_rfc3339());
+            }
+        }
+        let response = self
+            .send(
+                self.http_post(url.clone())
+                    .header(
+                        "content-type",
+                        "application/vnd.runinator.execution-profile+zip",
+                    )
+                    .body(bytes),
+            )
+            .await?;
+        let response = Self::handle_response(url, response).await?;
+        Ok(response.json::<ExecutionProfileRevision>().await?)
+    }
+
+    pub async fn report_execution_profile_status(
+        &self,
+        id: Uuid,
+        request: &ExecutionProfileStatusRequest,
+    ) -> Result<()> {
+        let url = self
+            .build_url(&format!("{API_EXECUTION_PROFILES}/{id}/status"))
+            .await?;
+        let response = self.send(self.http_put(url.clone()).json(request)).await?;
+        Self::handle_response(url, response).await?;
+        Ok(())
+    }
+
+    /// Report a desktop's local approval and most recent sanitized collection result.
+    pub async fn report_execution_profile_agent_status(
+        &self,
+        id: Uuid,
+        request: &ExecutionProfileAgentStatusRequest,
+    ) -> Result<()> {
+        let url = self
+            .build_url(&format!("{API_EXECUTION_PROFILES}/{id}/agent-status"))
+            .await?;
+        let response = self.send(self.http_put(url.clone()).json(request)).await?;
+        Self::handle_response(url, response).await?;
+        Ok(())
+    }
+
+    /// Atomically claim a pending profile operation for this approved desktop agent.
+    pub async fn claim_execution_profile_operation(
+        &self,
+        id: Uuid,
+        request: &ExecutionProfileOperationClaimRequest,
+    ) -> Result<ExecutionProfileOperation> {
+        let url = self
+            .build_url(&format!(
+                "{API_EXECUTION_PROFILES}/collection-operations/{id}/claim"
+            ))
+            .await?;
+        let response = self.send(self.http_post(url.clone()).json(request)).await?;
+        let response = Self::handle_response(url, response).await?;
+        Ok(response.json::<ExecutionProfileOperation>().await?)
+    }
+
+    /// Record a terminal profile operation outcome after this desktop agent claimed it.
+    pub async fn complete_execution_profile_operation(
+        &self,
+        id: Uuid,
+        request: &ExecutionProfileOperationCompleteRequest,
+    ) -> Result<()> {
+        let url = self
+            .build_url(&format!(
+                "{API_EXECUTION_PROFILES}/collection-operations/{id}/complete"
+            ))
+            .await?;
+        let response = self.send(self.http_post(url.clone()).json(request)).await?;
+        Self::handle_response(url, response).await?;
+        Ok(())
+    }
+
+    /// Download the decrypted bytes of the current revision assigned to an effect.
+    pub async fn download_execution_profile(&self, id: Uuid, revision: i64) -> Result<Vec<u8>> {
+        let url = self
+            .build_url(&format!(
+                "{API_EXECUTION_PROFILES}/{id}/revisions/{revision}/content"
+            ))
+            .await?;
+        let response = self.send(self.http_get(url.clone())).await?;
+        let response = Self::handle_response(url, response).await?;
+        Ok(response.bytes().await?.to_vec())
+    }
+
+    pub async fn download_execution_profile_for_run(
+        &self,
+        id: Uuid,
+        revision: i64,
+        run_id: Uuid,
+    ) -> Result<Vec<u8>> {
+        let mut url = self
+            .build_url(&format!(
+                "{API_EXECUTION_PROFILES}/{id}/revisions/{revision}/content"
+            ))
+            .await?;
+        url.query_pairs_mut()
+            .append_pair("consumer_run_id", &run_id.to_string());
+        let response = self.send(self.http_get(url.clone())).await?;
+        let response = Self::handle_response(url, response).await?;
+        Ok(response.bytes().await?.to_vec())
+    }
+
+    pub async fn download_execution_profile_for_adapter_dispatch(
+        &self,
+        id: Uuid,
+        revision: i64,
+        dispatch_id: Uuid,
+    ) -> Result<Vec<u8>> {
+        let mut url = self
+            .build_url(&format!(
+                "{API_EXECUTION_PROFILES}/{id}/revisions/{revision}/content"
+            ))
+            .await?;
+        url.query_pairs_mut()
+            .append_pair("consumer_adapter_dispatch_id", &dispatch_id.to_string());
+        let response = self.send(self.http_get(url.clone())).await?;
+        let response = Self::handle_response(url, response).await?;
+        Ok(response.bytes().await?.to_vec())
+    }
+
+    pub async fn import_provider_bundle(&self, bundle: &ProviderBundle) -> Result<ProviderBundle> {
+        self.import_bundle(bundle).await
+    }
+
+    pub async fn export_workflow_bundle(
+        &self,
+        workflow_id: Option<Uuid>,
+    ) -> Result<WorkflowBundle> {
+        let path = workflow_id
+            .map(|id| format!("{}/export", api_workflow(id)))
+            .unwrap_or_else(|| API_WORKFLOWS_EXPORT.into());
+        let url = self.build_url(&path).await?;
+        let response = self.send(self.http_get(url.clone())).await?;
+        let response = Self::handle_response(url, response).await?;
+        Ok(response.json::<WorkflowBundle>().await?)
+    }
+
+    pub async fn create_workflow_run(
+        &self,
+        workflow_id: Uuid,
+        parameters: Value,
+    ) -> Result<WorkflowRun> {
+        self.create_workflow_run_with_options(workflow_id, parameters, false, None)
+            .await
+    }
+
+    pub async fn create_named_workflow_run(
+        &self,
+        workflow_id: Uuid,
+        parameters: Value,
+        name: String,
+    ) -> Result<WorkflowRun> {
+        self.create_workflow_run_with_options(workflow_id, parameters, false, Some(name))
+            .await
+    }
+
+    pub async fn fetch_workflow_triggers(&self, workflow_id: Uuid) -> Result<Vec<WorkflowTrigger>> {
+        let url = self.build_url(&api_workflow_triggers(workflow_id)).await?;
+        let response = self.send(self.http_get(url.clone())).await?;
+        let response = Self::handle_response(url, response).await?;
+        Ok(response.json::<Vec<WorkflowTrigger>>().await?)
+    }
+
+    pub async fn fetch_due_workflow_triggers(&self) -> Result<Vec<WorkflowTrigger>> {
+        let url = self.build_url(API_WORKFLOW_TRIGGERS_DUE).await?;
+        let response = self.send(self.http_get(url.clone())).await?;
+        let response = Self::handle_response(url, response).await?;
+        Ok(response.json::<Vec<WorkflowTrigger>>().await?)
+    }
+
+    /// replay a cron trigger's slots across a past range. slots the loop already fired keep their
+    /// original run, so an overlapping range is safe to re-issue.
+    pub async fn backfill_workflow_trigger(
+        &self,
+        trigger_id: Uuid,
+        request: &BackfillRequest,
+    ) -> Result<BackfillResponse> {
+        let url = self
+            .build_url(&api_workflow_trigger_backfill(trigger_id))
+            .await?;
+        let response = self.send(self.http_post(url.clone()).json(request)).await?;
+        let response = Self::handle_response(url, response).await?;
+        Ok(response.json::<BackfillResponse>().await?)
+    }
+
+    pub async fn fetch_freeze_windows(&self, active_only: bool) -> Result<Vec<FreezeWindow>> {
+        let path = match active_only {
+            true => format!("{API_FREEZE_WINDOWS}?active=true"),
+            false => API_FREEZE_WINDOWS.to_string(),
+        };
+        let url = self.build_url(&path).await?;
+        let response = self.send(self.http_get(url.clone())).await?;
+        let response = Self::handle_response(url, response).await?;
+        Ok(response.json::<Vec<FreezeWindow>>().await?)
+    }
+
+    pub async fn create_freeze_window(&self, window: &NewFreezeWindow) -> Result<FreezeWindow> {
+        let url = self.build_url(API_FREEZE_WINDOWS).await?;
+        let response = self.send(self.http_post(url.clone()).json(window)).await?;
+        let response = Self::handle_response(url, response).await?;
+        Ok(response.json::<FreezeWindow>().await?)
+    }
+
+    pub async fn delete_freeze_window(&self, window_id: Uuid) -> Result<TaskResponse> {
+        let url = self.build_url(&api_freeze_window(window_id)).await?;
+        let response = self.send(self.http_delete(url.clone())).await?;
+        let response = Self::handle_response(url, response).await?;
+        Ok(response.json::<TaskResponse>().await?)
+    }
+
+    pub async fn fetch_workflow_trigger(&self, trigger_id: Uuid) -> Result<WorkflowTrigger> {
+        let url = self.build_url(&api_workflow_trigger(trigger_id)).await?;
+        let response = self.send(self.http_get(url.clone())).await?;
+        let response = Self::handle_response(url, response).await?;
+        Ok(response.json::<WorkflowTrigger>().await?)
+    }
+
+    pub async fn upsert_workflow_trigger(
+        &self,
+        trigger: &WorkflowTrigger,
+    ) -> Result<WorkflowTrigger> {
+        let url = match trigger.id {
+            Some(id) => self.build_url(&api_workflow_trigger(id)).await?,
+            None => {
+                self.build_url(&api_workflow_triggers(trigger.workflow_id))
+                    .await?
+            }
+        };
+        let response = match trigger.id {
+            Some(_) => {
+                self.send(self.http_patch(url.clone()).json(trigger))
+                    .await?
+            }
+            None => self.send(self.http_post(url.clone()).json(trigger)).await?,
+        };
+        let response = Self::handle_response(url, response).await?;
+        Ok(response.json::<WorkflowTrigger>().await?)
+    }
+
+    pub async fn delete_workflow_trigger(&self, trigger_id: Uuid) -> Result<TaskResponse> {
+        let url = self.build_url(&api_workflow_trigger(trigger_id)).await?;
+        let response = self.send(self.http_delete(url.clone())).await?;
+        let response = Self::handle_response(url, response).await?;
+        Ok(response.json::<TaskResponse>().await?)
+    }
+
+    pub async fn create_workflow_trigger_run(
+        &self,
+        trigger_id: Uuid,
+        parameters: Value,
+        debug: bool,
+    ) -> Result<WorkflowRun> {
+        let url = self
+            .build_url(&api_workflow_trigger_runs(trigger_id))
+            .await?;
+        let response = self
+            .send(
+                self.http_post(url.clone())
+                    .json(&json!({ "parameters": parameters, "debug": debug })),
+            )
+            .await?;
+        let response = Self::handle_response(url, response).await?;
+        let body = response.json::<Value>().await?;
+        serde_json::from_value(
+            body.get("run")
+                .cloned()
+                .ok_or_else(|| ApiError::UnexpectedResponse("missing run".into()))?
+                .into(),
+        )
+        .map_err(|err| ApiError::UnexpectedResponse(err.to_string()))
+    }
+
+    pub async fn create_workflow_run_with_debug(
+        &self,
+        workflow_id: Uuid,
+        parameters: Value,
+        debug: bool,
+    ) -> Result<WorkflowRun> {
+        self.create_workflow_run_with_options(workflow_id, parameters, debug, None)
+            .await
+    }
+
+    pub async fn create_workflow_run_with_options(
+        &self,
+        workflow_id: Uuid,
+        parameters: Value,
+        debug: bool,
+        name: Option<String>,
+    ) -> Result<WorkflowRun> {
+        let url = self.build_url(&api_workflow_runs(workflow_id)).await?;
+        let response = self
+            .send(
+                self.http_post(url.clone())
+                    .json(&json!({ "parameters": parameters, "debug": debug, "name": name })),
+            )
+            .await?;
+        let response = Self::handle_response(url, response).await?;
+        let body = response.json::<Value>().await?;
+        serde_json::from_value(
+            body.get("run")
+                .cloned()
+                .ok_or_else(|| ApiError::UnexpectedResponse("missing run".into()))?
+                .into(),
+        )
+        .map_err(|err| ApiError::UnexpectedResponse(err.to_string()))
+    }
+
+    pub async fn fetch_workflow_runs_by_status(
+        &self,
+        status: WorkflowStatus,
+    ) -> Result<Vec<WorkflowRun>> {
+        let url = self
+            .build_url(&format!("{API_WORKFLOW_RUNS}?status={}", status.as_str()))
+            .await?;
+        let response = self.send(self.http_get(url.clone())).await?;
+        let response = Self::handle_response(url, response).await?;
+        Ok(response.json::<Vec<WorkflowRun>>().await?)
+    }
+
+    pub async fn claim_workflow_runs_for_scheduler(
+        &self,
+        scheduler_id: &str,
+        statuses: &[WorkflowStatus],
+        lease_until: DateTime<Utc>,
+        limit: i64,
+    ) -> Result<Vec<WorkflowRun>> {
+        let url = self.build_url(API_SCHEDULER_WORKFLOW_RUNS_CLAIM).await?;
+        let response = self
+            .send(self.http_post(url.clone()).json(&json!({
+                "scheduler_id": scheduler_id,
+                "statuses": statuses,
+                "lease_until": lease_until,
+                "limit": limit
+            })))
+            .await?;
+        let response = Self::handle_response(url, response).await?;
+        Ok(response.json::<Vec<WorkflowRun>>().await?)
+    }
+
+    pub async fn renew_workflow_run_claim(
+        &self,
+        workflow_run_id: Uuid,
+        scheduler_id: &str,
+        lease_until: DateTime<Utc>,
+    ) -> Result<TaskResponse> {
+        let url = self
+            .build_url(&api_scheduler_workflow_run_claim_renew(workflow_run_id))
+            .await?;
+        let response = self
+            .send(
+                self.http_post(url.clone())
+                    .json(&json!({ "scheduler_id": scheduler_id, "lease_until": lease_until })),
+            )
+            .await?;
+        let response = Self::handle_response(url, response).await?;
+        Ok(response.json::<TaskResponse>().await?)
+    }
+
+    pub async fn release_workflow_run_claim(
+        &self,
+        workflow_run_id: Uuid,
+        scheduler_id: &str,
+    ) -> Result<TaskResponse> {
+        let url = self
+            .build_url(&api_scheduler_workflow_run_claim_release(workflow_run_id))
+            .await?;
+        let response = self
+            .send(
+                self.http_post(url.clone())
+                    .json(&json!({ "scheduler_id": scheduler_id })),
+            )
+            .await?;
+        let response = Self::handle_response(url, response).await?;
+        Ok(response.json::<TaskResponse>().await?)
+    }
+
+    pub async fn fetch_workflow_runs(
+        &self,
+        status: Option<WorkflowStatus>,
+        workflow_id: Option<Uuid>,
+    ) -> Result<Vec<WorkflowRun>> {
+        let mut url = self.build_url(API_WORKFLOW_RUNS).await?;
+        if let Some(status) = status {
+            url.query_pairs_mut().append_pair("status", status.as_str());
+        }
+        if let Some(workflow_id) = workflow_id {
+            url.query_pairs_mut()
+                .append_pair("workflow_id", &workflow_id.to_string());
+        }
+        let response = self.send(self.http_get(url.clone())).await?;
+        let response = Self::handle_response(url, response).await?;
+        Ok(response.json::<Vec<WorkflowRun>>().await?)
+    }
+
+    pub async fn fetch_workflow_runs_by_name(
+        &self,
+        name: &str,
+        open_only: bool,
+    ) -> Result<Vec<WorkflowRun>> {
+        let mut url = self.build_url(API_WORKFLOW_RUNS).await?;
+        url.query_pairs_mut()
+            .append_pair("name", name)
+            .append_pair("open", if open_only { "true" } else { "false" });
+        let response = self.send(self.http_get(url.clone())).await?;
+        let response = Self::handle_response(url, response).await?;
+        Ok(response.json::<Vec<WorkflowRun>>().await?)
+    }
+
+    pub async fn update_workflow_run(
+        &self,
+        workflow_run_id: Uuid,
+        status: WorkflowStatus,
+        active_node_id: Option<String>,
+        state: Option<Value>,
+        message: Option<String>,
+    ) -> Result<TaskResponse> {
+        let url = self.build_url(&api_workflow_run(workflow_run_id)).await?;
+        let response = self
+            .send(self.http_patch(url.clone()).json(&json!({
+                "status": status,
+                "active_node_id": active_node_id,
+                "state": state,
+                "message": message
+            })))
+            .await?;
+        let response = Self::handle_response(url, response).await?;
+        Ok(response.json::<TaskResponse>().await?)
+    }
+
+    pub async fn rename_workflow_run(
+        &self,
+        workflow_run_id: Uuid,
+        name: Option<String>,
+    ) -> Result<TaskResponse> {
+        let url = self
+            .build_url(&api_workflow_run_rename(workflow_run_id))
+            .await?;
+        let response = self
+            .send(self.http_post(url.clone()).json(&json!({ "name": name })))
+            .await?;
+        let response = Self::handle_response(url, response).await?;
+        Ok(response.json::<TaskResponse>().await?)
+    }
+
+    pub async fn pause_workflow_run(&self, workflow_run_id: Uuid) -> Result<TaskResponse> {
+        self.post_workflow_run_command(workflow_run_id, "pause")
+            .await
+    }
+
+    pub async fn resume_workflow_run(&self, workflow_run_id: Uuid) -> Result<TaskResponse> {
+        self.post_workflow_run_command(workflow_run_id, "resume")
+            .await
+    }
+
+    pub async fn cancel_workflow_run(&self, workflow_run_id: Uuid) -> Result<TaskResponse> {
+        self.post_workflow_run_command(workflow_run_id, "cancel")
+            .await
+    }
+
+    pub async fn replay_workflow_run(
+        &self,
+        workflow_run_id: Uuid,
+        from_step_id: Option<String>,
+    ) -> Result<WorkflowRun> {
+        self.replay_workflow_run_reviewed(
+            workflow_run_id,
+            &runinator_models::replay::ReplayOptions {
+                from_step_id,
+                ..Default::default()
+            },
+        )
+        .await
+    }
+
+    pub async fn workflow_replay_plan(
+        &self,
+        workflow_run_id: Uuid,
+        from_step_id: Option<&str>,
+    ) -> Result<runinator_models::replay::ReplayPlan> {
+        let mut url = self
+            .build_url(&runinator_models::api_routes::api_workflow_run_replay_plan(
+                workflow_run_id,
+            ))
+            .await?;
+        if let Some(node) = from_step_id {
+            url.query_pairs_mut().append_pair("from_step_id", node);
+        }
+        let response = self.send(self.http_get(url.clone())).await?;
+        Ok(Self::handle_response(url, response).await?.json().await?)
+    }
+
+    pub async fn workflow_contract_impact(
+        &self,
+        workflow: &WorkflowDefinition,
+    ) -> Result<runinator_models::workflow_contracts::WorkflowContractImpact> {
+        let id = workflow
+            .id
+            .ok_or_else(|| ApiError::UnexpectedResponse("workflow id is required".into()))?;
+        let url = self
+            .build_url(&runinator_models::api_routes::api_workflow_contract_impact(
+                id,
+            ))
+            .await?;
+        let response = self
+            .send(self.http_post(url.clone()).json(workflow))
+            .await?;
+        Ok(Self::handle_response(url, response).await?.json().await?)
+    }
+
+    pub async fn replay_workflow_run_reviewed(
+        &self,
+        workflow_run_id: Uuid,
+        options: &runinator_models::replay::ReplayOptions,
+    ) -> Result<WorkflowRun> {
+        let url = self
+            .build_url(&api_workflow_run_replay(workflow_run_id))
+            .await?;
+        let response = self.send(self.http_post(url.clone()).json(options)).await?;
+        let response = Self::handle_response(url, response).await?;
+        let body = response.json::<Value>().await?;
+        serde_json::from_value(
+            body.get("run")
+                .cloned()
+                .ok_or_else(|| ApiError::UnexpectedResponse("missing run".into()))?
+                .into(),
+        )
+        .map_err(|err| ApiError::UnexpectedResponse(err.to_string()))
+    }
+
+    pub(super) async fn post_workflow_run_command(
+        &self,
+        workflow_run_id: Uuid,
+        command: &str,
+    ) -> Result<TaskResponse> {
+        let url = self
+            .build_url(&api_workflow_run_command(workflow_run_id, command))
+            .await?;
+        let response = self
+            .send(self.http_post(url.clone()).json(&json!({})))
+            .await?;
+        let response = Self::handle_response(url, response).await?;
+        Ok(response.json::<TaskResponse>().await?)
+    }
+
+    pub async fn fetch_workflow_run(&self, workflow_run_id: Uuid) -> Result<WorkflowRun> {
+        let url = self.build_url(&api_workflow_run(workflow_run_id)).await?;
+        let response = self.send(self.http_get(url.clone())).await?;
+        let response = Self::handle_response(url, response).await?;
+        let body = response.json::<Value>().await?;
+        serde_json::from_value(
+            body.get("run")
+                .cloned()
+                .ok_or_else(|| ApiError::UnexpectedResponse("missing run".into()))?
+                .into(),
+        )
+        .map_err(|err| ApiError::UnexpectedResponse(err.to_string()))
+    }
+
+    pub async fn delete_workflow_run(&self, workflow_run_id: Uuid) -> Result<TaskResponse> {
+        let url = self
+            .build_url(&format!("/workflow_runs/{workflow_run_id}"))
+            .await?;
+        let response = self.send(self.http_delete(url.clone())).await?;
+        let response = Self::handle_response(url, response).await?;
+        Ok(response.json::<TaskResponse>().await?)
+    }
+
+    /// Read VM execution branches for a workflow run.  This is the successor to graph-cursor and
+    /// node-run reads for compiled runs.
+    pub async fn fetch_workflow_continuations(
+        &self,
+        workflow_run_id: Uuid,
+    ) -> Result<Vec<WorkflowContinuation>> {
+        let url = self
+            .build_url(&api_workflow_run_continuations(workflow_run_id))
+            .await?;
+        let response =
+            Self::handle_response(url.clone(), self.send(self.http_get(url.clone())).await?)
+                .await?;
+        Ok(response.json::<Vec<WorkflowContinuation>>().await?)
+    }
+
+    pub async fn fetch_workflow_continuation(
+        &self,
+        continuation_id: Uuid,
+    ) -> Result<WorkflowContinuation> {
+        let url = self
+            .build_url(&api_workflow_continuation(continuation_id))
+            .await?;
+        let response =
+            Self::handle_response(url.clone(), self.send(self.http_get(url.clone())).await?)
+                .await?;
+        Ok(response.json::<WorkflowContinuation>().await?)
+    }
+
+    pub async fn fetch_workflow_effects(
+        &self,
+        workflow_run_id: Uuid,
+    ) -> Result<Vec<WorkflowEffect>> {
+        let url = self
+            .build_url(&api_workflow_run_effects(workflow_run_id))
+            .await?;
+        let response =
+            Self::handle_response(url.clone(), self.send(self.http_get(url.clone())).await?)
+                .await?;
+        Ok(response.json::<Vec<WorkflowEffect>>().await?)
+    }
+
+    pub async fn fetch_workflow_effect(&self, effect_id: Uuid) -> Result<WorkflowEffect> {
+        let url = self.build_url(&api_workflow_effect(effect_id)).await?;
+        let response =
+            Self::handle_response(url.clone(), self.send(self.http_get(url.clone())).await?)
+                .await?;
+        Ok(response.json::<WorkflowEffect>().await?)
+    }
+
+    pub async fn fetch_workflow_effect_output(
+        &self,
+        effect_id: Uuid,
+    ) -> Result<Vec<WorkflowEffectOutputEvent>> {
+        let url = self
+            .build_url(&api_workflow_effect_output(effect_id))
+            .await?;
+        let response =
+            Self::handle_response(url.clone(), self.send(self.http_get(url.clone())).await?)
+                .await?;
+        Ok(response.json::<Vec<WorkflowEffectOutputEvent>>().await?)
+    }
+
+    /// Deliver one structured steering message to the worker currently owning a harnessed effect.
+    /// The service validates that the effect is active and opted into harness/terminal control.
+    pub async fn control_workflow_effect_terminal(
+        &self,
+        effect_id: Uuid,
+        control: ProviderTerminalControl,
+    ) -> Result<TaskResponse> {
+        let url = self
+            .build_url(&format!("/workflow_effects/{effect_id}/terminal"))
+            .await?;
+        let response = self
+            .send(self.http_post(url.clone()).json(&control))
+            .await?;
+        let response = Self::handle_response(url, response).await?;
+        Ok(response.json::<TaskResponse>().await?)
+    }
+
+    pub async fn settle_workflow_effect(
+        &self,
+        effect_id: Uuid,
+        status: WorkflowEffectStatus,
+        output: Option<Value>,
+        message: Option<String>,
+    ) -> Result<TaskResponse> {
+        let url = self
+            .build_url(&format!("{}/settle", api_workflow_effect(effect_id)))
+            .await?;
+        let response = self
+            .send(
+                self.http_post(url.clone())
+                    .json(&json!({ "status": status, "output": output, "message": message })),
+            )
+            .await?;
+        let response = Self::handle_response(url, response).await?;
+        Ok(response.json::<TaskResponse>().await?)
+    }
+
+    pub async fn fetch_workflow_journal(
+        &self,
+        workflow_run_id: Uuid,
+    ) -> Result<Vec<WorkflowJournalRecord>> {
+        let url = self
+            .build_url(&api_workflow_run_journal(workflow_run_id))
+            .await?;
+        let response =
+            Self::handle_response(url.clone(), self.send(self.http_get(url.clone())).await?)
+                .await?;
+        Ok(response.json::<Vec<WorkflowJournalRecord>>().await?)
+    }
+
+    /// Render graph markers from the persisted continuation IP and the immutable source map.
+    pub async fn fetch_workflow_vm_cursors(
+        &self,
+        workflow_run_id: Uuid,
+    ) -> Result<Vec<WorkflowVmCursor>> {
+        let url = self
+            .build_url(&api_workflow_run_cursors(workflow_run_id))
+            .await?;
+        let response =
+            Self::handle_response(url.clone(), self.send(self.http_get(url.clone())).await?)
+                .await?;
+        Ok(response.json::<Vec<WorkflowVmCursor>>().await?)
+    }
+
+    pub async fn fetch_workflow_run_transitions(
+        &self,
+        workflow_run_id: Uuid,
+    ) -> Result<Vec<runinator_models::orchestration::NodeTransition>> {
+        let url = self
+            .build_url(&api_workflow_run_transitions(workflow_run_id))
+            .await?;
+        let response = self.send(self.http_get(url.clone())).await?;
+        let response = Self::handle_response(url, response).await?;
+        Ok(response
+            .json::<Vec<runinator_models::orchestration::NodeTransition>>()
+            .await?)
+    }
+
+    pub async fn fetch_supervisor_status(&self) -> Result<Value> {
+        let url = self.build_url(API_SUPERVISOR_STATUS).await?;
+        let response = self.send(self.http_get(url.clone())).await?;
+        let response = Self::handle_response(url, response).await?;
+        Ok(response.json::<Value>().await?)
+    }
+
+    pub async fn fetch_approvals(&self, workflow_run_id: Option<Uuid>) -> Result<Vec<Value>> {
+        let mut url = self.build_url(API_APPROVALS).await?;
+        if let Some(workflow_run_id) = workflow_run_id {
+            url.query_pairs_mut()
+                .append_pair("workflow_run_id", &workflow_run_id.to_string());
+        }
+        let response = self.send(self.http_get(url.clone())).await?;
+        let response = Self::handle_response(url, response).await?;
+        Ok(response.json::<Vec<Value>>().await?)
+    }
+
+    pub async fn settle_approval_effect(
+        &self,
+        effect_id: Uuid,
+        approved: bool,
+        message: Option<String>,
+        output_json: Option<Value>,
+    ) -> Result<Value> {
+        let url = self
+            .build_url(&format!("{API_WORKFLOW_EFFECTS}/{effect_id}/settle"))
+            .await?;
+        let response = self
+            .send(self.http_post(url.clone()).json(&json!({
+                "status": if approved { "succeeded" } else { "failed" },
+                "message": message,
+                "output": output_json
+            })))
+            .await?;
+        let response = Self::handle_response(url, response).await?;
+        Ok(response.json::<Value>().await?)
+    }
+
+    pub async fn create_automation_record(&self, path: &str, record: Value) -> Result<Value> {
+        let url = self.build_url(path).await?;
+        let response = self.send(self.http_post(url.clone()).json(&record)).await?;
+        let response = Self::handle_response(url, response).await?;
+        Ok(response.json::<Value>().await?)
+    }
+
+    pub async fn fetch_idempotency_key(
+        &self,
+        scope: &str,
+        key: &str,
+        consumer_run_id: Uuid,
+    ) -> Result<Option<Value>> {
+        let url = self
+            .build_url(&format!(
+                "{API_IDEMPOTENCY_KEYS}?scope={scope}&key={key}&consumer_run_id={consumer_run_id}"
+            ))
+            .await?;
+        let response = self.send(self.http_get(url.clone())).await?;
+        if response.status() == reqwest::StatusCode::NOT_FOUND {
+            return Ok(None);
+        }
+        let response = Self::handle_response(url, response).await?;
+        Ok(Some(response.json::<Value>().await?))
+    }
+
+    /// reserve an action node's idempotency key before invoking its provider. the reply says whether
+    /// this node run may execute, must replay an already-recorded result, or lost to another claimant.
+    pub async fn claim_idempotency_key(
+        &self,
+        key: &str,
+        owner_node_run_id: Uuid,
+        consumer_run_id: Uuid,
+        lease_seconds: i64,
+    ) -> Result<IdempotencyClaim> {
+        let url = self.build_url(API_IDEMPOTENCY_KEYS_CLAIM).await?;
+        let response = self
+            .send(self.http_post(url.clone()).json(&IdempotencyClaimRequest {
+                consumer_run_id,
+                scope: ACTION_IDEMPOTENCY_SCOPE.into(),
+                key: key.to_string(),
+                owner_node_run_id,
+                lease_seconds,
+            }))
+            .await?;
+        let response = Self::handle_response(url, response).await?;
+        Ok(response.json::<IdempotencyClaim>().await?)
+    }
+
+    /// record this node run's terminal outcome against the key it reserved, so a redelivery replays
+    /// it instead of re-invoking the provider. `Ok(false)` means the reservation was no longer ours.
+    pub async fn complete_idempotency_key(
+        &self,
+        key: &str,
+        owner_node_run_id: Uuid,
+        consumer_run_id: Uuid,
+        result: Value,
+    ) -> Result<bool> {
+        let url = self.build_url(API_IDEMPOTENCY_KEYS_COMPLETE).await?;
+        let response = self
+            .send(
+                self.http_post(url.clone())
+                    .json(&IdempotencyCompleteRequest {
+                        consumer_run_id,
+                        scope: ACTION_IDEMPOTENCY_SCOPE.into(),
+                        key: key.to_string(),
+                        owner_node_run_id,
+                        result,
+                    }),
+            )
+            .await?;
+        let response = Self::handle_response(url, response).await?;
+        Ok(response.json::<TaskResponse>().await?.success)
+    }
+
+    /// free an unfinished reservation after a non-success outcome, so a retry is not held off.
+    pub async fn release_idempotency_key(
+        &self,
+        key: &str,
+        owner_node_run_id: Uuid,
+        consumer_run_id: Uuid,
+    ) -> Result<bool> {
+        let url = self.build_url(API_IDEMPOTENCY_KEYS_RELEASE).await?;
+        let response = self
+            .send(
+                self.http_post(url.clone())
+                    .json(&IdempotencyReleaseRequest {
+                        consumer_run_id,
+                        scope: ACTION_IDEMPOTENCY_SCOPE.into(),
+                        key: key.to_string(),
+                        owner_node_run_id,
+                    }),
+            )
+            .await?;
+        let response = Self::handle_response(url, response).await?;
+        Ok(response.json::<TaskResponse>().await?.success)
+    }
+
+    pub async fn put_idempotency_key(
+        &self,
+        scope: &str,
+        key: &str,
+        consumer_run_id: Uuid,
+        result: Value,
+    ) -> Result<Value> {
+        let url = self.build_url(API_IDEMPOTENCY_KEYS).await?;
+        let response = self
+            .send(self.http_post(url.clone()).json(&json!({
+                "consumer_run_id": consumer_run_id,
+                "scope": scope,
+                "key": key,
+                "result": result
+            })))
+            .await?;
+        let response = Self::handle_response(url, response).await?;
+        Ok(response.json::<Value>().await?)
+    }
+
+    pub async fn fetch_credential(&self, scope: &str, name: &str) -> Result<String> {
+        let mut url = self.build_url(API_CREDENTIALS).await?;
+        url.query_pairs_mut()
+            .append_pair("scope", scope)
+            .append_pair("name", name);
+        let response = self.send(self.http_get(url.clone())).await?;
+        let response = Self::handle_response(url, response).await?;
+        let body = response.json::<Value>().await?;
+        body.get("value")
+            .and_then(Value::as_str)
+            .map(str::to_owned)
+            .ok_or_else(|| ApiError::UnexpectedResponse("missing credential secret".into()))
+    }
+
+    /// Fetch a secret through its durable logical identity. UUID-backed workflow bindings use
+    /// this path so moving the human-readable scope/name alias cannot break a queued action.
+    pub async fn fetch_credential_by_id(&self, id: Uuid) -> Result<String> {
+        let url = self.build_url(&format!("/runtime/secrets/{id}")).await?;
+        let response = self.send(self.http_get(url.clone())).await?;
+        let response = Self::handle_response(url, response).await?;
+        let body = response.json::<Value>().await?;
+        body.get("value")
+            .and_then(Value::as_str)
+            .map(str::to_owned)
+            .ok_or_else(|| ApiError::UnexpectedResponse("missing credential secret".into()))
+    }
+
+    pub async fn fetch_credential_by_id_for_run(&self, id: Uuid, run_id: Uuid) -> Result<String> {
+        let mut url = self.build_url(&format!("/runtime/secrets/{id}")).await?;
+        url.query_pairs_mut()
+            .append_pair("consumer_run_id", &run_id.to_string());
+        let response = self.send(self.http_get(url.clone())).await?;
+        let response = Self::handle_response(url, response).await?;
+        let body = response.json::<Value>().await?;
+        body.get("value")
+            .and_then(Value::as_str)
+            .map(str::to_owned)
+            .ok_or_else(|| ApiError::UnexpectedResponse("missing credential secret".into()))
+    }
+
+    pub(super) async fn build_url(&self, path: &str) -> Result<Url> {
+        let base = self
+            .locator
+            .wait_for_service_url()
+            .await
+            .map_err(ApiError::discovery)?;
+        let base_url = Url::parse(&base).map_err(|source| ApiError::InvalidBaseUrl {
+            url: base.clone(),
+            source,
+        })?;
+        let trimmed_path = path.trim_start_matches('/');
+        base_url
+            .join(trimmed_path)
+            .map_err(|source| ApiError::InvalidPath {
+                base: base_url.clone(),
+                path: trimmed_path.to_string(),
+                source,
+            })
+    }
+
+    pub(super) async fn handle_response(url: Url, response: Response) -> Result<Response> {
+        let status = response.status();
+        if status.is_success() {
+            Ok(response)
+        } else {
+            let message = response
+                .text()
+                .await
+                .unwrap_or_else(|_| "<unable to read body>".into());
+            Err(ApiError::Http {
+                status,
+                url,
+                message,
+            })
+        }
+    }
+}

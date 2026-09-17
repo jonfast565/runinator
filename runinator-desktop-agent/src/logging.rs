@@ -171,90 +171,22 @@ fn directive_filter(level: LogLevel) -> EnvFilter {
 }
 
 // a `MakeWriter` that feeds each formatted tracing line into the in-app log console.
-struct ConsoleMakeWriter {
-    shared: SharedHandle,
-}
-
-impl<'a> MakeWriter<'a> for ConsoleMakeWriter {
-    type Writer = ConsoleWriter;
-
-    fn make_writer(&'a self) -> Self::Writer {
-        ConsoleWriter {
-            shared: self.shared.clone(),
-            buf: Vec::new(),
-        }
-    }
-}
 
 // buffers one event's bytes and flushes them as console lines on drop (the fmt layer creates a fresh
 // writer per event and drops it once the line is written).
-struct ConsoleWriter {
-    shared: SharedHandle,
-    buf: Vec<u8>,
-}
-
-impl Write for ConsoleWriter {
-    fn write(&mut self, data: &[u8]) -> std::io::Result<usize> {
-        self.buf.extend_from_slice(data);
-        Ok(data.len())
-    }
-
-    fn flush(&mut self) -> std::io::Result<()> {
-        Ok(())
-    }
-}
-
-impl Drop for ConsoleWriter {
-    fn drop(&mut self) {
-        if self.buf.is_empty() {
-            return;
-        }
-        let text = String::from_utf8_lossy(&self.buf);
-        for line in text.lines() {
-            let trimmed = line.trim_end();
-            if !trimmed.is_empty() {
-                try_log_line(&self.shared, trimmed.to_string());
-            }
-        }
-    }
-}
 
 // a `MakeWriter` that appends each formatted tracing line to the shared log file. the fmt layer
 // writes a whole event per `make_writer`, so a single locked write per event keeps lines intact
 // without interleaving across threads.
-struct FileMakeWriter {
-    file: Arc<Mutex<File>>,
-}
 
-impl<'a> MakeWriter<'a> for FileMakeWriter {
-    type Writer = FileWriter;
+mod console_make_writer;
+use console_make_writer::ConsoleMakeWriter;
 
-    fn make_writer(&'a self) -> Self::Writer {
-        FileWriter {
-            file: self.file.clone(),
-        }
-    }
-}
+mod console_writer;
+use console_writer::ConsoleWriter;
 
-struct FileWriter {
-    file: Arc<Mutex<File>>,
-}
+mod file_make_writer;
+use file_make_writer::FileMakeWriter;
 
-impl Write for FileWriter {
-    fn write(&mut self, data: &[u8]) -> std::io::Result<usize> {
-        // a poisoned lock still yields the guard; a dropped file write is not worth panicking over.
-        let mut file = match self.file.lock() {
-            Ok(file) => file,
-            Err(poisoned) => poisoned.into_inner(),
-        };
-        file.write_all(data)?;
-        Ok(data.len())
-    }
-
-    fn flush(&mut self) -> std::io::Result<()> {
-        match self.file.lock() {
-            Ok(mut file) => file.flush(),
-            Err(poisoned) => poisoned.into_inner().flush(),
-        }
-    }
-}
+mod file_writer;
+use file_writer::FileWriter;

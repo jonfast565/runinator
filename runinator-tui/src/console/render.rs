@@ -22,37 +22,6 @@ const MAX_MENU_ROWS: u16 = 3;
 /// how many candidates the menu puts on one row.
 const MENU_COLUMNS: usize = 6;
 
-/// where each band of the frame sits.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) struct Bands {
-    pub status: Rect,
-    /// the output band, top border included.
-    pub output: Rect,
-    /// the input band, top border included.
-    pub input: Rect,
-    pub menu: Rect,
-    pub legend: Rect,
-}
-
-impl Bands {
-    /// the rows of the output band that hold text, which is the pane height every scroll is in
-    /// terms of.
-    pub(crate) fn output_lines(&self) -> Rect {
-        inner(self.output)
-    }
-
-    /// the pane the pointer at `position` is over, when it is over one that scrolls.
-    pub(crate) fn pane_at(&self, position: Position) -> Option<Pane> {
-        if self.output.contains(position) {
-            return Some(Pane::Output);
-        }
-        if self.input.contains(position) || self.menu.contains(position) {
-            return Some(Pane::Input);
-        }
-        None
-    }
-}
-
 /// the two halves of the console that scroll independently.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Pane {
@@ -61,25 +30,6 @@ pub(crate) enum Pane {
 }
 
 /// everything the console draws, gathered by the caller so drawing stays a pure function of it.
-pub(crate) struct PromptView<'a> {
-    pub session: &'a str,
-    pub api_base_url: &'a str,
-    /// what the console is doing, shown at the right of the status line.
-    pub state: &'a str,
-    /// the retained output and where the pane is looking.
-    pub output: &'a Window<'a>,
-    pub buffer: &'a str,
-    /// caret position in the buffer, as (line, column).
-    pub caret: (usize, usize),
-    /// the first visible buffer line, when the input pane has been scrolled by hand. `None` follows
-    /// the caret, which is what typing does.
-    pub input_scroll: Option<u16>,
-    pub menu: &'a [String],
-    /// what belongs at the caret, when `Tab` had nothing to insert.
-    pub hint: Option<&'a str>,
-    /// a transient message: the last error, or what a command reported.
-    pub note: Option<&'a str>,
-}
 
 /// where the bands fall for an area, an input buffer, and a menu of `candidates` entries.
 pub(crate) fn bands(area: Rect, buffer: &str, candidates: usize, footer: bool) -> Bands {
@@ -292,3 +242,9 @@ fn inner(band: Rect) -> Rect {
 #[cfg(test)]
 #[path = "render_tests.rs"]
 mod tests;
+
+mod bands;
+pub(crate) use bands::Bands;
+
+mod prompt_view;
+pub(crate) use prompt_view::PromptView;

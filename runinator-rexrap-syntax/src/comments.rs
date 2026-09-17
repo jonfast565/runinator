@@ -14,33 +14,6 @@ pub enum CommentKind {
     Block,
 }
 
-/// a single source comment with its byte span and verbatim text (delimiters included).
-#[derive(Debug, Clone, PartialEq)]
-pub struct Comment {
-    pub kind: CommentKind,
-    /// the exact source text, e.g. `// note` or `/* note */`.
-    pub text: String,
-    pub span: Span,
-    /// true when only whitespace precedes the comment on its line (so it renders on its own line).
-    pub own_line: bool,
-}
-
-/// the comments bound to one ast anchor: `leading` render on their own lines above it, `trailing`
-/// renders as a suffix on the anchor's last line, and `dangling` render on their own lines after it
-/// (used for comments trapped after the last statement of a block, before its closing brace).
-#[derive(Debug, Clone, Default, PartialEq)]
-pub struct CommentSet {
-    pub leading: Vec<Comment>,
-    pub trailing: Option<Comment>,
-    pub dangling: Vec<Comment>,
-}
-
-impl CommentSet {
-    pub fn is_empty(&self) -> bool {
-        self.leading.is_empty() && self.trailing.is_none() && self.dangling.is_empty()
-    }
-}
-
 /// lex every comment out of `src`, skipping comment-like byte sequences that live inside string
 /// literals (including `${...}` interpolation), verbatim strings, and raw ` ``` ` blocks. returns
 /// them in source order.
@@ -196,23 +169,6 @@ pub fn attach_comments(document: &mut Document, src: &str) {
     }
     let mut cursor = Cursor { comments, i: 0 };
     attach_document(document, &mut cursor, src);
-}
-
-struct Cursor {
-    comments: Vec<Comment>,
-    i: usize,
-}
-
-impl Cursor {
-    fn peek(&self) -> Option<&Comment> {
-        self.comments.get(self.i)
-    }
-
-    fn take(&mut self) -> Comment {
-        let comment = self.comments[self.i].clone();
-        self.i += 1;
-        comment
-    }
 }
 
 // consume every comment starting before `pos` into `dst`.
@@ -504,3 +460,12 @@ fn nested_blocks_mut(kind: &mut StmtKind) -> Vec<&mut Block> {
 
 #[cfg(test)]
 mod comments_tests;
+
+mod comment;
+pub use comment::Comment;
+
+mod comment_set;
+pub use comment_set::CommentSet;
+
+mod cursor;
+use cursor::Cursor;

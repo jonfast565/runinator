@@ -57,61 +57,6 @@ impl ExportFormat {
     }
 }
 
-/// optional file output for a row-returning statement. absent means results are returned
-/// in-band only.
-#[derive(Clone, Debug, Deserialize)]
-pub struct ExportSpec {
-    pub folder: String,
-    #[serde(default)]
-    pub format: ExportFormat,
-    #[serde(default)]
-    pub name: Option<String>,
-    #[serde(default)]
-    pub file_prefix: Option<String>,
-}
-
-#[derive(Clone, Debug)]
-pub struct ExportedFile {
-    pub name: String,
-    pub rows: usize,
-    pub path: PathBuf,
-    pub mime_type: String,
-    pub size_bytes: i64,
-    pub format: ExportFormat,
-}
-
-impl ExportedFile {
-    pub fn to_json(&self) -> Value {
-        json!({
-            "name": self.name,
-            "rows": self.rows,
-            "path": self.path,
-            "format": self.format.as_str(),
-            "size_bytes": self.size_bytes,
-        })
-    }
-
-    pub fn to_artifact(&self) -> NewRunArtifact {
-        NewRunArtifact {
-            name: self
-                .path
-                .file_name()
-                .map(|name| name.to_string_lossy().into_owned())
-                .unwrap_or_else(|| self.name.clone()),
-            mime_type: self.mime_type.clone(),
-            size_bytes: self.size_bytes,
-            uri: self.path.to_string_lossy().into_owned(),
-            metadata: json!({
-                "provider": "db",
-                "statement_name": self.name,
-                "rows": self.rows,
-                "format": self.format.as_str(),
-            })
-            .into(),
-        }
-    }
-}
-
 /// write a row set to disk using the shared table exporters. `counts` carries dedupe state so
 /// a script exporting several same-named steps does not overwrite its own files.
 pub fn export_rows(
@@ -158,3 +103,9 @@ pub fn export_rows(
         format: spec.format,
     })
 }
+
+mod export_spec;
+pub use export_spec::ExportSpec;
+
+mod exported_file;
+pub use exported_file::ExportedFile;

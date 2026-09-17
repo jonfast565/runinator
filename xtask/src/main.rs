@@ -17,13 +17,6 @@ use clap::{Parser, Subcommand, ValueEnum};
 use runinator_db_cli::DatabaseBackend;
 use service::XtaskService;
 
-#[derive(Parser)]
-#[command(name = "xtask", about = "Runinator workspace build and deploy tasks")]
-struct Cli {
-    #[command(subcommand)]
-    command: Command,
-}
-
 #[derive(Subcommand)]
 enum Command {
     /// Build the cargo workspace and the host-only credential tools.
@@ -43,19 +36,6 @@ enum Command {
     },
 }
 
-#[derive(clap::Args)]
-struct BuildArgs {
-    /// cargo build profile (`dev` maps to the `target/debug` directory).
-    #[arg(long, default_value = "dev")]
-    profile: String,
-    /// skip compiling the packaged tools/keychain-export collector command.
-    #[arg(long, default_value_t = false)]
-    skip_credential_tools: bool,
-    /// rustup target to ensure is installed when building on windows.
-    #[arg(long, default_value = "x86_64-pc-windows-msvc")]
-    windows_target_triple: String,
-}
-
 #[derive(Subcommand)]
 enum LocalCommand {
     /// Build (unless --skip-build) and start the local stack in the foreground.
@@ -66,31 +46,6 @@ enum LocalCommand {
 enum LocalTopology {
     Standalone,
     Supervisor,
-}
-
-#[derive(clap::Args)]
-struct LocalUpArgs {
-    /// local process topology.
-    #[arg(long, value_enum, default_value = "standalone")]
-    topology: LocalTopology,
-    /// cargo build profile (`dev` maps to the `target/debug` directory).
-    #[arg(long, default_value = "dev")]
-    profile: String,
-    /// assume the workspace and credential tools are already built.
-    #[arg(long, default_value_t = false)]
-    skip_build: bool,
-    /// rustup target to ensure is installed when building on windows.
-    #[arg(long, default_value = "x86_64-pc-windows-msvc")]
-    windows_target_triple: String,
-    /// database backend for the local web service.
-    #[arg(long = "database", value_enum, default_value = "sqlite")]
-    database_backend: DatabaseBackend,
-    /// sqlite file path (only used when --database sqlite). defaults to ~/.runinator/runinator.db.
-    #[arg(long)]
-    database_path: Option<PathBuf>,
-    /// connection URL (required for --database postgres/mariadb).
-    #[arg(long)]
-    database_url: Option<String>,
 }
 
 #[derive(Subcommand)]
@@ -131,112 +86,6 @@ impl K8sCommand {
             Self::Delete(_) => "delete",
         }
     }
-}
-
-#[derive(clap::Args)]
-struct K8sWorkspaceResetArgs {
-    #[arg(long)]
-    kube_context: Option<String>,
-    #[arg(long, conflicts_with = "resume")]
-    discard_workspaces: bool,
-    #[arg(long)]
-    resume: bool,
-}
-
-#[derive(clap::Args)]
-struct K8sGrafanaArgs {
-    /// kubectl context to use; defaults to the current context.
-    #[arg(long)]
-    kube_context: Option<String>,
-    /// kustomize overlay directory or a raw manifest file.
-    #[arg(long, default_value = "deploy/k8s/overlays/local")]
-    manifest: PathBuf,
-}
-
-#[derive(clap::Args)]
-struct K8sDatabaseArgs {
-    /// kubectl context to use; defaults to the current context.
-    #[arg(long)]
-    kube_context: Option<String>,
-    /// kustomize overlay directory.
-    #[arg(long, default_value = "deploy/k8s/overlays/local")]
-    manifest: PathBuf,
-    /// discard the PostgreSQL data PVC before recreating the database. This destroys all durable
-    /// Runinator state, then re-runs the web-service bootstrap.
-    #[arg(long, default_value_t = false)]
-    from_scratch: bool,
-}
-
-#[derive(clap::Args)]
-struct K8sRabbitMqRecoveryArgs {
-    /// kubectl context to use; defaults to the current context.
-    #[arg(long)]
-    kube_context: Option<String>,
-    /// Required acknowledgement that the corrupted RabbitMQ vhost's in-flight messages are lost.
-    #[arg(long)]
-    discard_broker_messages: bool,
-}
-
-#[derive(clap::Args)]
-struct K8sDeployArgs {
-    /// assume images are already built (and pushed, if applicable); only apply the manifest.
-    #[arg(long, default_value_t = false)]
-    skip_build: bool,
-    /// registry/repository prefix for built images (e.g. `registry.example.com/runinator`); images
-    /// are pushed automatically when this is set.
-    #[arg(long)]
-    image_repository: Option<String>,
-    /// tag applied to built images. `local` becomes `<workspace-version>-kube-<timestamp>` so every
-    /// deploy is versioned and distinguishable.
-    #[arg(long, default_value = "local")]
-    image_tag: String,
-    /// Database driver compiled into Kubernetes runtime images. The manifest must configure the
-    /// same backend (the bundled overlays use postgres).
-    #[arg(long, value_parser = ["sqlite", "postgres", "mariadb"], default_value = "postgres")]
-    database_backend: String,
-    /// Broker transport compiled into Kubernetes runtime images. The manifest must configure the
-    /// same backend (the bundled overlays use rabbitmq).
-    #[arg(long, value_parser = ["http", "tcp", "kafka", "rabbitmq"], default_value = "rabbitmq")]
-    broker_backend: String,
-    /// shorthand for --image-repository pointing at a registry mirrored to the local cluster.
-    #[arg(long)]
-    local_registry: Option<String>,
-    /// number of timestamped Runinator releases to retain in --local-registry after a push; zero
-    /// disables registry cleanup.
-    #[arg(long, default_value_t = 5)]
-    registry_retention: usize,
-    /// kubectl context to use; defaults to the current context.
-    #[arg(long)]
-    kube_context: Option<String>,
-    /// kustomize overlay directory or a raw manifest file.
-    #[arg(long, default_value = "deploy/k8s/overlays/local")]
-    manifest: PathBuf,
-    /// re-apply the postgres/rabbitmq StatefulSets even if they already exist (may roll them).
-    #[arg(long, default_value_t = false)]
-    recreate_infra: bool,
-    /// inject the `components/direct-ingress` kustomize component (host-based ingress + a
-    /// debugging-only postgres NodePort). off by default so prod stays closed.
-    #[arg(long, default_value_t = false)]
-    expose_direct_ingress: bool,
-    /// only deploy the command-center web resources.
-    #[arg(long, default_value_t = false)]
-    command_center_only: bool,
-}
-
-#[derive(clap::Args)]
-struct K8sDeleteArgs {
-    /// kubectl context to use; defaults to the current context.
-    #[arg(long)]
-    kube_context: Option<String>,
-    /// kustomize overlay directory or a raw manifest file.
-    #[arg(long, default_value = "deploy/k8s/overlays/local")]
-    manifest: PathBuf,
-    /// match whichever kustomize component was enabled on deploy, so its resources are torn down too.
-    #[arg(long, default_value_t = false)]
-    expose_direct_ingress: bool,
-    /// only tear down the command-center web resources.
-    #[arg(long, default_value_t = false)]
-    command_center_only: bool,
 }
 
 fn main() -> anyhow::Result<()> {
@@ -546,3 +395,30 @@ fn run_k8s_recover_rabbitmq(
     println!("==> Rebuilding RabbitMQ's corrupted default vhost");
     k8s::deploy::recover_rabbitmq(workspace_root, args.kube_context.as_deref())
 }
+
+mod cli;
+use cli::Cli;
+
+mod build_args;
+use build_args::BuildArgs;
+
+mod local_up_args;
+use local_up_args::LocalUpArgs;
+
+mod k8s_workspace_reset_args;
+use k8s_workspace_reset_args::K8sWorkspaceResetArgs;
+
+mod k8s_grafana_args;
+use k8s_grafana_args::K8sGrafanaArgs;
+
+mod k8s_database_args;
+use k8s_database_args::K8sDatabaseArgs;
+
+mod k8s_rabbit_mq_recovery_args;
+use k8s_rabbit_mq_recovery_args::K8sRabbitMqRecoveryArgs;
+
+mod k8s_deploy_args;
+use k8s_deploy_args::K8sDeployArgs;
+
+mod k8s_delete_args;
+use k8s_delete_args::K8sDeleteArgs;

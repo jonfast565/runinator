@@ -17,76 +17,6 @@ use runinator_rexrap::{
 use crate::cursor::{Cursor, clamp_to_char_boundary};
 use crate::documentation::{TYPE_COMPLETION_WORDS, keyword_documentation, type_documentation};
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct RexRapCompletionRequest {
-    pub source: String,
-    pub cursor_byte: usize,
-    #[serde(default)]
-    pub providers: Vec<ProviderMetadata>,
-    // known config/secret slots, used to complete `config.scope.name` / `secret.scope.name`.
-    #[serde(default)]
-    pub settings: Vec<SettingSummary>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-pub struct RexRapCompletionResponse {
-    pub replace_start_byte: usize,
-    pub replace_end_byte: usize,
-    pub items: Vec<RexRapCompletionItem>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-pub struct RexRapCompletionItem {
-    pub label: String,
-    pub kind: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub detail: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub documentation: Option<String>,
-    pub insert_text: String,
-    pub is_snippet: bool,
-}
-
-#[derive(Debug, Clone, Default)]
-pub(crate) struct CompletionContext {
-    pub(crate) input: RuninatorType,
-    pub(crate) bindings: BTreeMap<String, RuninatorType>,
-    pub(crate) scoped: BTreeMap<String, RuninatorType>,
-    pub(crate) labels: BTreeSet<String>,
-    // best-effort output type of the source-order predecessor node, used to type `prev`. `Any`
-    // at ambiguous positions (first node, after a control-flow block, inside a nested block).
-    pub(crate) prev: RuninatorType,
-    // namespace scope derived from the document's `import`s and `fn` definitions, mirroring
-    // namespace resolution so bare/aliased completions only offer in-scope names.
-    pub(crate) namespace: NamespaceScope,
-}
-
-/// the names a bare or aliased call may resolve to, gathered from imports and user functions.
-#[derive(Debug, Clone, Default)]
-pub(crate) struct NamespaceScope {
-    /// import alias -> the std module it targets (e.g. `s` -> `strings`). non-std aliases are
-    /// omitted because their namespaces have no completable compute members.
-    pub(crate) aliases: BTreeMap<String, String>,
-    /// intrinsic leaves callable bare because their std module was imported unaliased.
-    pub(crate) bare_intrinsics: BTreeSet<String>,
-    /// user-defined function names, always callable bare.
-    pub(crate) user_fns: BTreeSet<String>,
-}
-
-#[derive(Debug, Clone)]
-pub(crate) struct ActionCallContext {
-    pub(crate) provider: String,
-    pub(crate) action: String,
-    pub(crate) replace_start: usize,
-    pub(crate) replace_end: usize,
-    pub(crate) used_args: BTreeSet<String>,
-}
-
-#[derive(Debug, Clone)]
-pub(crate) struct CompletionSpanContext {
-    pub(crate) replace_start: usize,
-}
-
 const PIPELINE_ORCHESTRATION_KEYWORDS: &[&str] = &[
     "active",
     "allow_self_originated",
@@ -142,12 +72,6 @@ const PIPELINE_ORCHESTRATION_KEYWORDS: &[&str] = &[
     "unbound",
     "via",
 ];
-
-#[derive(Debug, Clone)]
-pub(crate) struct ActionMemberContext {
-    pub(crate) provider: String,
-    pub(crate) replace_start: usize,
-}
 
 /// complete rexrap at a byte cursor using provider metadata and local type context.
 pub fn complete_source(request: RexRapCompletionRequest) -> RexRapCompletionResponse {
@@ -1846,10 +1770,29 @@ pub(crate) fn action_signature(action: &ActionMetadata) -> String {
     format!("({params})")
 }
 
-#[derive(Debug, Clone)]
-pub(crate) struct PathContext {
-    pub(crate) head: String,
-    pub(crate) completed: Vec<String>,
-    pub(crate) replace_start: usize,
-    pub(crate) replace_end: usize,
-}
+mod rex_rap_completion_request;
+pub use rex_rap_completion_request::RexRapCompletionRequest;
+
+mod rex_rap_completion_response;
+pub use rex_rap_completion_response::RexRapCompletionResponse;
+
+mod rex_rap_completion_item;
+pub use rex_rap_completion_item::RexRapCompletionItem;
+
+mod completion_context;
+pub(crate) use completion_context::CompletionContext;
+
+mod namespace_scope;
+pub(crate) use namespace_scope::NamespaceScope;
+
+mod action_call_context;
+pub(crate) use action_call_context::ActionCallContext;
+
+mod completion_span_context;
+pub(crate) use completion_span_context::CompletionSpanContext;
+
+mod action_member_context;
+pub(crate) use action_member_context::ActionMemberContext;
+
+mod path_context;
+pub(crate) use path_context::PathContext;

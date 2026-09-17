@@ -47,31 +47,6 @@ const JIRA_MAX_PAGES: usize = 100;
 const JIRA_SKEW_MARGIN_MINUTES: i64 = 5;
 const JIRA_MAX_LOOKBACK_MINUTES: i64 = 90 * 24 * 60;
 
-#[derive(Clone, Copy)]
-struct HostLimits {
-    body_bytes: usize,
-    output_bytes: usize,
-    event_count: usize,
-    timeout: Duration,
-}
-
-impl HostLimits {
-    fn from_env() -> Self {
-        Self {
-            body_bytes: positive_env_usize("RUNINATOR_ADAPTER_BODY_LIMIT_BYTES")
-                .unwrap_or(DEFAULT_BODY_LIMIT),
-            output_bytes: positive_env_usize("RUNINATOR_ADAPTER_OUTPUT_LIMIT_BYTES")
-                .unwrap_or(DEFAULT_OUTPUT_LIMIT),
-            event_count: positive_env_usize("RUNINATOR_ADAPTER_EVENT_LIMIT")
-                .unwrap_or(DEFAULT_EVENT_LIMIT),
-            timeout: Duration::from_millis(
-                positive_env_u64("RUNINATOR_ADAPTER_PLUGIN_TIMEOUT_MS")
-                    .unwrap_or(DEFAULT_TIMEOUT.as_millis() as u64),
-            ),
-        }
-    }
-}
-
 fn positive_env_usize(name: &str) -> Option<usize> {
     std::env::var(name)
         .ok()
@@ -84,32 +59,6 @@ fn positive_env_u64(name: &str) -> Option<u64> {
         .ok()
         .and_then(|value| value.parse().ok())
         .filter(|value| *value > 0)
-}
-
-#[derive(Clone)]
-struct HostState {
-    token: Arc<String>,
-    paths: Arc<Vec<PathBuf>>,
-    limits: HostLimits,
-    catalog: Arc<RwLock<BTreeMap<String, AdapterKindCatalogEntry>>>,
-}
-
-#[derive(Debug, Deserialize)]
-struct InvokeRequest {
-    kind: String,
-    request: AdapterRequest,
-}
-
-#[derive(Debug, Deserialize)]
-struct PollInvokeRequest {
-    kind: String,
-    request: AdapterPollRequest,
-}
-
-#[derive(Debug, Deserialize)]
-struct ValidateInvokeRequest {
-    kind: String,
-    request: AdapterValidationRequest,
 }
 
 #[allow(dead_code)]
@@ -125,9 +74,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let token = std::env::var("RUNINATOR_ADAPTER_HOST_TOKEN")
         .map_err(|_| "RUNINATOR_ADAPTER_HOST_TOKEN is required")?;
+
     let paths = std::env::var_os("RUNINATOR_ADAPTER_PLUGIN_PATHS")
         .map(|value| std::env::split_paths(&value).collect())
         .unwrap_or_default();
+
     let port = std::env::var("RUNINATOR_ADAPTER_HOST_PORT")
         .ok()
         .and_then(|raw| raw.parse().ok())
@@ -1277,9 +1228,6 @@ fn poll_response(events: Vec<NormalizedAdapterEvent>, checkpoint: Value) -> Adap
 /// A poll that ran out of upstream quota. This is not an adapter fault: the checkpoint must be
 /// preserved verbatim and the caller told when to come back, which is why it is distinct from an
 /// ordinary error string.
-struct RateLimited {
-    retry_after_seconds: Option<u64>,
-}
 
 enum PollError {
     RateLimited(RateLimited),
@@ -2886,3 +2834,21 @@ mod tests {
 #[cfg(test)]
 #[path = "poll_safety_tests.rs"]
 mod poll_safety_tests;
+
+mod host_limits;
+use host_limits::HostLimits;
+
+mod host_state;
+use host_state::HostState;
+
+mod invoke_request;
+use invoke_request::InvokeRequest;
+
+mod poll_invoke_request;
+use poll_invoke_request::PollInvokeRequest;
+
+mod validate_invoke_request;
+use validate_invoke_request::ValidateInvokeRequest;
+
+mod rate_limited;
+use rate_limited::RateLimited;

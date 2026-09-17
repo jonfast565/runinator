@@ -37,22 +37,6 @@ pub async fn hover_rexrap(
     Json(runinator_rexrap_ide::hover_source(request))
 }
 
-#[derive(Deserialize)]
-pub struct CompileRexRapRequest {
-    pub source: String,
-    #[serde(default)]
-    pub enabled: bool,
-}
-
-#[derive(Deserialize)]
-pub struct RexRapSourceRequest {
-    pub source: String,
-    #[serde(default)]
-    pub fragment: Option<RexRapFragmentKind>,
-    #[serde(default)]
-    pub document: RexRapDocumentKind,
-}
-
 #[derive(Default, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum RexRapDocumentKind {
@@ -61,116 +45,11 @@ pub enum RexRapDocumentKind {
     Pipeline,
 }
 
-#[derive(Deserialize)]
-pub struct DecompileRexRapRequest {
-    pub workflow: WorkflowDefinition,
-}
-
-#[derive(Deserialize)]
-pub struct RenderRexRapProgramRequest {
-    pub program: Value,
-}
-
-#[derive(Deserialize)]
-pub struct EvaluateExpressionRequest {
-    #[serde(default)]
-    pub expression: Option<Value>,
-    #[serde(default)]
-    pub source: Option<String>,
-    #[serde(default = "default_fragment_kind")]
-    pub kind: RexRapFragmentKind,
-    #[serde(default)]
-    pub context: Value,
-}
-
-#[derive(Deserialize)]
-pub struct ImportRexRapRequest {
-    pub source: String,
-    #[serde(default)]
-    pub enabled: bool,
-    #[serde(default)]
-    pub workflow_id: Option<Uuid>,
-    #[serde(default)]
-    pub triggers: Vec<WorkflowTrigger>,
-}
-
 const MAX_REXRAP_SOURCE_BYTES: usize = 2 * 1024 * 1024;
 
 fn validate_source(path: &str, source: &str) -> Result<(), ValidationError> {
     required_text(path, source, MAX_REXRAP_SOURCE_BYTES)?;
     bounded_text(path, source, MAX_REXRAP_SOURCE_BYTES)
-}
-
-impl Validate for CompileRexRapRequest {
-    fn validate(&self) -> Result<(), ValidationError> {
-        validate_source("source", &self.source)
-    }
-}
-
-impl Validate for RexRapSourceRequest {
-    fn validate(&self) -> Result<(), ValidationError> {
-        validate_source("source", &self.source)
-    }
-}
-
-impl Validate for DecompileRexRapRequest {
-    fn validate(&self) -> Result<(), ValidationError> {
-        self.workflow.validate()
-    }
-}
-
-impl Validate for RenderRexRapProgramRequest {
-    fn validate(&self) -> Result<(), ValidationError> {
-        dynamic_value("program", &self.program)?;
-        if !self.program.is_array() {
-            return Err(ValidationError::new("program", "must be an array"));
-        }
-        Ok(())
-    }
-}
-
-impl Validate for EvaluateExpressionRequest {
-    fn validate(&self) -> Result<(), ValidationError> {
-        if let Some(source) = self.source.as_deref() {
-            validate_source("source", source)?;
-        }
-        if self.source.is_none() && self.expression.is_none() {
-            return Err(ValidationError::new(
-                "expression",
-                "expression or source is required",
-            ));
-        }
-        Ok(())
-    }
-}
-
-impl Validate for ImportRexRapRequest {
-    fn validate(&self) -> Result<(), ValidationError> {
-        validate_source("source", &self.source)?;
-        if self.triggers.len() > 256 {
-            return Err(ValidationError::new(
-                "triggers",
-                "must contain at most 256 triggers",
-            ));
-        }
-        for (index, trigger) in self.triggers.iter().enumerate() {
-            trigger.validate().map_err(|error| {
-                ValidationError::new(format!("triggers[{index}].{}", error.path), error.message)
-            })?;
-        }
-        Ok(())
-    }
-}
-
-/// a rexrap diagnostic flattened for the editor linter: byte offsets plus 1-based line/column.
-#[derive(Serialize)]
-pub struct DiagnosticSummary {
-    pub start: usize,
-    pub end: usize,
-    pub line: usize,
-    pub column: usize,
-    pub severity: String,
-    pub message: String,
 }
 
 pub async fn compile_rexrap<
@@ -429,21 +308,6 @@ pub async fn decompile_to_rexrap(
     runinator_rexrap::decompile(&request.workflow)
         .map(Json)
         .map_err(|err| (StatusCode::BAD_REQUEST, err.to_string()))
-}
-
-/// One graph node and the byte range of the statement that renders it, within the `source` returned
-/// alongside it.
-#[derive(Serialize)]
-pub struct RexRapNodeSpan {
-    pub node_id: String,
-    pub start: usize,
-    pub end: usize,
-}
-
-#[derive(Serialize)]
-pub struct DecompiledRexRap {
-    pub source: String,
-    pub spans: Vec<RexRapNodeSpan>,
 }
 
 /// Decompile *and* report where each node lives in the returned text, so an editor can highlight
@@ -810,3 +674,30 @@ pub const DOCS: &[EndpointDoc] = &[
         Example::WorkflowBundle,
     ),
 ];
+
+mod compile_rex_rap_request;
+pub use compile_rex_rap_request::CompileRexRapRequest;
+
+mod rex_rap_source_request;
+pub use rex_rap_source_request::RexRapSourceRequest;
+
+mod decompile_rex_rap_request;
+pub use decompile_rex_rap_request::DecompileRexRapRequest;
+
+mod render_rex_rap_program_request;
+pub use render_rex_rap_program_request::RenderRexRapProgramRequest;
+
+mod evaluate_expression_request;
+pub use evaluate_expression_request::EvaluateExpressionRequest;
+
+mod import_rex_rap_request;
+pub use import_rex_rap_request::ImportRexRapRequest;
+
+mod diagnostic_summary;
+pub use diagnostic_summary::DiagnosticSummary;
+
+mod rex_rap_node_span;
+pub use rex_rap_node_span::RexRapNodeSpan;
+
+mod decompiled_rex_rap;
+pub use decompiled_rex_rap::DecompiledRexRap;

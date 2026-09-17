@@ -2,20 +2,6 @@ use super::*;
 
 // expressions ---------------------------------------------------------------
 
-/// an expression paired with the source span it was parsed from, so diagnostics can
-/// anchor to the offending sub-expression rather than the enclosing statement.
-#[derive(Debug, Clone, PartialEq)]
-pub struct Expr {
-    pub kind: ExprKind,
-    pub span: Span,
-}
-
-impl Expr {
-    pub fn new(kind: ExprKind, span: Span) -> Self {
-        Self { kind, span }
-    }
-}
-
 #[derive(Debug, Clone, PartialEq)]
 pub enum ExprKind {
     Null,
@@ -180,26 +166,6 @@ impl StringStyle {
     }
 }
 
-/// a string's parsed content and its authored delimiter form.
-#[derive(Debug, Clone, PartialEq)]
-pub struct StringLiteral {
-    pub style: StringStyle,
-    pub parts: Vec<StrPart>,
-}
-
-impl StringLiteral {
-    pub fn quoted(parts: Vec<StrPart>) -> Self {
-        Self {
-            style: StringStyle::Quoted,
-            parts,
-        }
-    }
-
-    pub fn literal(text: impl Into<String>) -> Self {
-        Self::quoted(vec![StrPart::Lit(text.into())])
-    }
-}
-
 /// the statically-known string keys an expression denotes, used to type key-driven intrinsics
 /// (`at`/`pick`/`omit`): a plain string literal yields one key, a literal array of string literals
 /// yields several, and anything else (interpolation, a reference, a non-string) yields `None`.
@@ -231,3 +197,9 @@ pub enum PathSeg {
     Key(String),
     Index(usize),
 }
+
+mod expr;
+pub use expr::Expr;
+
+mod string_literal;
+pub use string_literal::StringLiteral;

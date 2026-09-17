@@ -31,21 +31,11 @@ pub enum Value {
     Object(Map),
 }
 
-/// a json number preserving the integer/float distinction, mirroring `serde_json::Number`.
-#[derive(Debug, Clone, PartialEq)]
-pub struct Number(N);
-
 #[derive(Debug, Clone, PartialEq)]
 enum N {
     PosInt(u64),
     NegInt(i64),
     Float(f64),
-}
-
-/// a json object: an ordered string-keyed map of values.
-#[derive(Debug, Clone, Default, PartialEq)]
-pub struct Map {
-    inner: BTreeMap<String, Value>,
 }
 
 // value construction and inspection.
@@ -204,184 +194,7 @@ impl Value {
 
 // number construction and inspection.
 
-impl Number {
-    pub fn is_u64(&self) -> bool {
-        matches!(self.0, N::PosInt(_))
-    }
-
-    pub fn is_i64(&self) -> bool {
-        match self.0 {
-            N::NegInt(_) => true,
-            N::PosInt(u) => u <= i64::MAX as u64,
-            N::Float(_) => false,
-        }
-    }
-
-    pub fn is_f64(&self) -> bool {
-        matches!(self.0, N::Float(_))
-    }
-
-    pub fn as_i64(&self) -> Option<i64> {
-        match self.0 {
-            N::PosInt(u) => i64::try_from(u).ok(),
-            N::NegInt(i) => Some(i),
-            N::Float(_) => None,
-        }
-    }
-
-    pub fn as_u64(&self) -> Option<u64> {
-        match self.0 {
-            N::PosInt(u) => Some(u),
-            N::NegInt(i) => u64::try_from(i).ok(),
-            N::Float(_) => None,
-        }
-    }
-
-    pub fn as_f64(&self) -> Option<f64> {
-        match self.0 {
-            N::PosInt(u) => Some(u as f64),
-            N::NegInt(i) => Some(i as f64),
-            N::Float(f) => Some(f),
-        }
-    }
-
-    /// build a number from a float, rejecting non-finite values like `serde_json` does.
-    pub fn from_f64(value: f64) -> Option<Number> {
-        if value.is_finite() {
-            Some(Number(N::Float(value)))
-        } else {
-            None
-        }
-    }
-
-    // store non-negative integers as `PosInt` (matching `serde_json`), so that values constructed
-    // from signed and unsigned integers compare equal.
-    fn from_i64(value: i64) -> Self {
-        if value >= 0 {
-            Number(N::PosInt(value as u64))
-        } else {
-            Number(N::NegInt(value))
-        }
-    }
-}
-
 // Object-map API, mirroring the subset of `serde_json::Map` used across the workspace.
-
-impl Map {
-    pub fn new() -> Self {
-        Self::default()
-    }
-
-    pub fn with_capacity(_capacity: usize) -> Self {
-        Self::default()
-    }
-
-    pub fn len(&self) -> usize {
-        self.inner.len()
-    }
-
-    pub fn is_empty(&self) -> bool {
-        self.inner.is_empty()
-    }
-
-    pub fn clear(&mut self) {
-        self.inner.clear();
-    }
-
-    pub fn get(&self, key: &str) -> Option<&Value> {
-        self.inner.get(key)
-    }
-
-    pub fn get_mut(&mut self, key: &str) -> Option<&mut Value> {
-        self.inner.get_mut(key)
-    }
-
-    pub fn contains_key(&self, key: &str) -> bool {
-        self.inner.contains_key(key)
-    }
-
-    pub fn insert(&mut self, key: String, value: Value) -> Option<Value> {
-        self.inner.insert(key, value)
-    }
-
-    pub fn remove(&mut self, key: &str) -> Option<Value> {
-        self.inner.remove(key)
-    }
-
-    pub fn entry(&mut self, key: impl Into<String>) -> btree_map::Entry<'_, String, Value> {
-        self.inner.entry(key.into())
-    }
-
-    pub fn keys(&self) -> btree_map::Keys<'_, String, Value> {
-        self.inner.keys()
-    }
-
-    pub fn values(&self) -> btree_map::Values<'_, String, Value> {
-        self.inner.values()
-    }
-
-    pub fn values_mut(&mut self) -> btree_map::ValuesMut<'_, String, Value> {
-        self.inner.values_mut()
-    }
-
-    pub fn iter(&self) -> btree_map::Iter<'_, String, Value> {
-        self.inner.iter()
-    }
-
-    pub fn iter_mut(&mut self) -> btree_map::IterMut<'_, String, Value> {
-        self.inner.iter_mut()
-    }
-}
-
-impl FromIterator<(String, Value)> for Map {
-    fn from_iter<T: IntoIterator<Item = (String, Value)>>(iter: T) -> Self {
-        Self {
-            inner: iter.into_iter().collect(),
-        }
-    }
-}
-
-impl Extend<(String, Value)> for Map {
-    fn extend<T: IntoIterator<Item = (String, Value)>>(&mut self, iter: T) {
-        self.inner.extend(iter);
-    }
-}
-
-impl IntoIterator for Map {
-    type Item = (String, Value);
-    type IntoIter = btree_map::IntoIter<String, Value>;
-
-    fn into_iter(self) -> Self::IntoIter {
-        self.inner.into_iter()
-    }
-}
-
-impl<'a> IntoIterator for &'a Map {
-    type Item = (&'a String, &'a Value);
-    type IntoIter = btree_map::Iter<'a, String, Value>;
-
-    fn into_iter(self) -> Self::IntoIter {
-        self.inner.iter()
-    }
-}
-
-impl<'a> IntoIterator for &'a mut Map {
-    type Item = (&'a String, &'a mut Value);
-    type IntoIter = btree_map::IterMut<'a, String, Value>;
-
-    fn into_iter(self) -> Self::IntoIter {
-        self.inner.iter_mut()
-    }
-}
-
-impl std::ops::Index<&str> for Map {
-    type Output = Value;
-
-    fn index(&self, key: &str) -> &Value {
-        static NULL: Value = Value::Null;
-        self.inner.get(key).unwrap_or(&NULL)
-    }
-}
 
 // indexing into a value by key or numeric position.
 
@@ -396,76 +209,6 @@ mod private {
 /// types usable as an index into a [`Value`] via [`Value::get`]. read access only; a missing or
 /// type-mismatched index yields `None` rather than panicking, so there is no fallible mutable
 /// indexing operator. use [`Value::get_mut`] (or build the value explicitly) to mutate.
-pub trait Index: private::Sealed {
-    #[doc(hidden)]
-    fn index_into<'v>(&self, value: &'v Value) -> Option<&'v Value>;
-    #[doc(hidden)]
-    fn index_into_mut<'v>(&self, value: &'v mut Value) -> Option<&'v mut Value>;
-}
-
-impl Index for usize {
-    fn index_into<'v>(&self, value: &'v Value) -> Option<&'v Value> {
-        match value {
-            Value::Array(list) => list.get(*self),
-            _ => None,
-        }
-    }
-
-    fn index_into_mut<'v>(&self, value: &'v mut Value) -> Option<&'v mut Value> {
-        match value {
-            Value::Array(list) => list.get_mut(*self),
-            _ => None,
-        }
-    }
-}
-
-impl Index for str {
-    fn index_into<'v>(&self, value: &'v Value) -> Option<&'v Value> {
-        match value {
-            Value::Object(map) => map.get(self),
-            _ => None,
-        }
-    }
-
-    fn index_into_mut<'v>(&self, value: &'v mut Value) -> Option<&'v mut Value> {
-        match value {
-            Value::Object(map) => map.get_mut(self),
-            _ => None,
-        }
-    }
-}
-
-impl Index for String {
-    fn index_into<'v>(&self, value: &'v Value) -> Option<&'v Value> {
-        self.as_str().index_into(value)
-    }
-
-    fn index_into_mut<'v>(&self, value: &'v mut Value) -> Option<&'v mut Value> {
-        self.as_str().index_into_mut(value)
-    }
-}
-
-impl<T> Index for &T
-where
-    T: ?Sized + Index,
-{
-    fn index_into<'v>(&self, value: &'v Value) -> Option<&'v Value> {
-        (**self).index_into(value)
-    }
-
-    fn index_into_mut<'v>(&self, value: &'v mut Value) -> Option<&'v mut Value> {
-        (**self).index_into_mut(value)
-    }
-}
-
-impl<I: Index> std::ops::Index<I> for Value {
-    type Output = Value;
-
-    fn index(&self, index: I) -> &Value {
-        static NULL: Value = Value::Null;
-        index.index_into(self).unwrap_or(&NULL)
-    }
-}
 
 // equality against primitives, mirroring `serde_json::Value`'s comparison impls.
 
@@ -673,18 +416,6 @@ impl From<serde_json::Value> for Value {
     }
 }
 
-impl From<serde_json::Number> for Number {
-    fn from(value: serde_json::Number) -> Self {
-        if let Some(u) = value.as_u64() {
-            Number(N::PosInt(u))
-        } else if let Some(i) = value.as_i64() {
-            Number(N::NegInt(i))
-        } else {
-            Number(N::Float(value.as_f64().unwrap_or(0.0)))
-        }
-    }
-}
-
 impl From<Value> for serde_json::Value {
     fn from(value: Value) -> Self {
         match value {
@@ -705,31 +436,12 @@ impl From<Value> for serde_json::Value {
     }
 }
 
-impl From<Number> for serde_json::Number {
-    fn from(value: Number) -> Self {
-        match value.0 {
-            N::PosInt(u) => serde_json::Number::from(u),
-            N::NegInt(i) => serde_json::Number::from(i),
-            N::Float(f) => {
-                serde_json::Number::from_f64(f).unwrap_or_else(|| serde_json::Number::from(0))
-            }
-        }
-    }
-}
-
 // display renders compact json, matching `serde_json`'s `Display`.
 
 impl fmt::Display for Value {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let rendered = serde_json::to_string(self).map_err(|_| fmt::Error)?;
         f.write_str(&rendered)
-    }
-}
-
-impl fmt::Display for Number {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let number: serde_json::Number = self.clone().into();
-        fmt::Display::fmt(&number, f)
     }
 }
 
@@ -754,124 +466,11 @@ impl Serialize for Value {
     }
 }
 
-impl Serialize for Number {
-    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        match self.0 {
-            N::PosInt(u) => serializer.serialize_u64(u),
-            N::NegInt(i) => serializer.serialize_i64(i),
-            N::Float(f) => serializer.serialize_f64(f),
-        }
-    }
-}
-
-impl Serialize for Map {
-    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        let mut map = serializer.serialize_map(Some(self.inner.len()))?;
-        for (key, value) in &self.inner {
-            map.serialize_entry(key, value)?;
-        }
-        map.end()
-    }
-}
-
 // deserialization: accept any json value, mirroring `serde_json::Value`'s visitor.
 
 impl<'de> Deserialize<'de> for Value {
     fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
         deserializer.deserialize_any(ValueVisitor)
-    }
-}
-
-struct ValueVisitor;
-
-impl<'de> Visitor<'de> for ValueVisitor {
-    type Value = Value;
-
-    fn expecting(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter.write_str("any valid json value")
-    }
-
-    fn visit_bool<E>(self, value: bool) -> Result<Value, E> {
-        Ok(Value::Bool(value))
-    }
-
-    fn visit_i64<E>(self, value: i64) -> Result<Value, E> {
-        Ok(Value::Number(Number::from(value)))
-    }
-
-    fn visit_u64<E>(self, value: u64) -> Result<Value, E> {
-        Ok(Value::Number(Number::from(value)))
-    }
-
-    fn visit_f64<E>(self, value: f64) -> Result<Value, E> {
-        Ok(Number::from_f64(value).map_or(Value::Null, Value::Number))
-    }
-
-    fn visit_str<E>(self, value: &str) -> Result<Value, E>
-    where
-        E: de::Error,
-    {
-        Ok(Value::String(value.to_owned()))
-    }
-
-    fn visit_string<E>(self, value: String) -> Result<Value, E> {
-        Ok(Value::String(value))
-    }
-
-    fn visit_none<E>(self) -> Result<Value, E> {
-        Ok(Value::Null)
-    }
-
-    fn visit_some<D: Deserializer<'de>>(self, deserializer: D) -> Result<Value, D::Error> {
-        Deserialize::deserialize(deserializer)
-    }
-
-    fn visit_unit<E>(self) -> Result<Value, E> {
-        Ok(Value::Null)
-    }
-
-    fn visit_seq<A: SeqAccess<'de>>(self, mut seq: A) -> Result<Value, A::Error> {
-        let mut list = Vec::new();
-        while let Some(element) = seq.next_element()? {
-            list.push(element);
-        }
-        Ok(Value::Array(list))
-    }
-
-    fn visit_map<A: MapAccess<'de>>(self, mut access: A) -> Result<Value, A::Error> {
-        let mut map = Map::new();
-        while let Some((key, value)) = access.next_entry()? {
-            map.insert(key, value);
-        }
-        Ok(Value::Object(map))
-    }
-}
-
-impl<'de> Deserialize<'de> for Map {
-    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        deserializer.deserialize_map(MapVisitor)
-    }
-}
-
-struct MapVisitor;
-
-impl<'de> Visitor<'de> for MapVisitor {
-    type Value = Map;
-
-    fn expecting(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter.write_str("a json object")
-    }
-
-    fn visit_unit<E>(self) -> Result<Map, E> {
-        Ok(Map::new())
-    }
-
-    fn visit_map<A: MapAccess<'de>>(self, mut access: A) -> Result<Map, A::Error> {
-        let mut map = Map::new();
-        while let Some((key, value)) = access.next_entry()? {
-            map.insert(key, value);
-        }
-        Ok(map)
     }
 }
 
@@ -882,3 +481,18 @@ macro_rules! json {
         $crate::value::Value::from($crate::__serde_json::json!($($json)+))
     };
 }
+
+mod number;
+pub use number::Number;
+
+mod map;
+pub use map::Map;
+
+mod index;
+pub use index::Index;
+
+mod value_visitor;
+use value_visitor::ValueVisitor;
+
+mod map_visitor;
+use map_visitor::MapVisitor;

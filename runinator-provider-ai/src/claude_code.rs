@@ -33,31 +33,6 @@ const MAX_HARNESS_STDERR_BYTES: usize = 64 * 1024;
 const MAX_HARNESS_EVENT_BYTES: usize = 16 * 1024 * 1024;
 const MAX_HARNESS_EVENTS: usize = 10_000;
 
-struct HarnessLine {
-    stream: String,
-    content: String,
-    truncated: bool,
-}
-
-#[derive(Default)]
-struct HarnessEventBudget {
-    events: usize,
-    bytes: usize,
-}
-
-impl HarnessEventBudget {
-    fn admit(&mut self, bytes: usize) -> bool {
-        if self.events >= MAX_HARNESS_EVENTS
-            || self.bytes.saturating_add(bytes) > MAX_HARNESS_EVENT_BYTES
-        {
-            return false;
-        }
-        self.events += 1;
-        self.bytes += bytes;
-        true
-    }
-}
-
 pub(crate) fn run_claude_code(
     request: &ProviderExecutionRequest,
     sink: Option<Arc<dyn ProviderEventSink>>,
@@ -166,13 +141,6 @@ fn run_claude_once(
         chunks: Vec::new(),
         artifacts: Vec::new(),
     })
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-struct PromptMetadata {
-    asset: Option<String>,
-    digest: String,
-    source: &'static str,
 }
 
 /// Resolve prompt variation at the provider boundary. Profile environment wins over the
@@ -855,3 +823,12 @@ fn validate_structured_output(
 #[cfg(test)]
 #[path = "claude_runner_tests.rs"]
 mod runner_tests;
+
+mod harness_line;
+use harness_line::HarnessLine;
+
+mod harness_event_budget;
+use harness_event_budget::HarnessEventBudget;
+
+mod prompt_metadata;
+use prompt_metadata::PromptMetadata;

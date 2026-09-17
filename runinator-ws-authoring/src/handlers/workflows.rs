@@ -30,11 +30,6 @@ use runinator_ws_core::{ValidatedJson, models::ApiResponse};
 use runinator_ws_middleware::authz::AuthContextExt;
 use runinator_ws_middleware::authz::{AuthorizationStore, AuthzChecker};
 
-#[derive(Default, Deserialize)]
-pub struct WorkflowPublishOptions {
-    pub contract_override_reason: Option<String>,
-}
-
 fn rexrap_boundary_error(workflow: &WorkflowDefinition) -> Option<String> {
     if !workflow.definition.defs.is_empty() {
         return Some(
@@ -321,11 +316,6 @@ pub async fn simulate_workflow<
     }
 }
 
-#[derive(Debug, Deserialize)]
-pub struct WorkflowQuery {
-    pub name: Option<String>,
-}
-
 /// list workflow definitions visible to the caller.
 #[utoipa::path(
     get,
@@ -480,11 +470,6 @@ pub async fn get_workflow<
 /// small per row but unbounded over time, so the endpoint pages rather than returning everything.
 const DEFAULT_REVISION_LIMIT: i64 = 50;
 const MAX_REVISION_LIMIT: i64 = 500;
-
-#[derive(Debug, Deserialize)]
-pub struct RevisionListQuery {
-    limit: Option<i64>,
-}
 
 /// list a workflow's revision history, newest first.
 #[utoipa::path(
@@ -945,3 +930,12 @@ pub const DOCS: &[EndpointDoc] = &[
         Example::Workflow,
     ),
 ];
+
+mod workflow_publish_options;
+pub use workflow_publish_options::WorkflowPublishOptions;
+
+mod workflow_query;
+pub use workflow_query::WorkflowQuery;
+
+mod revision_list_query;
+pub use revision_list_query::RevisionListQuery;

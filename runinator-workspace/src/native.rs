@@ -24,12 +24,6 @@ const CONFIG: &str = "application/vnd.runinator.workspace.config.v1+json";
 const PACK: &str = "application/vnd.runinator.workspace.pack.v1";
 const MANIFEST: &str = "application/vnd.oci.image.manifest.v1+json";
 
-struct ExtractedLayout {
-    directory: tempfile::TempDir,
-    manifest: serde_json::Value,
-    transfer_limit: u64,
-}
-
 fn json(path: &Path) -> Result<serde_json::Value, SendableError> {
     if std::fs::metadata(path)?.len() > 4 * 1024 * 1024 {
         return Err(WORKSPACE_INVALID.error("OCI metadata is too large"));
@@ -236,54 +230,10 @@ pub fn export<S: ReadStore, W: Write>(
     Ok(())
 }
 
-#[derive(Clone, Copy)]
-struct PackedObject {
-    pack: usize,
-    location: Location,
-    info: ObjectInfo,
-}
-
 /// A validated native archive kept in its original physical packs.
 ///
 /// This is the read-only restore path. It avoids expanding every logical object into a separate
 /// temporary file before a workspace can be materialized.
-pub struct PackedStore {
-    _directory: tempfile::TempDir,
-    packs: Vec<File>,
-    objects: HashMap<Id, PackedObject>,
-    blocks: ByteCache,
-}
-
-impl PackedStore {
-    pub fn object_count(&self) -> usize {
-        self.objects.len()
-    }
-
-    pub fn pack_count(&self) -> usize {
-        self.packs.len()
-    }
-}
-
-impl ReadStore for PackedStore {
-    fn info(&self, id: Id) -> storage::Result<ObjectInfo> {
-        self.objects
-            .get(&id)
-            .map(|entry| entry.info)
-            .ok_or_else(|| storage::Error::NotFound(id.to_string()))
-    }
-
-    fn get(&self, id: Id) -> storage::Result<Object> {
-        let entry = self
-            .objects
-            .get(&id)
-            .ok_or_else(|| storage::Error::NotFound(id.to_string()))?;
-        storage::record::read_indexed(&self.packs[entry.pack], entry.location, &self.blocks)
-    }
-
-    fn contains(&self, id: Id) -> storage::Result<bool> {
-        Ok(self.objects.contains_key(&id))
-    }
-}
 
 /// Import a native workspace for read-only materialization without unpacking its logical objects.
 pub fn import_packed<R: Read>(
@@ -422,3 +372,12 @@ pub fn import_with_format<R: Read>(
     crate::revision::validate_links(&view)?;
     Ok((store, revision, usage, "native"))
 }
+
+mod extracted_layout;
+use extracted_layout::ExtractedLayout;
+
+mod packed_object;
+use packed_object::PackedObject;
+
+mod packed_store;
+pub use packed_store::PackedStore;

@@ -9,85 +9,27 @@ use runinator_models::workflows::{WorkflowNodeRun, WorkflowRun};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ServiceStatus {
-    pub service_url: Option<String>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct WebServiceAnnouncement {
-    pub service_id: String,
-    pub address: String,
-    pub port: u16,
-    pub base_path: String,
-    #[serde(default = "default_service_scheme")]
-    pub scheme: String,
-    #[serde(default)]
-    pub relay_path: String,
-    #[serde(default)]
-    pub cluster_id: Option<Uuid>,
-    #[serde(default)]
-    pub enrollment_enabled: bool,
-    #[serde(default)]
-    pub spki_pin: Option<String>,
-    #[serde(default)]
-    pub version: Option<String>,
-    pub last_heartbeat: DateTime<Utc>,
-}
-
 fn default_service_scheme() -> String {
     "http".to_string()
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct WorkflowRunDetail {
-    pub run: WorkflowRun,
-    pub nodes: Vec<WorkflowNodeRun>,
-    #[serde(default)]
-    pub continuations: Vec<WorkflowContinuation>,
-    #[serde(default)]
-    pub effects: Vec<WorkflowEffect>,
-    #[serde(default)]
-    pub journal: Vec<WorkflowJournalRecord>,
-    #[serde(default)]
-    pub vm_cursors: Vec<WorkflowVmCursor>,
-    #[serde(default)]
-    pub ai_usage: Option<Value>,
-}
+mod service_status;
+pub use service_status::ServiceStatus;
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct WorkflowRunCreated {
-    pub id: Uuid,
-}
+mod web_service_announcement;
+pub use web_service_announcement::WebServiceAnnouncement;
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct CredentialSummary {
-    #[serde(default)]
-    pub id: Option<Uuid>,
-    pub scope: String,
-    pub name: String,
-    #[serde(default)]
-    pub kind: SettingKind,
-}
+mod workflow_run_detail;
+pub use workflow_run_detail::WorkflowRunDetail;
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct CredentialPutRequest {
-    pub scope: String,
-    pub name: String,
-    pub value: Value,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub schema: Option<Value>,
-    #[serde(default)]
-    pub kind: SettingKind,
-}
+mod workflow_run_created;
+pub use workflow_run_created::WorkflowRunCreated;
 
-/// a rexrap diagnostic flattened for the editor linter: byte offsets plus 1-based line/column.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct DiagnosticSummary {
-    pub start: usize,
-    pub end: usize,
-    pub line: usize,
-    pub column: usize,
-    pub severity: String,
-    pub message: String,
-}
+mod credential_summary;
+pub use credential_summary::CredentialSummary;
+
+mod credential_put_request;
+pub use credential_put_request::CredentialPutRequest;
+
+mod diagnostic_summary;
+pub use diagnostic_summary::DiagnosticSummary;

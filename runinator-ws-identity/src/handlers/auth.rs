@@ -53,13 +53,6 @@ type Reply = (StatusCode, Json<ApiResponse>);
 const ORGANIZATION_MEMBERSHIP_REQUIRED: &str =
     "user must be a platform administrator or belong to an enabled organization before signing in";
 
-#[derive(Clone)]
-struct SessionMetadata {
-    created_at: chrono::DateTime<Utc>,
-    user_agent: Option<String>,
-    ip_address: Option<String>,
-}
-
 fn session_metadata(headers: &HeaderMap, addr: SocketAddr) -> SessionMetadata {
     let user_agent = headers
         .get(axum::http::header::USER_AGENT)
@@ -69,23 +62,6 @@ fn session_metadata(headers: &HeaderMap, addr: SocketAddr) -> SessionMetadata {
         created_at: Utc::now(),
         user_agent,
         ip_address: Some(addr.ip().to_string()),
-    }
-}
-
-#[derive(serde::Deserialize)]
-pub struct AuthSettingsRequest {
-    pub max_refreshes: i64,
-}
-
-impl Validate for AuthSettingsRequest {
-    fn validate(&self) -> Result<(), ValidationError> {
-        if !(1..=100_000).contains(&self.max_refreshes) {
-            return Err(ValidationError::new(
-                "max_refreshes",
-                "must be between 1 and 100000",
-            ));
-        }
-        Ok(())
     }
 }
 
@@ -554,13 +530,6 @@ pub async fn update_auth_settings<T: AuthStore + RbacStore + RuntimeStore + Sett
         ),
         Err(err) => api_error(err.to_string()),
     }
-}
-
-#[derive(Serialize)]
-struct ServerSettingsResponse {
-    values: ServerSettings,
-    catalog: Vec<runinator_models::server_settings::ServerSettingDefinition>,
-    runtime_catalog: Vec<RuntimeSettingDefinition>,
 }
 
 fn runtime_setting_catalog() -> Vec<RuntimeSettingDefinition> {
@@ -2642,3 +2611,12 @@ pub const DOCS: &[EndpointDoc] = &[
         Example::TaskResponse,
     ),
 ];
+
+mod session_metadata;
+use session_metadata::SessionMetadata;
+
+mod auth_settings_request;
+pub use auth_settings_request::AuthSettingsRequest;
+
+mod server_settings_response;
+use server_settings_response::ServerSettingsResponse;

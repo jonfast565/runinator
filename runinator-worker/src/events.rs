@@ -66,23 +66,11 @@ pub enum WorkerEvent {
 
 /// observer for [`WorkerEvent`]s. implementations must be cheap and non-blocking: events are
 /// emitted inline from the worker loops.
-pub trait WorkerEventSink: Send + Sync {
-    fn handle(&self, event: WorkerEvent);
-}
 
 /// default sink that ignores every event.
-pub struct NoopEventSink;
-
-impl WorkerEventSink for NoopEventSink {
-    fn handle(&self, _event: WorkerEvent) {}
-}
-
 // let embedding hosts pass a plain closure instead of defining a sink type.
-impl<F> WorkerEventSink for F
-where
-    F: Fn(WorkerEvent) + Send + Sync,
-{
-    fn handle(&self, event: WorkerEvent) {
-        self(event)
-    }
-}
+mod worker_event_sink;
+pub use worker_event_sink::WorkerEventSink;
+
+mod noop_event_sink;
+pub use noop_event_sink::NoopEventSink;

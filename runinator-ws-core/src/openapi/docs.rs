@@ -32,37 +32,6 @@ impl EndpointPolicy {
     }
 }
 
-#[derive(Clone, Copy)]
-pub struct EndpointDoc {
-    pub method: &'static str,
-    pub path: &'static str,
-    pub tag: &'static str,
-    pub summary: &'static str,
-    pub description: &'static str,
-    pub policy: EndpointPolicy,
-    pub request: Option<RequestDoc>,
-    pub query: &'static [ParamDoc],
-    pub success_status: u16,
-    pub success_description: &'static str,
-    pub response_example: Example,
-}
-
-#[derive(Clone, Copy)]
-pub struct RequestDoc {
-    pub description: &'static str,
-    pub example: Example,
-    pub content_type: &'static str,
-}
-
-#[derive(Clone, Copy)]
-pub struct ParamDoc {
-    pub name: &'static str,
-    pub location: &'static str,
-    pub description: &'static str,
-    pub required: bool,
-    pub example: &'static str,
-}
-
 pub const CURSOR: &[ParamDoc] = &[
     ParamDoc {
         name: "cursor",
@@ -293,3 +262,12 @@ pub const fn json_body(description: &'static str, example: Example) -> Option<Re
         content_type: "application/json",
     })
 }
+
+mod endpoint_doc;
+pub use endpoint_doc::EndpointDoc;
+
+mod request_doc;
+pub use request_doc::RequestDoc;
+
+mod param_doc;
+pub use param_doc::ParamDoc;

@@ -18,10 +18,6 @@ use literals::{
     string_literal,
 };
 
-#[derive(Parser)]
-#[grammar = "rexrap.pest"]
-struct RexRapParser;
-
 /// borrow the workflow currently being assembled, or report the body declaration that appeared
 /// before any `workflow` header.
 fn require_active<'a>(
@@ -281,18 +277,6 @@ fn parse_source_module(pair: Pair<Rule>) -> Result<SourceModule, RexRapError> {
         functions,
         span,
     })
-}
-
-/// A console-only top-level module: zero or more function declarations and an optional bare
-/// runtime `do { ... }` block.  This is intentionally not accepted by [`parse_document`], whose
-/// contract remains that an authored document contains a workflow.
-#[derive(Debug, Clone, PartialEq)]
-pub struct ConsoleModule {
-    pub language_header: bool,
-    pub functions: Vec<FunctionDef>,
-    /// The byte span of the bare runtime block, when this is an executable module rather than a
-    /// function-only library cell.
-    pub run_block_span: Option<Span>,
 }
 
 pub fn parse_console_module(src: &str) -> Result<ConsoleModule, RexRapError> {
@@ -4768,3 +4752,9 @@ fn first_inner(pair: Pair<Rule>) -> Result<Pair<Rule>, RexRapError> {
         .next()
         .ok_or_else(|| RexRapError::lower("expected child node"))
 }
+
+mod rex_rap_parser;
+use rex_rap_parser::{RexRapParser, Rule};
+
+mod console_module;
+pub use console_module::ConsoleModule;

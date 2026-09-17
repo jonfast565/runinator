@@ -5,28 +5,11 @@ use runinator_models::errors::SendableError;
 pub mod csv;
 pub mod excel;
 
-#[derive(Debug, Clone)]
-pub struct TableData {
-    pub headers: Vec<String>,
-    pub rows: Vec<Vec<String>>,
-}
+mod table_data;
+pub use table_data::TableData;
 
-impl TableData {
-    pub fn new(headers: Vec<String>, rows: Vec<Vec<String>>) -> Self {
-        Self { headers, rows }
-    }
-}
+mod table_export_context;
+pub use table_export_context::TableExportContext;
 
-#[derive(Debug, Default)]
-pub struct TableExportContext<'a> {
-    pub sheet_name: Option<&'a str>,
-}
-
-pub trait TableExporter: Send + Sync {
-    fn export(
-        &self,
-        path: &Path,
-        table: &TableData,
-        context: &TableExportContext<'_>,
-    ) -> Result<(), SendableError>;
-}
+mod table_exporter;
+pub use table_exporter::TableExporter;

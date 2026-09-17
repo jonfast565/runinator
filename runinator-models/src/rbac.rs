@@ -40,28 +40,6 @@ impl ScopeKind {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
-pub struct ScopeRef {
-    pub kind: ScopeKind,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub id: Option<Uuid>,
-}
-
-impl ScopeRef {
-    pub const PLATFORM: Self = Self {
-        kind: ScopeKind::Platform,
-        id: None,
-    };
-
-    pub fn new(kind: ScopeKind, id: Option<Uuid>) -> Option<Self> {
-        if matches!(kind, ScopeKind::Platform) == id.is_none() {
-            Some(Self { kind, id })
-        } else {
-            None
-        }
-    }
-}
-
 macro_rules! ordered_role {
     ($name:ident { $($variant:ident => $wire:literal),+ $(,)? }) => {
         #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
@@ -263,18 +241,6 @@ impl Action {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct RoleAssignment {
-    pub principal_kind: PrincipalKind,
-    pub principal_id: Uuid,
-    pub scope: ScopeRef,
-    pub role: Role,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub created_by: Option<Uuid>,
-    pub created_at: DateTime<Utc>,
-    pub updated_at: DateTime<Utc>,
-}
-
 /// Return the strongest platform role in an additive assignment set.
 pub fn strongest_platform_role(assignments: &[RoleAssignment]) -> Option<PlatformRole> {
     assignments
@@ -286,34 +252,17 @@ pub fn strongest_platform_role(assignments: &[RoleAssignment]) -> Option<Platfor
         .max()
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ResourceOwnership {
-    pub resource_type: ResourceType,
-    pub resource_id: Uuid,
-    pub tenant: ScopeRef,
-    pub owner: ScopeRef,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub created_by: Option<Uuid>,
-    pub authz_version: i64,
-    pub created_at: DateTime<Utc>,
-    pub updated_at: DateTime<Utc>,
-}
+mod scope_ref;
+pub use scope_ref::ScopeRef;
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct EffectiveAccess {
-    pub scope: ScopeRef,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub role: Option<Role>,
-    pub actions: Vec<Action>,
-}
+mod role_assignment;
+pub use role_assignment::RoleAssignment;
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ServiceAccount {
-    pub id: Uuid,
-    pub name: String,
-    pub disabled: bool,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub created_by: Option<Uuid>,
-    pub created_at: DateTime<Utc>,
-    pub updated_at: DateTime<Utc>,
-}
+mod resource_ownership;
+pub use resource_ownership::ResourceOwnership;
+
+mod effective_access;
+pub use effective_access::EffectiveAccess;
+
+mod service_account;
+pub use service_account::ServiceAccount;

@@ -34,51 +34,8 @@ mod platform;
 pub(super) type Screen = File;
 
 /// Process stream redirect held for the dashboard's lifetime.
-pub(super) struct Capture {
-    redirect: Option<platform::Redirect>,
-}
-
-impl Capture {
-    pub(super) fn install(dashboard: Arc<Dashboard>) -> io::Result<(Self, Screen)> {
-        let (redirect, screen) = platform::install(dashboard)?;
-        Ok((
-            Self {
-                redirect: Some(redirect),
-            },
-            screen,
-        ))
-    }
-
-    /// Restore stdout/stderr and wait for the reader to finish draining their final writes.
-    pub(super) fn restore(&mut self) {
-        if let Some(redirect) = self.redirect.take() {
-            redirect.restore();
-        }
-    }
-}
-
-impl Drop for Capture {
-    fn drop(&mut self) {
-        self.restore();
-    }
-}
 
 /// Move bytes from the redirected streams into the dashboard's log pane.
-struct Reader {
-    handle: JoinHandle<()>,
-    done: Receiver<()>,
-}
-
-impl Reader {
-    fn finish(self) {
-        if self.done.recv_timeout(Duration::from_millis(250)).is_ok() {
-            let _ = self.handle.join();
-        }
-        // A child may have inherited stdout/stderr and still own a writer. Dropping an unfinished
-        // JoinHandle detaches the draining reader so shutdown cannot hang or close the pipe under
-        // that child, which otherwise surfaces as a broken-pipe panic on WSL.
-    }
-}
 
 fn spawn_reader(source: File, dashboard: Arc<Dashboard>) -> io::Result<Reader> {
     let (done_tx, done) = mpsc::sync_channel(1);
@@ -122,3 +79,9 @@ fn flush_line(dashboard: &Dashboard, line: &mut Vec<u8>) {
         dashboard.log_line(text);
     }
 }
+
+mod capture;
+pub(super) use capture::Capture;
+
+mod reader;
+use reader::Reader;

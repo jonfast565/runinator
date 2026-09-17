@@ -20,11 +20,6 @@ use uuid::Uuid;
 
 use crate::provider_repository::{ProviderFactory, resolve_provider};
 
-pub(crate) struct ExecutionProfileMetadata {
-    pub support: runinator_models::providers::ExecutionProfileSupport,
-    pub credential_scopes: Vec<String>,
-}
-
 pub(crate) fn execution_profile_metadata(
     providers: &ProviderFactory,
     libraries: &HashMap<String, Plugin>,
@@ -50,35 +45,6 @@ pub(crate) fn execution_profile_metadata(
             .clone()
             .unwrap_or(metadata.metadata.credential_scopes),
     })
-}
-
-pub struct ExecutionOutcome {
-    pub task_result: ExecutionTaskResult,
-    pub execution_result: Option<TaskExecutionResult>,
-    pub status: RunStatus,
-}
-
-pub struct ExecutionTaskResult {
-    pub success: bool,
-    pub started_at: DateTime<Utc>,
-    pub finished_at: DateTime<Utc>,
-    pub message: Option<String>,
-}
-
-impl ExecutionTaskResult {
-    pub fn duration_ms(&self) -> i64 {
-        (self.finished_at - self.started_at).num_milliseconds()
-    }
-}
-pub(crate) struct TaskExecution {
-    pub libraries: Arc<HashMap<String, Plugin>>,
-    pub action: WorkflowAction,
-    pub execution_id: Uuid,
-    pub parameters: Value,
-    pub idempotency_key: Option<String>,
-    pub execution_profile: Option<MaterializedExecutionProfile>,
-    pub sink: Option<Arc<dyn ProviderEventSink>>,
-    pub token: CancellationToken,
 }
 
 pub(crate) async fn execute_task(
@@ -480,3 +446,15 @@ mod workspace_request_tests {
 #[cfg(test)]
 #[path = "executor_tests.rs"]
 mod executor_tests;
+
+mod execution_profile_metadata;
+pub(crate) use execution_profile_metadata::ExecutionProfileMetadata;
+
+mod execution_outcome;
+pub use execution_outcome::ExecutionOutcome;
+
+mod execution_task_result;
+pub use execution_task_result::ExecutionTaskResult;
+
+mod task_execution;
+pub(crate) use task_execution::TaskExecution;

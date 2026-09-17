@@ -49,28 +49,6 @@ impl ProcStatus {
     }
 }
 
-#[derive(Debug)]
-struct ManagedProcess {
-    config: ProcessConfig,
-    command_path: PathBuf,
-    cwd_path: PathBuf,
-    child: Option<Box<dyn ManagedChild>>,
-    backend: Arc<dyn ProcessBackend>,
-    status: ProcStatus,
-    started_at_utc: Option<DateTime<Utc>>,
-    started_instant: Option<Instant>,
-    restarts: u32,
-    last_exit_code: Option<i32>,
-    last_error: Option<String>,
-    next_restart_at: Option<Instant>,
-    restart_history: VecDeque<Instant>,
-    logs_dir: PathBuf,
-    log_path: PathBuf,
-    start_count: u32,
-    // set when a control command stopped this process, so the poll loop does not auto-restart it.
-    manual_stop: bool,
-}
-
 pub fn start_daemon(paths: &Paths) -> Result<(), DynError> {
     fs::create_dir_all(&paths.state_dir)?;
     fs::create_dir_all(&paths.logs_dir)?;
@@ -686,14 +664,6 @@ fn append_process_log_event(process: &ManagedProcess, message: &str) {
     );
 }
 
-#[derive(Debug)]
-struct LogFile {
-    path: PathBuf,
-    modified: SystemTime,
-    bytes: u64,
-    protected: bool,
-}
-
 fn prune_logs_nonfatal(
     logs_dir: &Path,
     retention: &LogRetentionConfig,
@@ -901,3 +871,9 @@ mod tests {
 #[cfg(test)]
 #[path = "supervisor_process_tests.rs"]
 mod process_tests;
+
+mod managed_process;
+use managed_process::ManagedProcess;
+
+mod log_file;
+use log_file::LogFile;

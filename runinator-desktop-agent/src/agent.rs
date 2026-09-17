@@ -63,122 +63,11 @@ const DEFAULT_BROKER_CLIENT_ID: &str = "runinator-desktop-agent";
 // how long to wait for in-flight work to drain when the operator stops the agent.
 const STOP_GRACE: Duration = Duration::from_secs(15);
 
-#[derive(Debug, Clone, Default)]
-pub struct AgentStatus {
-    pub running: bool,
-    pub replica_id: Option<Uuid>,
-    pub root: Option<String>,
-    /// e.g. "relay via wss://.../ws/broker" or "direct TCP @ host:port".
-    pub broker_connection: Option<String>,
-}
-
-/// state shared between the GUI thread and the background tokio runtime driving the agent.
-#[derive(Default)]
-pub struct Shared {
-    pub status: AgentStatus,
-    pub connection: ConnectionState,
-    pub metrics: AgentMetrics,
-    pub agent_activity: Activity,
-    pub worker_activity: Activity,
-    pub resource_history: ResourceHistory,
-    pub busy: bool,
-    pub logs: VecDeque<String>,
-    pub execution_profiles: Vec<crate::execution_profiles::LocalProfileStatus>,
-    // latch so one degraded episode fires exactly one "reconnecting" toast (and one "reconnected"
-    // toast on recovery), rather than one per backoff retry.
-    degraded_notified: bool,
-    // a separate latch, because giving up is a different event from retrying: an operator who has
-    // already seen "reconnecting" still needs to be told the agent stopped.
-    disconnected_notified: bool,
-    handle: Option<AgentHandle>,
-    // set for the window between a Start click and the lifecycle handle existing. `busy` alone
-    // cannot say which transition is in flight, and only a start is cancellable.
-    starting: bool,
-    // the in-flight `start_inner` task, kept so a cancel can abort it mid-registration rather than
-    // leaving the operator to wait out a backoff that may never succeed.
-    start_task: Option<tokio::task::JoinHandle<()>>,
-    // bumped by every start and every cancel. a startup compares it before publishing its handle, so
-    // an abort that lands too late (or one issued before the task was even recorded) still cannot
-    // leave a lifecycle running that the operator asked to cancel.
-    start_generation: u64,
-}
-
-/// A live dashboard activity and the instant at which it last materially changed. Repeated
-/// heartbeats with the same status deliberately do not reset `since`, so the GUI can show how long
-/// the agent has been waiting, reconnecting, or executing work.
-#[derive(Debug, Clone)]
-pub struct Activity {
-    pub label: String,
-    pub since: std::time::Instant,
-}
-
-impl Default for Activity {
-    fn default() -> Self {
-        Self {
-            label: "not started".to_string(),
-            since: std::time::Instant::now(),
-        }
-    }
-}
-
 pub(crate) fn set_activity(activity: &mut Activity, label: impl Into<String>) {
     let label = label.into();
     if activity.label != label {
         activity.label = label;
         activity.since = std::time::Instant::now();
-    }
-}
-
-/// A compact, GUI-friendly projection of one resource sample. Keeping only rendered values avoids
-/// coupling desktop UI state to the wire model while retaining every graph from `--tui`.
-#[derive(Debug, Clone, Default)]
-pub struct ResourceSample {
-    pub host_cpu_percent: f32,
-    pub host_mem_percent: f32,
-    pub host_mem_used_bytes: u64,
-    pub host_mem_total_bytes: u64,
-    pub process_cpu_percent: f32,
-    pub process_mem_used_bytes: u64,
-    pub network_rx_bytes_per_sec: f64,
-    pub network_tx_bytes_per_sec: f64,
-    pub disk_io_bytes_per_sec: f64,
-}
-
-impl From<&ResourceTelemetry> for ResourceSample {
-    fn from(sample: &ResourceTelemetry) -> Self {
-        Self {
-            host_cpu_percent: sample.cpu_percent,
-            host_mem_percent: sample.mem_percent,
-            host_mem_used_bytes: sample.mem_used_bytes,
-            host_mem_total_bytes: sample.mem_total_bytes,
-            process_cpu_percent: sample.process.cpu_percent,
-            process_mem_used_bytes: sample.process.mem_used_bytes,
-            network_rx_bytes_per_sec: sample.network.rx_bytes_per_sec,
-            network_tx_bytes_per_sec: sample.network.tx_bytes_per_sec,
-            disk_io_bytes_per_sec: sample
-                .disks
-                .iter()
-                .map(|disk| disk.read_bytes_per_sec + disk.written_bytes_per_sec)
-                .sum(),
-        }
-    }
-}
-
-#[derive(Debug, Default)]
-pub struct ResourceHistory {
-    samples: VecDeque<ResourceSample>,
-}
-
-impl ResourceHistory {
-    pub fn push(&mut self, sample: ResourceSample) {
-        if self.samples.len() == RESOURCE_HISTORY_CAPACITY {
-            self.samples.pop_front();
-        }
-        self.samples.push_back(sample);
-    }
-
-    pub fn samples(&self) -> impl Iterator<Item = &ResourceSample> {
-        self.samples.iter()
     }
 }
 
@@ -251,84 +140,8 @@ fn push_log_line(shared: &mut Shared, line: impl Into<String>) {
 
 /// bridges the shared lifecycle into the GUI: console lines, status header, running counters, and
 /// the degraded/recovered toasts.
-struct DesktopObserver {
-    shared: SharedHandle,
-    /// the sandbox folder, which the shared status has no notion of.
-    root: String,
-}
 
 /// desktop-only bounded access to the UI log ring and configured local-files sandbox.
-struct DesktopDirectiveHandler {
-    shared: SharedHandle,
-    root: PathBuf,
-}
-
-impl DirectiveHandler for DesktopDirectiveHandler {
-    fn handle<'a>(
-        &'a self,
-        kind: &'a AgentDirectiveKind,
-    ) -> Pin<Box<dyn Future<Output = DirectiveResponse> + Send + 'a>> {
-        Box::pin(async move {
-            match kind {
-                AgentDirectiveKind::TailLogs { lines } => {
-                    let count = (*lines).min(MAX_LOG_LINES);
-                    let Ok(guard) = self.shared.lock() else {
-                        return DirectiveResponse::failed("desktop log buffer is unavailable");
-                    };
-                    let logs = guard
-                        .logs
-                        .iter()
-                        .rev()
-                        .take(count)
-                        .rev()
-                        .cloned()
-                        .collect::<Vec<_>>();
-                    DirectiveResponse::completed(runinator_models::json!({ "lines": logs }))
-                }
-                AgentDirectiveKind::ListSandbox { path } => match resolve_sandbox(&self.root, path)
-                {
-                    Ok(target) => match std::fs::read_dir(target) {
-                        Ok(entries) => {
-                            let mut names = entries
-                                .filter_map(Result::ok)
-                                .take(1_000)
-                                .map(|entry| entry.file_name().to_string_lossy().into_owned())
-                                .collect::<Vec<_>>();
-                            names.sort();
-                            DirectiveResponse::completed(
-                                runinator_models::json!({ "entries": names }),
-                            )
-                        }
-                        Err(err) => DirectiveResponse::failed(err.to_string()),
-                    },
-                    Err(err) => DirectiveResponse::failed(err),
-                },
-                AgentDirectiveKind::FetchFile { path, max_bytes } => {
-                    let cap = (*max_bytes).min(8 * 1024 * 1024) as usize;
-                    match resolve_sandbox(&self.root, path) {
-                        Ok(target) => match std::fs::read(target) {
-                            Ok(bytes) if bytes.len() <= cap => {
-                                DirectiveResponse::completed(runinator_models::json!({
-                                    "size": bytes.len(),
-                                    "encoding": "base64",
-                                    "content": base64::engine::general_purpose::STANDARD.encode(bytes),
-                                }))
-                            }
-                            Ok(bytes) => DirectiveResponse::failed(format!(
-                                "file is {} bytes, above the {} byte limit",
-                                bytes.len(),
-                                cap
-                            )),
-                            Err(err) => DirectiveResponse::failed(err.to_string()),
-                        },
-                        Err(err) => DirectiveResponse::failed(err),
-                    }
-                }
-                _ => DirectiveResponse::unsupported("directive is not desktop-specific"),
-            }
-        })
-    }
-}
 
 fn resolve_sandbox(root: &Path, relative: &str) -> Result<PathBuf, String> {
     let root = root
@@ -353,106 +166,6 @@ fn resolve_sandbox(root: &Path, relative: &str) -> Result<PathBuf, String> {
         return Err("path escapes the configured sandbox".to_string());
     }
     Ok(target)
-}
-
-impl AgentObserver for DesktopObserver {
-    fn on_log(&self, line: &str) {
-        log_line(&self.shared, line);
-    }
-
-    fn on_status(&self, status: &runinator_worker::AgentStatus) {
-        // decide the notification under the lock (so the latch is race-free), but fire it after
-        // releasing — `notify` only spawns a thread, yet keeping platform calls off a held lock is
-        // the habit worth keeping.
-        let toast = {
-            let Ok(mut guard) = self.shared.lock() else {
-                return;
-            };
-            guard.connection = status.connection.clone();
-            guard.metrics = status.metrics.clone();
-            set_activity(
-                &mut guard.agent_activity,
-                connection_activity(&status.connection),
-            );
-            guard.status = AgentStatus {
-                running: status.running,
-                replica_id: status.replica_id,
-                root: Some(self.root.clone()),
-                broker_connection: status.broker_connection.clone(),
-            };
-            match &status.connection {
-                ConnectionState::Reconnecting {
-                    attempt,
-                    max_attempts,
-                    ..
-                } if !guard.degraded_notified => {
-                    guard.degraded_notified = true;
-                    Some(Toast::Degraded {
-                        attempt: *attempt,
-                        max_attempts: *max_attempts,
-                    })
-                }
-                ConnectionState::ReenrollmentRequired { .. } if !guard.degraded_notified => {
-                    guard.degraded_notified = true;
-                    Some(Toast::Credential)
-                }
-                ConnectionState::Disconnected { attempts, .. } if !guard.disconnected_notified => {
-                    guard.disconnected_notified = true;
-                    Some(Toast::Disconnected {
-                        attempts: *attempts,
-                    })
-                }
-                ConnectionState::Connected if guard.degraded_notified => {
-                    guard.degraded_notified = false;
-                    Some(Toast::Recovered)
-                }
-                _ => None,
-            }
-        };
-        match toast {
-            Some(Toast::Degraded {
-                attempt,
-                max_attempts,
-            }) => crate::notify::notify_degraded(&match max_attempts {
-                Some(max) => format!(
-                    "The broker is unreachable (attempt {attempt} of {max}); the agent stops if it \
-                     runs out."
-                ),
-                None => "The broker is unreachable.".to_string(),
-            }),
-            Some(Toast::Recovered) => crate::notify::notify_recovered(),
-            Some(Toast::Disconnected { attempts }) => crate::notify::notify_disconnected(attempts),
-            Some(Toast::Credential) => crate::notify::notify_degraded(
-                "The agent credential was rejected; re-enrollment is required.",
-            ),
-            None => {}
-        }
-    }
-
-    fn on_worker_event(&self, event: &WorkerEvent) {
-        if matches!(event, WorkerEvent::EffectOutputChunk { .. }) {
-            log_line(&self.shared, describe_worker_event(event));
-            return;
-        }
-        let activity = match event {
-            WorkerEvent::EffectStarted {
-                provider, function, ..
-            } => {
-                crate::notify::notify_action_started(provider, function);
-                format!("executing {provider}.{function}")
-            }
-            WorkerEvent::EffectFinished { .. } => "waiting for desktop work".to_string(),
-            WorkerEvent::EffectSkippedDuplicate { .. } => "skipped duplicate delivery".to_string(),
-            WorkerEvent::ControlReceived { kind, .. } => {
-                format!("handling {} control", control_name(kind))
-            }
-            WorkerEvent::EffectOutputChunk { .. } => unreachable!(),
-        };
-        if let Ok(mut guard) = self.shared.lock() {
-            set_activity(&mut guard.worker_activity, activity);
-        }
-        log_line(&self.shared, describe_worker_event(event));
-    }
 }
 
 fn connection_activity(connection: &ConnectionState) -> String {
@@ -997,3 +710,24 @@ pub fn test_connection(
 #[cfg(test)]
 #[path = "agent_tests.rs"]
 mod tests;
+
+mod agent_status;
+pub use agent_status::AgentStatus;
+
+mod shared;
+pub use shared::Shared;
+
+mod activity;
+pub use activity::Activity;
+
+mod resource_sample;
+pub use resource_sample::ResourceSample;
+
+mod resource_history;
+pub use resource_history::ResourceHistory;
+
+mod desktop_observer;
+use desktop_observer::DesktopObserver;
+
+mod desktop_directive_handler;
+use desktop_directive_handler::DesktopDirectiveHandler;

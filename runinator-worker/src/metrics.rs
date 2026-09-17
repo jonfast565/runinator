@@ -8,17 +8,6 @@ use opentelemetry::metrics::{Counter, Gauge, Histogram, UpDownCounter};
 
 const METER_NAME: &str = "runinator-worker";
 
-struct WorkerMetrics {
-    effects_received: Counter<u64>,
-    effects_completed: Counter<u64>,
-    effect_duration_ms: Histogram<f64>,
-    effects_in_flight: UpDownCounter<i64>,
-    control_commands: Counter<u64>,
-    secret_resolution_failures: Counter<u64>,
-    capacity: Gauge<u64>,
-    result_publish: Counter<u64>,
-}
-
 static METRICS: OnceLock<WorkerMetrics> = OnceLock::new();
 
 fn metrics() -> &'static WorkerMetrics {
@@ -108,11 +97,8 @@ pub(crate) fn in_flight_guard() -> InFlightGuard {
     InFlightGuard
 }
 
-pub(crate) struct InFlightGuard;
+mod worker_metrics;
+use worker_metrics::WorkerMetrics;
 
-impl Drop for InFlightGuard {
-    fn drop(&mut self) {
-        runinator_tui::gauge_increment("worker", "effects in flight", -1);
-        metrics().effects_in_flight.add(-1, &[]);
-    }
-}
+mod in_flight_guard;
+pub(crate) use in_flight_guard::InFlightGuard;

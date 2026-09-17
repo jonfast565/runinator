@@ -10,38 +10,7 @@ use std::{collections::BTreeMap, error::Error, fmt};
 use crate::value::Value;
 use serde::Serialize;
 
-/// A stable, field-addressable input error suitable for HTTP and UI error surfaces.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ValidationError {
-    pub path: String,
-    pub message: String,
-}
-
-impl ValidationError {
-    pub fn new(path: impl Into<String>, message: impl Into<String>) -> Self {
-        Self {
-            path: path.into(),
-            message: message.into(),
-        }
-    }
-}
-
-impl fmt::Display for ValidationError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        if self.path.is_empty() {
-            f.write_str(&self.message)
-        } else {
-            write!(f, "{}: {}", self.path, self.message)
-        }
-    }
-}
-
-impl Error for ValidationError {}
-
 /// Type-owned validation that does not require external state.
-pub trait Validate {
-    fn validate(&self) -> Result<(), ValidationError>;
-}
 
 pub const SHORT_TEXT_MAX: usize = 256;
 pub const LONG_TEXT_MAX: usize = 16 * 1024;
@@ -202,12 +171,6 @@ pub fn dynamic_value(path: &str, value: &Value) -> Result<(), ValidationError> {
     Ok(())
 }
 
-impl Validate for Value {
-    fn validate(&self) -> Result<(), ValidationError> {
-        dynamic_value("payload", self)
-    }
-}
-
 /// Apply the dynamic JSON bounds to any serializable request type.
 pub fn serialized(path: &str, value: &impl Serialize) -> Result<(), ValidationError> {
     let value = serde_json::to_value(value)
@@ -263,3 +226,9 @@ mod tests {
         );
     }
 }
+
+mod validation_error;
+pub use validation_error::ValidationError;
+
+mod validate;
+pub use validate::Validate;

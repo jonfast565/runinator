@@ -62,15 +62,6 @@ pub fn run_dynamo_dump(
     runtime.block_on(async move { execute_dump(request, timeout, credentials).await })
 }
 
-#[derive(Deserialize)]
-#[serde(rename_all = "PascalCase")]
-struct ExportedCredentials {
-    access_key_id: String,
-    secret_access_key: String,
-    #[serde(default)]
-    session_token: Option<String>,
-}
-
 fn export_profile_credentials(
     profile: &runinator_models::execution_profiles::MaterializedExecutionProfile,
 ) -> Result<Credentials, SendableError> {
@@ -703,45 +694,11 @@ impl DynamoQueryType {
     }
 }
 
-pub struct DynamoDumpResult {
-    pub rows: usize,
-    pub artifact: NewRunArtifact,
-}
+mod exported_credentials;
+use exported_credentials::ExportedCredentials;
 
-#[derive(Debug, Deserialize)]
-struct DynamoDumpRequest {
-    table_name: String,
-    #[serde(default)]
-    index_name: Option<String>,
-    #[serde(default)]
-    key_condition_expression: Option<String>,
-    #[serde(default)]
-    filter_expression: Option<String>,
-    #[serde(default)]
-    projection_expression: Option<String>,
-    #[serde(default)]
-    expression_attribute_values: HashMap<String, JsonValue>,
-    #[serde(default)]
-    expression_attribute_names: HashMap<String, String>,
-    dump_folder: String,
-    #[serde(default)]
-    file_name: Option<String>,
-    #[serde(default)]
-    format: DumpFormat,
-    #[serde(default)]
-    sheet_name: Option<String>,
-    #[serde(default)]
-    region: Option<String>,
-    #[serde(default)]
-    limit: Option<i32>,
-    #[serde(default)]
-    consistent_read: Option<bool>,
-    #[serde(default)]
-    scan_index_forward: Option<bool>,
-    #[serde(default)]
-    query_type: DynamoQueryType,
-    #[serde(default)]
-    partiql_statement: Option<String>,
-    #[serde(default)]
-    partiql_parameters: Option<Vec<JsonValue>>,
-}
+mod dynamo_dump_result;
+pub use dynamo_dump_result::DynamoDumpResult;
+
+mod dynamo_dump_request;
+use dynamo_dump_request::DynamoDumpRequest;

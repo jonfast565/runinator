@@ -7,66 +7,17 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
-pub struct AdapterOrigin {
-    pub adapter_id: Uuid,
-    pub revision: i64,
-    pub delivery_record_id: Option<Uuid>,
-}
+mod adapter_origin;
+pub use adapter_origin::AdapterOrigin;
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct AdapterDeliveryRecord {
-    #[serde(default)]
-    pub approved: bool,
-    pub id: Uuid,
-    pub origin: AdapterOrigin,
-    pub attempt_id: Option<Uuid>,
-    pub event: Option<NormalizedAdapterEvent>,
-    pub state: String,
-    /// Gate mode that caused a held state. Older records without this field are review-held.
-    #[serde(default)]
-    pub hold_mode: Option<ExternalIngressGateMode>,
-    pub error: Option<String>,
-    pub preview: Value,
-    pub outcome: Value,
-    pub received_at: DateTime<Utc>,
-    pub updated_at: DateTime<Utc>,
-}
+mod adapter_delivery_record;
+pub use adapter_delivery_record::AdapterDeliveryRecord;
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct AdapterInspection {
-    pub adapter_id: Uuid,
-    pub mode: ExternalIngressGateMode,
-}
+mod adapter_inspection;
+pub use adapter_inspection::AdapterInspection;
 
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
-pub struct OrchestrationDebugControl {
-    pub paused: bool,
-    pub steps: i64,
-}
+mod orchestration_debug_control;
+pub use orchestration_debug_control::OrchestrationDebugControl;
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct AdapterPollAttempt {
-    pub id: Uuid,
-    pub adapter_id: Uuid,
-    pub adapter_revision: i64,
-    pub dry_run: bool,
-    pub state: String,
-    pub result: Value,
-    pub error: Option<String>,
-    pub created_at: DateTime<Utc>,
-    pub updated_at: DateTime<Utc>,
-    pub deadline_at: DateTime<Utc>,
-}
-
-impl crate::validation::Validate for OrchestrationDebugControl {
-    fn validate(&self) -> Result<(), crate::validation::ValidationError> {
-        if !(0..=1).contains(&self.steps) || (!self.paused && self.steps != 0) {
-            return Err(crate::validation::ValidationError::new(
-                "steps",
-                "must be zero or one; stepping requires pause",
-            ));
-        }
-        Ok(())
-    }
-}
+mod adapter_poll_attempt;
+pub use adapter_poll_attempt::AdapterPollAttempt;

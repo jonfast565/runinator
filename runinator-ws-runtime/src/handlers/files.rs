@@ -26,18 +26,6 @@ use runinator_ws_middleware::authz::{AuthContextExt, AuthorizationStore, AuthzCh
 use serde::Deserialize;
 use uuid::Uuid;
 
-#[derive(Debug, Deserialize)]
-pub struct UploadFileQuery {
-    pub path: String,
-    #[serde(default)]
-    pub mime_type: Option<String>,
-}
-
-#[derive(Debug, Deserialize, Default)]
-pub struct RuntimeFileQuery {
-    pub consumer_run_id: Option<Uuid>,
-}
-
 fn mime_for(path: &str, supplied: Option<String>) -> String {
     supplied
         .filter(|value| !value.trim().is_empty())
@@ -376,3 +364,9 @@ pub const DOCS: &[EndpointDoc] = &[
         Example::Artifact,
     ),
 ];
+
+mod upload_file_query;
+pub use upload_file_query::UploadFileQuery;
+
+mod runtime_file_query;
+pub use runtime_file_query::RuntimeFileQuery;

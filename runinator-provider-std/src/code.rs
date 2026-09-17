@@ -33,44 +33,6 @@ const OUTPUT_FILE: &str = "output.json";
 const RUNTIME_DIR: &str = "/runinator";
 const WORK_DIR: &str = "/work";
 
-struct CodeRequest {
-    language: String,
-    source: String,
-    runtime: CodeRuntime,
-    context: Value,
-    expected_output_type: Option<RuninatorType>,
-}
-
-struct CodeRuntime {
-    image: String,
-    setup_script: String,
-    environment: BTreeMap<String, String>,
-    executable: Option<String>,
-    build_args: Vec<String>,
-    run_args: Vec<String>,
-    limits: RuntimeLimits,
-}
-
-#[derive(Debug, Clone)]
-struct RuntimeLimits {
-    memory_mb: i64,
-    cpu_millis: i64,
-    pids: i64,
-    tmpfs_mb: i64,
-    max_output_bytes: usize,
-}
-
-struct DockerRun<'a> {
-    image: &'a str,
-    language: &'a str,
-    command: &'a [String],
-    work_dir: &'a Path,
-    context: &'a Value,
-    timeout_secs: i64,
-    environment: &'a BTreeMap<String, String>,
-    limits: &'a RuntimeLimits,
-}
-
 pub(crate) fn execute_code(
     request: &ProviderExecutionRequest,
     sink: Option<Arc<dyn ProviderEventSink>>,
@@ -362,11 +324,6 @@ fn prepare_work_dir(
     Ok(work_dir)
 }
 
-struct DockerOutput {
-    result: runinator_sandbox::ContainerOutput,
-    output_path: PathBuf,
-}
-
 // container execution itself lives in `runinator-sandbox`, shared with packaged functions. what
 // stays here is the `std.code` contract: the context/output file pair and the mount layout the
 // language runners expect.
@@ -432,13 +389,20 @@ fn run_docker(
     })
 }
 
-struct EventLineSink(Arc<dyn ProviderEventSink>);
+mod code_request;
+use code_request::CodeRequest;
 
-impl LineSink for EventLineSink {
-    fn line(&self, stream: Stream, text: &str) {
-        self.0.emit(ProviderExecutionEvent::Chunk {
-            stream: stream.as_str().to_string(),
-            content: text.to_string(),
-        });
-    }
-}
+mod code_runtime;
+use code_runtime::CodeRuntime;
+
+mod runtime_limits;
+use runtime_limits::RuntimeLimits;
+
+mod docker_run;
+use docker_run::DockerRun;
+
+mod docker_output;
+use docker_output::DockerOutput;
+
+mod event_line_sink;
+use event_line_sink::EventLineSink;

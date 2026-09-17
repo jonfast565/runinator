@@ -7,19 +7,10 @@ use crate::events::WorkerEvent;
 
 /// host hooks for agent lifecycle activity. implementations must be cheap and non-blocking: hooks
 /// are called inline from the lifecycle task and from the worker loops.
-pub trait AgentObserver: Send + Sync {
-    /// a human-readable lifecycle line (registering, connected, retrying, ...).
-    fn on_log(&self, _line: &str) {}
-
-    /// the lifecycle status changed. called on every transition, including the terminal
-    /// [`crate::agent::AgentConnection::Stopped`].
-    fn on_status(&self, _status: &AgentStatus) {}
-
-    /// a worker loop event. fold it into [`crate::agent::AgentMetrics`] to keep counters.
-    fn on_worker_event(&self, _event: &WorkerEvent) {}
-}
 
 /// default observer that ignores everything; the headless default.
-pub struct NoopObserver;
+mod agent_observer;
+pub use agent_observer::AgentObserver;
 
-impl AgentObserver for NoopObserver {}
+mod noop_observer;
+pub use noop_observer::NoopObserver;

@@ -158,105 +158,6 @@ impl std::fmt::Display for InterruptMode {
     }
 }
 
-/// where a suspended cursor goes back to, snapshotted when the interrupt is raised.
-///
-/// restoring the whole point rather than diffing it is what makes `finish_interrupt` idempotent: a
-/// duplicated drive writes the same position and frames it would have written the first time.
-#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
-pub struct ResumePoint {
-    #[serde(default)]
-    pub node_id: String,
-    #[serde(rename = "loops", default, skip_serializing_if = "Vec::is_empty")]
-    pub loops: Vec<LoopFrame>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub try_frame: Option<TryFrame>,
-}
-
-/// marks a cursor as an interrupt handler rather than an ordinary thread of control.
-///
-/// every field defaults. a frame that silently degraded to `None` would un-suspend a cursor
-/// mid-handler, but failing the parse is worse: `WorkflowExecutionState::from_state` falls back to
-/// `unwrap_or_default`, which would discard every cursor in the run. so the frame is made
-/// structurally incapable of failing to parse instead.
-#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
-pub struct InterruptFrame {
-    /// the cursor this handler suspended, and will return control to.
-    #[serde(default)]
-    pub interrupted_cursor: Uuid,
-    #[serde(default)]
-    pub source: InterruptSource,
-    /// what the raising event carried, readable in the region as `interrupt.payload`.
-    #[serde(default, skip_serializing_if = "Value::is_null")]
-    pub payload: Value,
-    #[serde(default)]
-    pub resume: ResumePoint,
-    #[serde(default = "Utc::now")]
-    pub raised_at: DateTime<Utc>,
-}
-
-/// an interrupt asked for from outside the run, waiting for the next drive of its target thread.
-///
-/// requested sources cannot be a predicate over node state — nothing about the run changed when the
-/// caller asked — so the ask is parked here and the ordinary raise path picks it up. it is consumed
-/// by the drive that decides about it, raised or refused, so there is no ghost request that can fire
-/// at an arbitrary later point in the run.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct PendingInterrupt {
-    #[serde(default = "Uuid::now_v7")]
-    pub id: Uuid,
-    #[serde(default)]
-    pub source: InterruptSource,
-    #[serde(default, skip_serializing_if = "Value::is_null")]
-    pub payload: Value,
-    /// the thread to interrupt. `None` lets whichever real cursor drives next take it, which is what
-    /// a run-scoped ask (an orphan signal) wants.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub cursor_id: Option<Uuid>,
-    #[serde(default = "Utc::now")]
-    pub requested_at: DateTime<Utc>,
-}
-
-impl PendingInterrupt {
-    pub fn new(source: InterruptSource, payload: Value, cursor_id: Option<Uuid>) -> Self {
-        Self {
-            id: Uuid::now_v7(),
-            source,
-            payload,
-            cursor_id,
-            requested_at: Utc::now(),
-        }
-    }
-
-    /// may this request be raised on `cursor_id`? an untargeted request is for any real thread.
-    pub fn targets(&self, cursor_id: Uuid) -> bool {
-        self.cursor_id.is_none_or(|target| target == cursor_id)
-    }
-}
-
-/// one declared handler: which source it answers, the region it enters, and whether it may fire.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct InterruptDeclaration {
-    /// the source this handler answers. stored as a string so an unknown source from a newer
-    /// binary is ignored rather than failing the whole definition parse.
-    pub on: String,
-    /// the region's entry node id.
-    pub handler: String,
-    /// whether this link may raise its handler. absent on older definitions means enabled.
-    #[serde(default = "interrupt_enabled", skip_serializing_if = "is_true")]
-    pub enabled: bool,
-    /// Cadence for a `timer` interrupt. Kept on the declaration rather than the handler node: a
-    /// timer is a run-level source, while a handler region remains pure graph structure.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub interval_seconds: Option<i64>,
-}
-
-impl InterruptDeclaration {
-    /// the parsed source, or `None` when this declaration names a source this binary does not know.
-    pub fn source(&self) -> Option<InterruptSource> {
-        self.on.parse().ok()
-    }
-}
-
 fn interrupt_enabled() -> bool {
     true
 }
@@ -277,3 +178,15 @@ pub fn handled_key(source: InterruptSource, node_run_id: Uuid, attempt: i64) -> 
 #[cfg(test)]
 #[path = "interrupt_tests.rs"]
 mod tests;
+
+mod resume_point;
+pub use resume_point::ResumePoint;
+
+mod interrupt_frame;
+pub use interrupt_frame::InterruptFrame;
+
+mod pending_interrupt;
+pub use pending_interrupt::PendingInterrupt;
+
+mod interrupt_declaration;
+pub use interrupt_declaration::InterruptDeclaration;

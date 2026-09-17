@@ -33,25 +33,6 @@ pub const MAX_PRESIGN_SECONDS: i64 = 7 * 24 * 60 * 60;
 pub const AMZ_DATE_FORMAT: &str = "%Y%m%dT%H%M%SZ";
 const SCOPE_DATE_FORMAT: &str = "%Y%m%d";
 
-/// a computed signature plus the pieces a caller needs to put it on the wire.
-#[derive(Debug, Clone)]
-pub struct Signature {
-    pub signature: String,
-    pub signed_headers: String,
-    pub credential_scope: String,
-    pub amz_date: String,
-}
-
-impl Signature {
-    /// the `Authorization` header value for a header-signed request.
-    pub fn authorization_header(&self, access_key_id: &str) -> String {
-        format!(
-            "{ALGORITHM} Credential={access_key_id}/{}, SignedHeaders={}, Signature={}",
-            self.credential_scope, self.signed_headers, self.signature
-        )
-    }
-}
-
 /// the credential scope string, `<date>/<region>/<service>/aws4_request`.
 pub fn credential_scope(date: DateTime<Utc>, region: &str) -> String {
     format!(
@@ -80,15 +61,6 @@ pub fn sign_request(
 }
 
 /// what a server extracted from an inbound request before verifying it.
-pub struct PresentedSignature {
-    pub access_key_id: String,
-    pub credential_scope: String,
-    pub signed_headers: String,
-    pub signature: String,
-    pub amz_date: String,
-    /// Present only for a presigned URL. Limits how long the signature stays valid.
-    pub expires_in: Option<i64>,
-}
 
 /// verify a presented signature against a canonical request rebuilt from the same wire bytes.
 ///
@@ -187,3 +159,9 @@ fn constant_time_eq(left: &[u8], right: &[u8]) -> bool {
 #[cfg(test)]
 #[path = "mod_tests.rs"]
 mod tests;
+
+mod signature;
+pub use signature::Signature;
+
+mod presented_signature;
+pub use presented_signature::PresentedSignature;

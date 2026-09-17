@@ -10,17 +10,6 @@ use clap::{Arg, ArgAction, Command, CommandFactory};
 use super::ReplCommand;
 
 /// a console-local verb, declared rather than derived.
-pub struct MetaCommand {
-    /// the words that select it, e.g. `["run", "workflow"]`.
-    pub path: &'static [&'static str],
-    /// the full call shape, shown by `:help`.
-    pub usage: &'static str,
-    pub summary: &'static str,
-    /// what that word is, shown when it cannot be completed.
-    pub hint: &'static str,
-    /// flags that take no value, so `--debug foo` does not read `foo` as the value of `--debug`.
-    pub booleans: &'static [&'static str],
-}
 
 const fn meta(
     path: &'static [&'static str],
@@ -114,23 +103,6 @@ pub const META_COMMANDS: &[MetaCommand] = &[
     ),
     meta(&["exit"], "exit", "leave the console", ""),
 ];
-
-/// one console verb: the words that select it, how it is called, and what it does.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct CommandEntry {
-    pub path: Vec<String>,
-    pub usage: String,
-    pub summary: String,
-    /// the console answers this itself; everything else is dispatched as a command line.
-    pub console_local: bool,
-}
-
-impl CommandEntry {
-    /// the path as one word, which is how `:help` names a command.
-    pub fn name(&self) -> String {
-        self.path.join(" ")
-    }
-}
 
 /// every verb, console-local first and then the command-line surface in declaration order.
 ///
@@ -409,3 +381,9 @@ fn one_line(text: &str) -> String {
 #[cfg(test)]
 #[path = "catalog_tests.rs"]
 mod tests;
+
+mod meta_command;
+pub use meta_command::MetaCommand;
+
+mod command_entry;
+pub use command_entry::CommandEntry;

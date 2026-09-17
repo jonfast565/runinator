@@ -11,18 +11,8 @@ use serde::{Deserialize, Serialize};
 pub const MIN_PART_NUMBER: u32 = 1;
 pub const MAX_PART_NUMBER: u32 = 10_000;
 
-/// a part the client claims to have uploaded, as sent in a completion request.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct CompletedPart {
-    pub part_number: u32,
-    /// the etag the upload-part response returned, echoed back for verification.
-    pub etag: String,
-}
+mod completed_part;
+pub use completed_part::CompletedPart;
 
-/// an in-progress upload's identity.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct MultipartUpload {
-    pub upload_id: String,
-    pub bucket: String,
-    pub key: String,
-}
+mod multipart_upload;
+pub use multipart_upload::MultipartUpload;

@@ -21,22 +21,6 @@ const MAX_ARCHIVE_BYTES: usize = 10 * 1024 * 1024;
 const MAX_EXPANDED_BYTES: u64 = 32 * 1024 * 1024;
 const MAX_ENTRIES: usize = 1_000;
 
-pub struct ProfileLease {
-    pub context: MaterializedExecutionProfile,
-    pub credential_scopes: Vec<String>,
-    root: PathBuf,
-}
-
-impl Drop for ProfileLease {
-    fn drop(&mut self) {
-        if let Err(error) = fs::remove_dir_all(&self.root)
-            && error.kind() != std::io::ErrorKind::NotFound
-        {
-            tracing::warn!(path = %self.root.display(), %error, "failed to clean execution profile directory");
-        }
-    }
-}
-
 pub async fn materialize(
     client: &dyn ExecutionProfileSource,
     effect_id: uuid::Uuid,
@@ -191,21 +175,6 @@ async fn materialize_for_consumer(
         credential_scopes: profile.credential_scopes,
         root,
     })
-}
-
-#[derive(Deserialize)]
-struct BundleManifest {
-    version: u32,
-    profile_id: uuid::Uuid,
-    config_digest: String,
-    files: Vec<ManifestFile>,
-}
-
-#[derive(Deserialize)]
-struct ManifestFile {
-    path: String,
-    sha256: String,
-    size: usize,
 }
 
 fn unpack(
@@ -388,3 +357,12 @@ mod tests {
 #[cfg(test)]
 #[path = "execution_profile_source_tests.rs"]
 mod execution_profile_source_tests;
+
+mod profile_lease;
+pub use profile_lease::ProfileLease;
+
+mod bundle_manifest;
+use bundle_manifest::BundleManifest;
+
+mod manifest_file;
+use manifest_file::ManifestFile;

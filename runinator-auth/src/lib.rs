@@ -20,33 +20,7 @@ use uuid::Uuid;
 
 pub mod enroll;
 
-/// raw auth options from the CLI/env, resolved into an [`AuthConfig`] at startup.
-#[derive(Debug, Clone, Default)]
-pub struct AuthOptions {
-    pub enabled: bool,
-    pub access_ttl_secs: i64,
-    pub refresh_ttl_secs: i64,
-}
-
-/// runtime auth configuration shared across handlers and the middleware.
-#[derive(Debug, Clone)]
-pub struct AuthConfig {
-    pub enabled: bool,
-    /// primary signing secret: every freshly issued token is signed with this.
-    pub jwt_secret: Vec<u8>,
-    /// optional previous signing secret accepted on verify during a rotation overlap window. tokens
-    /// are never signed with it; it only keeps pre-rotation tokens valid until they expire.
-    pub jwt_secret_previous: Option<Vec<u8>>,
-    pub access_ttl_secs: i64,
-    pub refresh_ttl_secs: i64,
-}
-
 /// A new API key. Show `secret` to the caller once and store `key_hash`.
-pub struct NewApiKey {
-    pub prefix: String,
-    pub secret: String,
-    pub key_hash: String,
-}
 
 // ---- password hashing (argon2) ----
 
@@ -218,36 +192,6 @@ fn verify_with_secret(secret: &[u8], token: &str) -> Option<Claims> {
 
 /// Persistence needed to verify API keys. The web service implements this with a database,
 /// while this crate keeps the resolution logic independent of a concrete database.
-pub trait CredentialStore {
-    fn api_key_by_prefix(
-        &self,
-        prefix: String,
-    ) -> impl Future<Output = Option<ApiKeyRecord>> + Send;
-
-    fn touch_api_key(&self, id: Uuid, last_used_at: i64) -> impl Future<Output = ()> + Send;
-
-    fn user_by_id(&self, id: Uuid) -> impl Future<Output = Option<User>> + Send;
-
-    fn session_by_id(&self, id: Uuid) -> impl Future<Output = Option<AuthSession>> + Send;
-
-    fn service_account_by_id(
-        &self,
-        id: Uuid,
-    ) -> impl Future<Output = Option<ServiceAccount>> + Send;
-
-    fn role_assignments(
-        &self,
-        kind: PrincipalKind,
-        id: Uuid,
-    ) -> impl Future<Output = Option<Vec<RoleAssignment>>> + Send;
-
-    /// Resolve an organization selected by a token or scoped API key. Authentication must reject
-    /// disabled tenants before a request reaches any resource handler.
-    fn organization_by_id(
-        &self,
-        id: Uuid,
-    ) -> impl Future<Output = Option<runinator_models::orgs::Organization>> + Send;
-}
 
 /// Resolve a credential to a principal. Try a JWT first, then look up a
 /// `<prefix>.<secret>` API key through [`CredentialStore`].
@@ -349,3 +293,15 @@ pub async fn resolve_credential<S: CredentialStore>(
 
 #[cfg(test)]
 mod tests;
+
+mod auth_options;
+pub use auth_options::AuthOptions;
+
+mod auth_config;
+pub use auth_config::AuthConfig;
+
+mod new_api_key;
+pub use new_api_key::NewApiKey;
+
+mod credential_store;
+pub use credential_store::CredentialStore;

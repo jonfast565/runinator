@@ -28,55 +28,6 @@ pub use record::*;
 /// the module and a mismatch is an error rather than a best-effort decode.
 pub const INVOCATION_IR_VERSION: u32 = 1;
 
-/// a compiled unit: the entry program plus every function it can call by name.
-///
-/// user functions live here rather than in `metadata.functions` because they are *code*, and the
-/// point of the ir is that there is one representation of code. the module is what a continuation
-/// is resumed against.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct InvocationModule {
-    /// the ir version this module was compiled at; see [`INVOCATION_IR_VERSION`].
-    pub version: u32,
-    /// the program that runs when the invocation starts.
-    pub entry: InvocationProgram,
-    /// callable-by-name function bodies, keyed by the name the program calls them under.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub functions: Vec<InvocationFunction>,
-}
-
-impl InvocationModule {
-    /// a module holding a single program and no functions.
-    pub fn new(entry: InvocationProgram) -> Self {
-        Self {
-            version: INVOCATION_IR_VERSION,
-            entry,
-            functions: Vec::new(),
-        }
-    }
-
-    /// look up a function body by name.
-    pub fn function(&self, name: &str) -> Option<&InvocationFunction> {
-        self.functions.iter().find(|item| item.name == name)
-    }
-
-    /// whether this module's version is one the current vm understands.
-    pub fn is_supported(&self) -> bool {
-        self.version == INVOCATION_IR_VERSION
-    }
-}
-
-/// one named function body plus the parameters it binds.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct InvocationFunction {
-    pub name: String,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub params: Vec<String>,
-    pub body: InvocationProgram,
-    /// the annotated recursion cap from `@recursive(max_depth: N)`, when the author set one.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub max_depth: Option<u32>,
-}
-
 /// what one `step`/`resume` of the vm produced.
 ///
 /// `Goto` is a first-class outcome rather than a kind of completion because a `goto` moves the
@@ -109,3 +60,9 @@ impl InvocationStep {
 #[cfg(test)]
 #[path = "invocation/tests.rs"]
 mod tests;
+
+mod invocation_module;
+pub use invocation_module::InvocationModule;
+
+mod invocation_function;
+pub use invocation_function::InvocationFunction;

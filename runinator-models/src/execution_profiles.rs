@@ -17,15 +17,6 @@ use crate::validation::{
 };
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct ExecutionProfileCommand {
-    pub argv: Vec<String>,
-    #[serde(default)]
-    pub interactive: bool,
-    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
-    pub environment: BTreeMap<String, String>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum ExecutionProfileSource {
     File {
@@ -48,76 +39,8 @@ fn default_glob() -> String {
     "*".into()
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct ExecutionProfileCollectionSpec {
-    #[serde(default = "default_spec_version")]
-    pub version: u32,
-    #[serde(default)]
-    pub probe: Option<ExecutionProfileCommand>,
-    #[serde(default)]
-    pub refresh: Option<ExecutionProfileCommand>,
-    pub sources: Vec<ExecutionProfileSource>,
-}
-
-impl Default for ExecutionProfileCollectionSpec {
-    fn default() -> Self {
-        Self {
-            version: default_spec_version(),
-            probe: None,
-            refresh: None,
-            sources: Vec::new(),
-        }
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct ExecutionProfileExposureSpec {
-    #[serde(default = "default_spec_version")]
-    pub version: u32,
-    #[serde(default)]
-    pub home_overlay: bool,
-    #[serde(default)]
-    pub environment: BTreeMap<String, String>,
-}
-
-impl Default for ExecutionProfileExposureSpec {
-    fn default() -> Self {
-        Self {
-            version: default_spec_version(),
-            home_overlay: false,
-            environment: BTreeMap::new(),
-        }
-    }
-}
-
 const fn default_spec_version() -> u32 {
     1
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct ExecutionProfile {
-    pub id: Uuid,
-    pub org_id: Option<Uuid>,
-    pub name: String,
-    #[serde(default)]
-    pub description: String,
-    #[serde(default)]
-    pub credential_scopes: Vec<String>,
-    pub collection: ExecutionProfileCollectionSpec,
-    pub exposure: ExecutionProfileExposureSpec,
-    pub config_version: i64,
-    pub config_digest: String,
-    pub enabled: bool,
-    pub current_revision: Option<i64>,
-    pub current_digest: Option<String>,
-    pub current_publisher_id: Option<Uuid>,
-    pub published_at: Option<DateTime<Utc>>,
-    pub expires_at: Option<DateTime<Utc>>,
-    pub refresh_requested_at: Option<DateTime<Utc>>,
-    pub health: ExecutionProfileHealth,
-    pub last_error: Option<String>,
-    pub created_at: DateTime<Utc>,
-    pub updated_at: DateTime<Utc>,
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -215,76 +138,6 @@ impl ExecutionProfileOperationState {
     }
 }
 
-/// One durable dry-run or refresh request, claimed and completed by one desktop agent.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct ExecutionProfileOperation {
-    pub id: Uuid,
-    pub profile_id: Uuid,
-    pub config_digest: String,
-    pub kind: ExecutionProfileOperationKind,
-    pub state: ExecutionProfileOperationState,
-    pub requested_at: DateTime<Utc>,
-    pub requested_by: Option<Uuid>,
-    pub claimed_by: Option<Uuid>,
-    pub started_at: Option<DateTime<Utc>>,
-    pub lease_expires_at: Option<DateTime<Utc>>,
-    pub completed_at: Option<DateTime<Utc>>,
-    pub error: Option<String>,
-}
-
-/// The latest locally reported collection state from one desktop agent.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct ExecutionProfileAgentStatus {
-    pub profile_id: Uuid,
-    pub agent_id: Uuid,
-    pub config_digest: String,
-    pub approval: ExecutionProfileApprovalState,
-    pub last_seen_at: DateTime<Utc>,
-    pub last_attempt_at: Option<DateTime<Utc>>,
-    pub last_success_at: Option<DateTime<Utc>>,
-    pub last_error: Option<String>,
-}
-
-/// The collection status presented to profile authors alongside immutable publication metadata.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct ExecutionProfileCollectionStatus {
-    pub profile_id: Uuid,
-    pub config_digest: String,
-    pub publication_health: ExecutionProfileHealth,
-    pub current_revision: Option<i64>,
-    pub published_at: Option<DateTime<Utc>>,
-    pub expires_at: Option<DateTime<Utc>>,
-    pub latest_operation: Option<ExecutionProfileOperation>,
-    pub agents: Vec<ExecutionProfileAgentStatus>,
-}
-
-/// A desktop agent's observation after it has inspected the local approval and collection state.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct ExecutionProfileAgentStatusRequest {
-    pub config_digest: String,
-    pub approval: ExecutionProfileApprovalState,
-    #[serde(default)]
-    pub last_attempt_at: Option<DateTime<Utc>>,
-    #[serde(default)]
-    pub last_success_at: Option<DateTime<Utc>>,
-    #[serde(default)]
-    pub last_error: Option<String>,
-}
-
-/// Binds an operation claim to the configuration the desktop agent approved locally.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct ExecutionProfileOperationClaimRequest {
-    pub config_digest: String,
-}
-
-/// Completes a claimed desktop operation without altering the profile's publication availability.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct ExecutionProfileOperationCompleteRequest {
-    pub state: ExecutionProfileOperationState,
-    #[serde(default)]
-    pub error: Option<String>,
-}
-
 impl ExecutionProfileHealth {
     pub const fn as_str(self) -> &'static str {
         match self {
@@ -311,240 +164,8 @@ impl ExecutionProfileHealth {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct ExecutionProfileRevision {
-    pub profile_id: Uuid,
-    pub revision: i64,
-    pub digest: String,
-    pub size_bytes: i64,
-    pub publisher_id: Option<Uuid>,
-    pub expires_at: Option<DateTime<Utc>>,
-    pub created_at: DateTime<Utc>,
-    /// Server-side encrypted blob URI. Never serialize it onto an HTTP response.
-    #[serde(skip_serializing, default)]
-    pub uri: String,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
-pub struct ExecutionProfileBinding {
-    pub reference: ArtifactRef,
-}
-
-impl ExecutionProfileBinding {
-    pub fn resolved(id: Uuid, name: impl Into<String>) -> Self {
-        Self {
-            reference: ArtifactRef::current(
-                ArtifactKind::ExecutionProfile,
-                id,
-                Some(ArtifactPath::new(None, name)),
-            ),
-        }
-    }
-
-    pub fn unresolved(name: impl Into<String>) -> Self {
-        let name = name.into();
-        Self {
-            reference: ArtifactRef::current(
-                ArtifactKind::ExecutionProfile,
-                Uuid::nil(),
-                Some(ArtifactPath::new(None, name)),
-            ),
-        }
-    }
-
-    pub fn id(&self) -> Uuid {
-        self.reference.id
-    }
-
-    pub fn name(&self) -> &str {
-        self.reference
-            .authored_path
-            .as_ref()
-            .map(|path| path.key.as_str())
-            .unwrap_or("")
-    }
-}
-
-impl<'de> Deserialize<'de> for ExecutionProfileBinding {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: serde::Deserializer<'de>,
-    {
-        #[derive(Deserialize)]
-        #[serde(untagged)]
-        enum Wire {
-            Current { reference: ArtifactRef },
-            Legacy { id: Uuid, name: String },
-        }
-
-        use serde::de::Error as _;
-
-        Ok(match Wire::deserialize(deserializer)? {
-            Wire::Current { reference } => {
-                if reference.kind != ArtifactKind::ExecutionProfile {
-                    return Err(D::Error::custom(
-                        "execution profile binding must reference an execution_profile artifact",
-                    ));
-                }
-                Self { reference }
-            }
-            Wire::Legacy { id, name } => Self {
-                reference: ArtifactRef::current(
-                    ArtifactKind::ExecutionProfile,
-                    id,
-                    Some(ArtifactPath::new(None, name)),
-                ),
-            },
-        })
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct MaterializedExecutionProfile {
-    pub profile_id: Uuid,
-    pub revision: i64,
-    pub root: String,
-    pub home: Option<String>,
-    #[serde(default)]
-    pub environment: BTreeMap<String, String>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct ExecutionProfilePutRequest {
-    pub name: String,
-    #[serde(default)]
-    pub description: String,
-    #[serde(default)]
-    pub credential_scopes: Vec<String>,
-    pub collection: ExecutionProfileCollectionSpec,
-    #[serde(default)]
-    pub exposure: ExecutionProfileExposureSpec,
-    #[serde(default = "default_true")]
-    pub enabled: bool,
-}
-
 const fn default_true() -> bool {
     true
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct ExecutionProfilePublishRequest {
-    pub digest: String,
-    #[serde(default)]
-    pub expires_at: Option<DateTime<Utc>>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct ExecutionProfileStatusRequest {
-    pub health: ExecutionProfileHealth,
-    #[serde(default)]
-    pub error: Option<String>,
-}
-
-impl Validate for ExecutionProfilePutRequest {
-    fn validate(&self) -> Result<(), ValidationError> {
-        required_text("name", &self.name, SHORT_TEXT_MAX)?;
-        bounded_text("description", &self.description, LONG_TEXT_MAX)?;
-        if self.credential_scopes.is_empty() {
-            return Err(ValidationError::new(
-                "credential_scopes",
-                "must declare at least one credential scope",
-            ));
-        }
-        let mut scopes = HashSet::new();
-        for (index, scope) in self.credential_scopes.iter().enumerate() {
-            required_text(
-                &format!("credential_scopes[{index}]"),
-                scope,
-                SHORT_TEXT_MAX,
-            )?;
-            if !scopes.insert(scope.trim().to_ascii_lowercase()) {
-                return Err(ValidationError::new(
-                    format!("credential_scopes[{index}]"),
-                    "must be unique ignoring case",
-                ));
-            }
-        }
-        if self.collection.version != 1 || self.exposure.version != 1 {
-            return Err(ValidationError::new(
-                "version",
-                "only collection/exposure specification version 1 is supported",
-            ));
-        }
-        for (label, command) in [
-            ("collection.probe", self.collection.probe.as_ref()),
-            ("collection.refresh", self.collection.refresh.as_ref()),
-        ] {
-            if let Some(command) = command {
-                validate_profile_command(label, command)?;
-                if label == "collection.probe" && command.interactive {
-                    return Err(ValidationError::new(label, "cannot be interactive"));
-                }
-            }
-        }
-        if self.collection.sources.is_empty() {
-            return Err(ValidationError::new(
-                "collection.sources",
-                "must contain at least one source",
-            ));
-        }
-        let mut targets = HashSet::new();
-        for (index, source) in self.collection.sources.iter().enumerate() {
-            let target = match source {
-                ExecutionProfileSource::File { target, .. }
-                | ExecutionProfileSource::Directory { target, .. } => target,
-                ExecutionProfileSource::Command { command, target } => {
-                    validate_profile_command(
-                        &format!("collection.sources[{index}].command"),
-                        command,
-                    )?;
-                    if command.interactive {
-                        return Err(ValidationError::new(
-                            format!("collection.sources[{index}].command"),
-                            "cannot be interactive",
-                        ));
-                    }
-                    target
-                }
-            };
-            validate_bundle_path(target).map_err(|message| {
-                ValidationError::new(format!("collection.sources[{index}].target"), message)
-            })?;
-            if !targets.insert(target.trim().to_string()) {
-                return Err(ValidationError::new(
-                    format!("collection.sources[{index}].target"),
-                    "duplicates another bundle target",
-                ));
-            }
-            if let ExecutionProfileSource::Directory { glob, .. } = source
-                && glob.trim().is_empty()
-            {
-                return Err(ValidationError::new(
-                    format!("collection.sources[{index}].glob"),
-                    "cannot be blank",
-                ));
-            }
-        }
-        let mut environment_names = HashSet::new();
-        for (name, value) in &self.exposure.environment {
-            if !is_portable_environment_name(name.trim()) {
-                return Err(ValidationError::new(
-                    format!("exposure.environment.{name}"),
-                    "is not a portable environment variable name",
-                ));
-            }
-            if !environment_names.insert(name.trim().to_ascii_lowercase()) {
-                return Err(ValidationError::new(
-                    format!("exposure.environment.{name}"),
-                    "duplicates another name ignoring case",
-                ));
-            }
-            validate_environment_template(value.trim()).map_err(|message| {
-                ValidationError::new(format!("exposure.environment.{name}"), message)
-            })?;
-        }
-        Ok(())
-    }
 }
 
 fn validate_profile_command(
@@ -585,52 +206,6 @@ pub fn is_portable_environment_name(value: &str) -> bool {
     let mut chars = value.chars();
     matches!(chars.next(), Some('_' | 'A'..='Z' | 'a'..='z'))
         && chars.all(|ch| matches!(ch, '_' | 'A'..='Z' | 'a'..='z' | '0'..='9'))
-}
-
-impl Validate for ExecutionProfileStatusRequest {
-    fn validate(&self) -> Result<(), ValidationError> {
-        if let Some(error) = &self.error {
-            bounded_text("error", error, 512)?;
-        }
-        Ok(())
-    }
-}
-
-impl Validate for ExecutionProfileAgentStatusRequest {
-    fn validate(&self) -> Result<(), ValidationError> {
-        required_text("config_digest", &self.config_digest, SHORT_TEXT_MAX)?;
-        if let Some(error) = &self.last_error {
-            bounded_text("last_error", error, 512)?;
-        }
-        Ok(())
-    }
-}
-
-impl Validate for ExecutionProfileOperationClaimRequest {
-    fn validate(&self) -> Result<(), ValidationError> {
-        required_text("config_digest", &self.config_digest, SHORT_TEXT_MAX)
-    }
-}
-
-impl Validate for ExecutionProfileOperationCompleteRequest {
-    fn validate(&self) -> Result<(), ValidationError> {
-        if self.state.is_active() {
-            return Err(ValidationError::new(
-                "state",
-                "must be a terminal operation state",
-            ));
-        }
-        if let Some(error) = &self.error {
-            bounded_text("error", error, 512)?;
-        }
-        if self.state == ExecutionProfileOperationState::Failed && self.error.is_none() {
-            return Err(ValidationError::new(
-                "error",
-                "is required when state is failed",
-            ));
-        }
-        Ok(())
-    }
 }
 
 pub fn validate_bundle_path(path: &str) -> Result<(), String> {
@@ -755,3 +330,51 @@ mod tests {
         assert!(encoded.get("id").is_none());
     }
 }
+
+mod execution_profile_command;
+pub use execution_profile_command::ExecutionProfileCommand;
+
+mod execution_profile_collection_spec;
+pub use execution_profile_collection_spec::ExecutionProfileCollectionSpec;
+
+mod execution_profile_exposure_spec;
+pub use execution_profile_exposure_spec::ExecutionProfileExposureSpec;
+
+mod execution_profile;
+pub use execution_profile::ExecutionProfile;
+
+mod execution_profile_operation;
+pub use execution_profile_operation::ExecutionProfileOperation;
+
+mod execution_profile_agent_status;
+pub use execution_profile_agent_status::ExecutionProfileAgentStatus;
+
+mod execution_profile_collection_status;
+pub use execution_profile_collection_status::ExecutionProfileCollectionStatus;
+
+mod execution_profile_agent_status_request;
+pub use execution_profile_agent_status_request::ExecutionProfileAgentStatusRequest;
+
+mod execution_profile_operation_claim_request;
+pub use execution_profile_operation_claim_request::ExecutionProfileOperationClaimRequest;
+
+mod execution_profile_operation_complete_request;
+pub use execution_profile_operation_complete_request::ExecutionProfileOperationCompleteRequest;
+
+mod execution_profile_revision;
+pub use execution_profile_revision::ExecutionProfileRevision;
+
+mod execution_profile_binding;
+pub use execution_profile_binding::ExecutionProfileBinding;
+
+mod materialized_execution_profile;
+pub use materialized_execution_profile::MaterializedExecutionProfile;
+
+mod execution_profile_put_request;
+pub use execution_profile_put_request::ExecutionProfilePutRequest;
+
+mod execution_profile_publish_request;
+pub use execution_profile_publish_request::ExecutionProfilePublishRequest;
+
+mod execution_profile_status_request;
+pub use execution_profile_status_request::ExecutionProfileStatusRequest;

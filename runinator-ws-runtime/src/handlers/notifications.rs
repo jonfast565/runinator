@@ -58,14 +58,6 @@ fn forbidden(message: &str) -> Reply {
     )
 }
 
-#[derive(Deserialize, Default)]
-pub struct NotificationsListQuery {
-    #[serde(default)]
-    pub unread: Option<bool>,
-    #[serde(default)]
-    pub limit: Option<i64>,
-}
-
 pub async fn list_notifications<T: AuthorizationStore + RuntimeStore + NotificationStore>(
     Extension(db): Extension<Arc<T>>,
     Extension(service): Extension<Arc<NotificationOperations<T>>>,
@@ -190,13 +182,6 @@ pub async fn delete_notification<T: AuthorizationStore + RuntimeStore + Notifica
         Ok(false) => not_found(format!("Notification {notification_id} not found")),
         Err(err) => api_error(err.to_string()),
     }
-}
-
-#[derive(Deserialize, Default)]
-pub struct NotificationPoliciesQuery {
-    /// narrow to one workflow's own policies; omit for every policy including the global ones.
-    #[serde(default)]
-    pub workflow_id: Option<Uuid>,
 }
 
 pub async fn list_notification_policies<
@@ -637,3 +622,9 @@ pub const DOCS: &[EndpointDoc] = &[
         Example::TaskResponse,
     ),
 ];
+
+mod notifications_list_query;
+pub use notifications_list_query::NotificationsListQuery;
+
+mod notification_policies_query;
+pub use notification_policies_query::NotificationPoliciesQuery;

@@ -15,69 +15,8 @@ use tracing::{error, info};
 const RECEIVE_RETRY_BACKOFF: Duration = Duration::from_secs(1);
 
 /// result supplied by a host-specific directive handler.
-pub struct DirectiveResponse {
-    pub status: AgentDirectiveStatus,
-    pub payload: Value,
-    pub message: Option<String>,
-}
-
-impl DirectiveResponse {
-    pub fn completed(payload: Value) -> Self {
-        Self {
-            status: AgentDirectiveStatus::Completed,
-            payload,
-            message: None,
-        }
-    }
-
-    pub fn unsupported(message: impl Into<String>) -> Self {
-        Self {
-            status: AgentDirectiveStatus::Unsupported,
-            payload: Value::Null,
-            message: Some(message.into()),
-        }
-    }
-
-    pub fn failed(message: impl Into<String>) -> Self {
-        Self {
-            status: AgentDirectiveStatus::Failed,
-            payload: Value::Null,
-            message: Some(message.into()),
-        }
-    }
-}
 
 /// host seam for directives that require desktop-only state such as the sandbox and log ring.
-pub trait DirectiveHandler: Send + Sync + 'static {
-    fn handle<'a>(
-        &'a self,
-        kind: &'a AgentDirectiveKind,
-    ) -> Pin<Box<dyn Future<Output = DirectiveResponse> + Send + 'a>>;
-}
-
-/// fail-closed handler used by the generic/headless runtime.
-#[derive(Default)]
-pub struct DefaultDirectiveHandler;
-
-impl DirectiveHandler for DefaultDirectiveHandler {
-    fn handle<'a>(
-        &'a self,
-        kind: &'a AgentDirectiveKind,
-    ) -> Pin<Box<dyn Future<Output = DirectiveResponse> + Send + 'a>> {
-        Box::pin(async move {
-            DirectiveResponse::unsupported(format!(
-                "{} is unavailable on this agent host",
-                directive_name(kind)
-            ))
-        })
-    }
-}
-
-pub(crate) struct DirectiveLoopState {
-    pub drained: Arc<std::sync::atomic::AtomicBool>,
-    pub restart_requested: Arc<std::sync::atomic::AtomicBool>,
-    pub state_changed: Arc<Notify>,
-}
 
 pub(crate) async fn run_directive_loop(
     broker: Arc<dyn Broker>,
@@ -255,3 +194,15 @@ fn directive_name(kind: &AgentDirectiveKind) -> &'static str {
         AgentDirectiveKind::Unknown => "unknown",
     }
 }
+
+mod directive_response;
+pub use directive_response::DirectiveResponse;
+
+mod directive_handler;
+pub use directive_handler::DirectiveHandler;
+
+mod default_directive_handler;
+pub use default_directive_handler::DefaultDirectiveHandler;
+
+mod directive_loop_state;
+pub(crate) use directive_loop_state::DirectiveLoopState;

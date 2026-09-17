@@ -21,17 +21,6 @@ use x509_parser::parse_x509_certificate;
 use crate::agent::config::{AgentRuntimeConfig, LocatorMode};
 use crate::agent::relay::{derive_relay_url, derive_relay_url_with_path};
 
-#[derive(Debug, Serialize, Deserialize)]
-struct StoredAgentCredential {
-    service_url: String,
-    api_key: String,
-    instance_id: String,
-    #[serde(default)]
-    labels: BTreeMap<String, String>,
-    #[serde(default)]
-    cluster_id: Option<uuid::Uuid>,
-}
-
 /// load a previously issued credential, or redeem the one-time token when this is the first start.
 /// the token is held only in memory; the persisted file contains the issued API key and identity.
 pub async fn prepare_agent_credentials(
@@ -191,61 +180,6 @@ fn decode_spki_pin(raw: &str) -> Result<[u8; 32], SendableError> {
         .map_err(|_| crate::errors::API_CLIENT.error("invalid SPKI pin"))
 }
 
-struct PinnedServerVerifier {
-    pin: [u8; 32],
-    algorithms: WebPkiSupportedAlgorithms,
-}
-
-impl fmt::Debug for PinnedServerVerifier {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter.debug_struct("PinnedServerVerifier").finish()
-    }
-}
-
-impl ServerCertVerifier for PinnedServerVerifier {
-    fn verify_server_cert(
-        &self,
-        end_entity: &CertificateDer<'_>,
-        _intermediates: &[CertificateDer<'_>],
-        _server_name: &ServerName<'_>,
-        _ocsp_response: &[u8],
-        _now: UnixTime,
-    ) -> Result<ServerCertVerified, rustls::Error> {
-        let (_, certificate) = parse_x509_certificate(end_entity.as_ref()).map_err(|_| {
-            rustls::Error::InvalidCertificate(rustls::CertificateError::BadEncoding)
-        })?;
-        let actual: [u8; 32] = Sha256::digest(certificate.public_key().raw).into();
-        if actual != self.pin {
-            return Err(rustls::Error::InvalidCertificate(
-                rustls::CertificateError::ApplicationVerificationFailure,
-            ));
-        }
-        Ok(ServerCertVerified::assertion())
-    }
-
-    fn verify_tls12_signature(
-        &self,
-        message: &[u8],
-        cert: &CertificateDer<'_>,
-        signature: &DigitallySignedStruct,
-    ) -> Result<HandshakeSignatureValid, rustls::Error> {
-        rustls::crypto::verify_tls12_signature(message, cert, signature, &self.algorithms)
-    }
-
-    fn verify_tls13_signature(
-        &self,
-        message: &[u8],
-        cert: &CertificateDer<'_>,
-        signature: &DigitallySignedStruct,
-    ) -> Result<HandshakeSignatureValid, rustls::Error> {
-        rustls::crypto::verify_tls13_signature(message, cert, signature, &self.algorithms)
-    }
-
-    fn supported_verify_schemes(&self) -> Vec<SignatureScheme> {
-        self.algorithms.supported_schemes()
-    }
-}
-
 fn read_stored(
     config: &AgentRuntimeConfig,
 ) -> Result<Option<StoredAgentCredential>, SendableError> {
@@ -279,3 +213,9 @@ fn apply(config: &mut AgentRuntimeConfig, stored: StoredAgentCredential) {
 #[cfg(test)]
 #[path = "enroll_tests.rs"]
 mod tests;
+
+mod stored_agent_credential;
+use stored_agent_credential::StoredAgentCredential;
+
+mod pinned_server_verifier;
+use pinned_server_verifier::PinnedServerVerifier;

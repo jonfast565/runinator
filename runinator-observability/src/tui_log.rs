@@ -21,45 +21,8 @@ pub fn is_active() -> bool {
     SINK.get().is_some()
 }
 
-#[derive(Clone, Copy, Default)]
-pub struct LogMakeWriter;
+mod log_make_writer;
+pub use log_make_writer::LogMakeWriter;
 
-impl<'a> MakeWriter<'a> for LogMakeWriter {
-    type Writer = LogWriter;
-
-    fn make_writer(&'a self) -> Self::Writer {
-        LogWriter::default()
-    }
-}
-
-#[derive(Default)]
-pub struct LogWriter {
-    buffer: Vec<u8>,
-}
-
-impl Write for LogWriter {
-    fn write(&mut self, data: &[u8]) -> io::Result<usize> {
-        self.buffer.extend_from_slice(data);
-        Ok(data.len())
-    }
-
-    fn flush(&mut self) -> io::Result<()> {
-        Ok(())
-    }
-}
-
-impl Drop for LogWriter {
-    fn drop(&mut self) {
-        let Some(sink) = SINK.get() else {
-            return;
-        };
-        let text = String::from_utf8_lossy(&self.buffer);
-        for line in text
-            .lines()
-            .map(str::trim_end)
-            .filter(|line| !line.is_empty())
-        {
-            sink(line.to_string());
-        }
-    }
-}
+mod log_writer;
+pub use log_writer::LogWriter;

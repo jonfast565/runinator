@@ -37,23 +37,6 @@ pub type Result<T> = std::result::Result<T, Box<dyn Error + Send + Sync>>;
 
 type Client = AsyncApiClient<StaticLocator>;
 
-#[derive(Debug, Clone)]
-struct WorkflowApplySummary {
-    message: String,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-struct SourceSnapshot {
-    files: Vec<SourceFileSnapshot>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-struct SourceFileSnapshot {
-    path: PathBuf,
-    modified: Option<SystemTime>,
-    len: Option<u64>,
-}
-
 pub fn err(message: impl Into<String>) -> Box<dyn Error + Send + Sync> {
     Box::new(io::Error::new(io::ErrorKind::InvalidInput, message.into()))
 }
@@ -486,3 +469,12 @@ fn value_display(value: &Value, key: &str) -> String {
 }
 
 mod workspaces;
+
+mod workflow_apply_summary;
+use workflow_apply_summary::WorkflowApplySummary;
+
+mod source_snapshot;
+use source_snapshot::SourceSnapshot;
+
+mod source_file_snapshot;
+use source_file_snapshot::SourceFileSnapshot;

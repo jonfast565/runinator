@@ -3,33 +3,6 @@ use serde::{Deserialize, Serialize};
 
 use crate::errors::{INVALID_PARAMS, IO};
 
-#[derive(Deserialize)]
-pub(crate) struct ConsoleParams {
-    pub command: String,
-    // run in a worker-owned PTY/ConPTY so Command Center can render and drive the live terminal.
-    // defaults to false: capture stdout and stderr independently.
-    #[serde(default)]
-    pub interactive: bool,
-}
-
-#[derive(Deserialize)]
-pub(crate) struct InputParams {
-    pub prompt: String,
-}
-
-#[derive(Serialize)]
-pub(crate) struct ConsoleResult {
-    pub success: bool,
-    pub exit_code: i32,
-    pub duration_ms: i64,
-    pub command: String,
-}
-
-#[derive(Serialize)]
-pub(crate) struct InputResult {
-    pub value: String,
-}
-
 pub(crate) fn parse_params(
     request: &ProviderExecutionRequest,
 ) -> Result<ConsoleParams, SendableError> {
@@ -45,3 +18,15 @@ pub(crate) fn parse_input_params(
 pub(crate) fn to_runtime_error(err: std::io::Error) -> SendableError {
     IO.error(err)
 }
+
+mod console_params;
+pub(crate) use console_params::ConsoleParams;
+
+mod input_params;
+pub(crate) use input_params::InputParams;
+
+mod console_result;
+pub(crate) use console_result::ConsoleResult;
+
+mod input_result;
+pub(crate) use input_result::InputResult;

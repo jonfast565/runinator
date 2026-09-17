@@ -9,43 +9,14 @@ pub enum LocalRuntimeHostKind {
     Supervisor,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct LocalRuntimeSnapshot {
-    pub host_kind: LocalRuntimeHostKind,
-    pub pid: u32,
-    pub started_at: String,
-    pub updated_at: String,
-    pub components: Vec<LocalRuntimeComponentSnapshot>,
-}
+mod local_runtime_snapshot;
+pub use local_runtime_snapshot::LocalRuntimeSnapshot;
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct LocalRuntimeComponentSnapshot {
-    pub id: String,
-    pub kind: String,
-    pub status: String,
-    pub restarts: u32,
-    pub uptime_seconds: Option<u64>,
-    pub last_error: Option<String>,
-}
+mod local_runtime_component_snapshot;
+pub use local_runtime_component_snapshot::LocalRuntimeComponentSnapshot;
 
-/// Versioned, atomically-written local attachment data kept beside the compatibility `state.json`.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct LocalDashboardSnapshot {
-    pub version: u32,
-    pub host_id: String,
-    pub host_kind: LocalRuntimeHostKind,
-    pub pid: u32,
-    pub started_at: String,
-    pub updated_at: String,
-    #[serde(default)]
-    pub resource_samples: Vec<LocalResourceSample>,
-    pub components: Vec<LocalRuntimeComponentSnapshot>,
-    pub log_location: String,
-}
+mod local_dashboard_snapshot;
+pub use local_dashboard_snapshot::LocalDashboardSnapshot;
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct LocalResourceSample {
-    pub sampled_at: String,
-    pub cpu_percent: f64,
-    pub memory_bytes: u64,
-}
+mod local_resource_sample;
+pub use local_resource_sample::LocalResourceSample;

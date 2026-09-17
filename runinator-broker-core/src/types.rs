@@ -9,217 +9,6 @@ use uuid::Uuid;
 
 const LEGACY_ACTION_DEADLINE_GRACE_SECONDS: i64 = 30;
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ControlDelivery {
-    pub delivery_id: Uuid,
-    pub command: ControlCommand,
-    #[serde(default = "utc_now")]
-    pub enqueued_at: DateTime<Utc>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct AgentDelivery {
-    pub delivery_id: Uuid,
-    pub command: AgentCommand,
-    #[serde(default = "utc_now")]
-    pub enqueued_at: DateTime<Utc>,
-}
-
-/// A VM effect command queued for a provider worker or an infrastructure effect host.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct EffectMessage {
-    pub command: EffectCommand,
-    #[serde(default)]
-    pub dedupe_key: Option<String>,
-    #[serde(default = "utc_now")]
-    pub enqueued_at: DateTime<Utc>,
-    /// Absolute point after which this command must not be handed to an executor.
-    ///
-    /// `None` preserves wire compatibility. Receivers derive a bounded fallback for older provider
-    /// actions; infrastructure effects continue to use the lifetime governed by their request.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub expires_at: Option<DateTime<Utc>>,
-}
-
-/// A leased VM effect command delivery.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct EffectDelivery {
-    pub delivery_id: Uuid,
-    pub command: EffectCommand,
-    pub dedupe_key: String,
-    #[serde(default = "utc_now")]
-    pub enqueued_at: DateTime<Utc>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub expires_at: Option<DateTime<Utc>>,
-}
-
-/// A VM effect result queued for the durable VM host.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct EffectResultMessage {
-    pub result: EffectResult,
-    #[serde(default)]
-    pub dedupe_key: Option<String>,
-    #[serde(default = "utc_now")]
-    pub enqueued_at: DateTime<Utc>,
-}
-
-/// A leased VM effect result delivery.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct EffectResultDelivery {
-    pub delivery_id: Uuid,
-    pub result: EffectResult,
-    pub dedupe_key: String,
-    #[serde(default = "utc_now")]
-    pub enqueued_at: DateTime<Utc>,
-}
-
-/// Wake event queued for waker delivery (delayed reducer drive).
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct WakeMessage {
-    pub command: WakeCommand,
-    #[serde(default)]
-    pub dedupe_key: Option<String>,
-    #[serde(default = "utc_now")]
-    pub enqueued_at: DateTime<Utc>,
-}
-
-/// Wake delivery returned when polling the wake channel.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct WakeDelivery {
-    pub delivery_id: Uuid,
-    pub command: WakeCommand,
-    pub dedupe_key: String,
-    #[serde(default = "utc_now")]
-    pub enqueued_at: DateTime<Utc>,
-}
-
-/// Ingress message queued for web-service consumption (drive / control request).
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct IngressMessage {
-    pub command: WsIngressCommand,
-    #[serde(default)]
-    pub dedupe_key: Option<String>,
-    #[serde(default = "utc_now")]
-    pub enqueued_at: DateTime<Utc>,
-}
-
-/// Ingress delivery returned when polling the ingress channel.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct IngressDelivery {
-    pub delivery_id: Uuid,
-    pub command: WsIngressCommand,
-    pub dedupe_key: String,
-    #[serde(default = "utc_now")]
-    pub enqueued_at: DateTime<Utc>,
-}
-
-/// a UI event published on the broker fan-out `events` channel. best-effort: no dedupe, no ack.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct EventMessage {
-    pub event: UiEvent,
-    #[serde(default = "utc_now")]
-    pub enqueued_at: DateTime<Utc>,
-}
-
-/// a UI event delivery handed to one fan-out subscriber. every subscriber receives its own copy.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct EventDelivery {
-    pub delivery_id: Uuid,
-    pub event: UiEvent,
-    #[serde(default = "utc_now")]
-    pub enqueued_at: DateTime<Utc>,
-}
-
-impl EventMessage {
-    pub fn new(event: UiEvent) -> Self {
-        Self {
-            event,
-            enqueued_at: utc_now(),
-        }
-    }
-}
-
-impl From<EventMessage> for EventDelivery {
-    fn from(message: EventMessage) -> Self {
-        Self {
-            delivery_id: Uuid::new_v4(),
-            event: message.event,
-            enqueued_at: message.enqueued_at,
-        }
-    }
-}
-
-impl WakeMessage {
-    pub fn dedupe_key_or_hash(&self) -> String {
-        self.dedupe_key
-            .clone()
-            .unwrap_or_else(|| self.command.dedupe_key())
-    }
-}
-
-impl IngressMessage {
-    pub fn dedupe_key_or_hash(&self) -> String {
-        self.dedupe_key
-            .clone()
-            .unwrap_or_else(|| self.command.dedupe_key())
-    }
-}
-
-impl From<WakeMessage> for WakeDelivery {
-    fn from(message: WakeMessage) -> Self {
-        let dedupe = message.dedupe_key_or_hash();
-        Self {
-            delivery_id: Uuid::new_v4(),
-            dedupe_key: dedupe,
-            enqueued_at: message.enqueued_at,
-            command: message.command,
-        }
-    }
-}
-
-impl From<IngressMessage> for IngressDelivery {
-    fn from(message: IngressMessage) -> Self {
-        let dedupe = message.dedupe_key_or_hash();
-        Self {
-            delivery_id: Uuid::new_v4(),
-            dedupe_key: dedupe,
-            enqueued_at: message.enqueued_at,
-            command: message.command,
-        }
-    }
-}
-
-impl EffectMessage {
-    pub fn dedupe_key_or_hash(&self) -> String {
-        self.dedupe_key
-            .clone()
-            .unwrap_or_else(|| self.command.effect_id.to_string())
-    }
-
-    pub fn is_expired_at(&self, now: DateTime<Utc>) -> bool {
-        self.effective_expires_at()
-            .is_some_and(|expires_at| expires_at <= now)
-    }
-
-    /// Resolve the explicit wire expiry, or derive one for a provider action published by an
-    /// older engine. This makes an upgrade drain an existing stale backlog safely instead of only
-    /// protecting commands created after the upgrade.
-    pub fn effective_expires_at(&self) -> Option<DateTime<Utc>> {
-        effect_expires_at(&self.command, self.enqueued_at, self.expires_at)
-    }
-}
-
-impl EffectDelivery {
-    pub fn is_expired_at(&self, now: DateTime<Utc>) -> bool {
-        self.effective_expires_at()
-            .is_some_and(|expires_at| expires_at <= now)
-    }
-
-    pub fn effective_expires_at(&self) -> Option<DateTime<Utc>> {
-        effect_expires_at(&self.command, self.enqueued_at, self.expires_at)
-    }
-}
-
 fn effect_expires_at(
     command: &EffectCommand,
     enqueued_at: DateTime<Utc>,
@@ -244,58 +33,6 @@ fn effect_expires_at(
         .unwrap_or(DEFAULT_ACTION_TIMEOUT_SECONDS)
         .max(1);
     Some(enqueued_at + chrono::Duration::seconds(budget + LEGACY_ACTION_DEADLINE_GRACE_SECONDS))
-}
-
-impl EffectResultMessage {
-    pub fn dedupe_key_or_hash(&self) -> String {
-        self.dedupe_key
-            .clone()
-            .unwrap_or_else(|| self.result.event_id.to_string())
-    }
-}
-
-impl From<EffectMessage> for EffectDelivery {
-    fn from(message: EffectMessage) -> Self {
-        let expires_at = message.effective_expires_at();
-        Self {
-            delivery_id: Uuid::new_v4(),
-            dedupe_key: message.dedupe_key_or_hash(),
-            enqueued_at: message.enqueued_at,
-            expires_at,
-            command: message.command,
-        }
-    }
-}
-
-impl From<EffectResultMessage> for EffectResultDelivery {
-    fn from(message: EffectResultMessage) -> Self {
-        Self {
-            delivery_id: Uuid::new_v4(),
-            dedupe_key: message.dedupe_key_or_hash(),
-            enqueued_at: message.enqueued_at,
-            result: message.result,
-        }
-    }
-}
-
-impl From<ControlCommand> for ControlDelivery {
-    fn from(command: ControlCommand) -> Self {
-        Self {
-            delivery_id: Uuid::new_v4(),
-            command,
-            enqueued_at: utc_now(),
-        }
-    }
-}
-
-impl From<AgentCommand> for AgentDelivery {
-    fn from(command: AgentCommand) -> Self {
-        Self {
-            delivery_id: Uuid::new_v4(),
-            command,
-            enqueued_at: utc_now(),
-        }
-    }
 }
 
 /// where a self-reconnecting transport currently stands with its backend.
@@ -336,3 +73,39 @@ impl ConnectionState {
 fn utc_now() -> DateTime<Utc> {
     Utc::now()
 }
+
+mod control_delivery;
+pub use control_delivery::ControlDelivery;
+
+mod agent_delivery;
+pub use agent_delivery::AgentDelivery;
+
+mod effect_message;
+pub use effect_message::EffectMessage;
+
+mod effect_delivery;
+pub use effect_delivery::EffectDelivery;
+
+mod effect_result_message;
+pub use effect_result_message::EffectResultMessage;
+
+mod effect_result_delivery;
+pub use effect_result_delivery::EffectResultDelivery;
+
+mod wake_message;
+pub use wake_message::WakeMessage;
+
+mod wake_delivery;
+pub use wake_delivery::WakeDelivery;
+
+mod ingress_message;
+pub use ingress_message::IngressMessage;
+
+mod ingress_delivery;
+pub use ingress_delivery::IngressDelivery;
+
+mod event_message;
+pub use event_message::EventMessage;
+
+mod event_delivery;
+pub use event_delivery::EventDelivery;

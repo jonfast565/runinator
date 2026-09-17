@@ -32,50 +32,6 @@ const RESERVED_ROOTS: &[&str] = &[
 ];
 
 /// the per-workflow name scope: imports, the leaves they bring into bare scope, and user functions.
-struct Scope {
-    /// import alias -> target namespace path (e.g. `s` -> `std.strings`).
-    aliases: HashMap<String, String>,
-    /// intrinsic leaves callable bare because their std module was imported unaliased.
-    bare_intrinsics: HashSet<String>,
-    /// user-defined function names (callable bare).
-    user_fns: HashSet<String>,
-    /// typed workflow import alias -> durable-path selector. This remains source-only until the
-    /// pack importer resolves it to an ArtifactRef UUID/digest.
-    workflow_aliases: HashMap<String, WorkflowImport>,
-    /// typed function-package import alias -> the package's authoring path. An action written as
-    /// `pdf.render(...)` becomes `functions.acme.shared.pdf.render(...)` before lowering, where
-    /// the normal function catalog resolver records the exact package/version/export binding.
-    function_aliases: HashMap<String, String>,
-    /// typed settings import alias -> durable authoring namespace. `shared.timeout` is config by
-    /// default; `shared.secret.token` selects the late-resolved secret family explicitly.
-    settings_aliases: HashMap<String, String>,
-    /// source-module import alias -> exported leaf -> deterministic embedded function name.
-    module_aliases: HashMap<String, HashMap<String, String>>,
-    /// bare calls rewritten while preparing one module's private function namespace.
-    function_renames: HashMap<String, String>,
-}
-
-#[derive(Clone)]
-struct WorkflowImport {
-    path: String,
-    revision: Option<i64>,
-}
-
-impl Scope {
-    /// an empty scope for standalone fragments: no imports, no user functions.
-    fn empty() -> Self {
-        Self {
-            aliases: HashMap::new(),
-            bare_intrinsics: HashSet::new(),
-            user_fns: HashSet::new(),
-            workflow_aliases: HashMap::new(),
-            function_aliases: HashMap::new(),
-            settings_aliases: HashMap::new(),
-            module_aliases: HashMap::new(),
-            function_renames: HashMap::new(),
-        }
-    }
-}
 
 /// resolve a standalone expression fragment (editor/tooling surface; no imports or user functions).
 pub fn resolve_expr_fragment(expr: &mut Expr) -> Result<(), RexRapError> {
@@ -1050,3 +1006,9 @@ fn path_key(seg: &PathSeg) -> Option<&str> {
         PathSeg::Index(_) => None,
     }
 }
+
+mod scope;
+use scope::Scope;
+
+mod workflow_import;
+use workflow_import::WorkflowImport;

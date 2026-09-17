@@ -2,35 +2,6 @@
 use super::*;
 use std::sync::Mutex;
 
-#[derive(Debug)]
-struct FailingBackend;
-impl ProcessBackend for FailingBackend {
-    fn spawn(&self, _: &mut Command) -> io::Result<Box<dyn ManagedChild>> {
-        Err(io::Error::other("fake spawn failure"))
-    }
-}
-#[derive(Debug)]
-struct FakeChild(Arc<Mutex<Vec<&'static str>>>);
-impl ManagedChild for FakeChild {
-    fn id(&self) -> u32 {
-        42
-    }
-    fn try_wait(&mut self) -> io::Result<Option<ExitStatus>> {
-        Ok(None)
-    }
-    fn wait(&mut self) -> io::Result<ExitStatus> {
-        self.0.lock().unwrap().push("wait");
-        Err(io::Error::other("fake wait"))
-    }
-    fn terminate(&mut self) -> Result<(), DynError> {
-        self.0.lock().unwrap().push("terminate");
-        Ok(())
-    }
-    fn kill(&mut self) -> io::Result<()> {
-        self.0.lock().unwrap().push("kill");
-        Ok(())
-    }
-}
 fn process() -> ManagedProcess {
     let dir = std::env::temp_dir().join(format!(
         "runinator-supervisor-traits-{}-{}",
@@ -79,3 +50,11 @@ fn shutdown_escalates_and_reaps() {
     assert!(matches!(process.status, ProcStatus::Stopped));
     fs::remove_dir_all(process.logs_dir).unwrap();
 }
+
+#[path = "supervisor_process_tests/failing_backend.rs"]
+mod failing_backend;
+use failing_backend::FailingBackend;
+
+#[path = "supervisor_process_tests/fake_child.rs"]
+mod fake_child;
+use fake_child::FakeChild;

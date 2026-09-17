@@ -12,19 +12,6 @@ use utoipa::ToSchema;
 use crate::stability;
 use runinator_ws_core::openapi::docs::{EndpointDoc, Example, endpoint};
 
-#[derive(Serialize, ToSchema)]
-pub struct HealthResponse {
-    status: String,
-}
-
-#[derive(Serialize, ToSchema)]
-pub struct ReadinessResponse {
-    status: String,
-    database: String,
-    broker_effect_channels: bool,
-    counters: stability::StabilityCounters,
-}
-
 /// liveness probe.
 #[utoipa::path(
     get,
@@ -131,3 +118,9 @@ pub const DOCS: &[EndpointDoc] = &[
         Example::Ready,
     ),
 ];
+
+mod health_response;
+pub use health_response::HealthResponse;
+
+mod readiness_response;
+pub use readiness_response::ReadinessResponse;

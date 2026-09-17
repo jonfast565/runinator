@@ -31,168 +31,46 @@ pub enum TypeExpr {
 
 // secrets (.rexraps) -----------------------------------------------------------
 
-/// a single `.rexraps` declaration: `secret|config <scope>.<name…> = <literal>`. the value must be a
-/// pure literal; lowering rejects references and interpolation.
-#[derive(Debug, Clone, PartialEq)]
-pub struct SecretDecl {
-    pub is_config: bool,
-    pub path: Vec<PathSeg>,
-    pub value: Expr,
-    pub schema: Option<Expr>,
-    pub expires_at: Option<String>,
-    pub span: Span,
-}
-
-#[derive(Debug, Clone, PartialEq)]
-pub struct ProfileDecl {
-    pub name: String,
-    pub configuration: Expr,
-    pub span: Span,
-}
-
-#[derive(Debug, Clone, Default, PartialEq)]
-pub struct SettingsDocument {
-    pub settings: Vec<SecretDecl>,
-    pub execution_profiles: Vec<ProfileDecl>,
-}
-
 // pipelines (.rexrapp) ---------------------------------------------------------
 
-/// a directed link in a `.rexrapp` pipeline: `"A" -> "B" on <selector>`. `on` holds the raw selector
-/// keyword (`success`/`complete`/`failure`) or `None` when omitted; lowering resolves it.
-#[derive(Debug, Clone, PartialEq)]
-pub struct PipelineLinkDecl {
-    pub from: String,
-    pub to: String,
-    pub on: Option<String>,
-    pub disabled: bool,
-    pub parameters: Option<Expr>,
-    pub span: Span,
-}
+mod secret_decl;
+pub use secret_decl::SecretDecl;
 
-#[derive(Debug, Clone, PartialEq)]
-pub struct PipelineJoinDecl {
-    pub target: String,
-    pub mode: String,
-    pub parameters: Option<Expr>,
-    pub span: Span,
-}
+mod profile_decl;
+pub use profile_decl::ProfileDecl;
 
-/// a pipeline-level trigger parsed from a `.rexrapp` header. `cron` carries the schedule for a cron
-/// trigger; a chained trigger sets `event` (raw `on_success`/`on_failure`/`on_complete`), `source_kind`
-/// (`workflow`/`pipeline`), and `source` (the source name). `disabled` toggles the enabled flag.
-#[derive(Debug, Clone, PartialEq)]
-pub struct PipelineTriggerDecl {
-    pub cron: Option<String>,
-    pub schedule: Option<Expr>,
-    pub exclusions: Vec<Expr>,
-    pub event: Option<String>,
-    pub source_kind: Option<String>,
-    pub source: Option<String>,
-    pub disabled: bool,
-    pub span: Span,
-}
+mod settings_document;
+pub use settings_document::SettingsDocument;
 
-/// a `workflow "Name"` member declaration, optionally followed by `on_failure <mode>`. `on_failure`
-/// holds the raw keyword (`stop`/`continue`/`silently_continue`/`inquire`) or `None` when the member
-/// takes the pipeline's default failure mode; lowering maps it to [`PipelineMemberFailureMode`]
-/// (`runinator_models::pipelines`).
-#[derive(Debug, Clone, PartialEq)]
-pub struct PipelineMemberDecl {
-    pub workspace: Option<super::Expr>,
-    pub name: String,
-    pub on_failure: Option<String>,
-    pub span: Span,
-}
+mod pipeline_link_decl;
+pub use pipeline_link_decl::PipelineLinkDecl;
 
-/// a `pipeline "Name" { ... }` block parsed from a `.rexrapp` file. `on_failure` holds the raw policy
-/// keyword (`halt`/`continue`) or `None`; lowering maps the string fields to the model enums.
-#[derive(Debug, Clone, PartialEq)]
-pub struct PipelineDecl {
-    pub workspace: Option<super::Expr>,
-    pub name: String,
-    pub key: Option<String>,
-    pub namespace: Option<String>,
-    pub description: Option<String>,
-    pub on_failure: Option<String>,
-    pub max_depth: Option<u32>,
-    pub links_enabled_by_default: Option<bool>,
-    pub default_parameters: Option<Expr>,
-    pub default_failure_mode: Option<String>,
-    pub metadata: Option<Expr>,
-    pub members: Vec<PipelineMemberDecl>,
-    pub links: Vec<PipelineLinkDecl>,
-    pub joins: Vec<PipelineJoinDecl>,
-    pub concurrency: Option<super::ConcurrencyDecl>,
-    pub ingress: Option<super::IngressDecl>,
-    pub orchestration: Option<OrchestrationDecl>,
-    pub triggers: Vec<PipelineTriggerDecl>,
-    pub span: Span,
-}
+mod pipeline_join_decl;
+pub use pipeline_join_decl::PipelineJoinDecl;
 
-#[derive(Debug, Clone, PartialEq)]
-pub struct OrchestrationDecl {
-    pub intents: Vec<OrchestrationIntentDecl>,
-    pub budgets: Vec<OrchestrationBudgetDecl>,
-    pub entry_member: Option<String>,
-    pub max_epochs: Option<u32>,
-    pub defaults: Option<Expr>,
-    pub phases: Vec<OrchestrationPhaseDecl>,
-    pub span: Span,
-}
+mod pipeline_trigger_decl;
+pub use pipeline_trigger_decl::PipelineTriggerDecl;
 
-#[derive(Debug, Clone, PartialEq)]
-pub struct OrchestrationIntentDecl {
-    pub name: String,
-    pub effect: String,
-    pub priority: i32,
-    pub coalesce_seconds: Option<u64>,
-    pub stop: Option<String>,
-    pub restart: Option<String>,
-    pub revision: Option<String>,
-    pub signal_name: Option<String>,
-    pub allow_self_originated: bool,
-    pub span: Span,
-}
+mod pipeline_member_decl;
+pub use pipeline_member_decl::PipelineMemberDecl;
 
-#[derive(Debug, Clone, PartialEq)]
-pub struct OrchestrationBudgetDecl {
-    pub name: String,
-    pub attempts: u32,
-    pub exhausted: String,
-    pub handoff: Option<String>,
-    pub span: Span,
-}
+mod pipeline_decl;
+pub use pipeline_decl::PipelineDecl;
 
-#[derive(Debug, Clone, PartialEq)]
-pub struct OrchestrationPhaseDecl {
-    pub member: String,
-    pub mappings: Vec<(String, String)>,
-    pub workspace: Option<OrchestrationWorkspaceDecl>,
-    pub span: Span,
-}
+mod orchestration_decl;
+pub use orchestration_decl::OrchestrationDecl;
 
-#[derive(Debug, Clone, PartialEq)]
-pub struct OrchestrationWorkspaceDecl {
-    pub scope: String,
-    pub reuse: bool,
-    pub lease_seconds: Option<u64>,
-    pub recovery: Option<String>,
-    pub labels: Option<Expr>,
-    pub span: Span,
-}
+mod orchestration_intent_decl;
+pub use orchestration_intent_decl::OrchestrationIntentDecl;
 
-#[derive(Debug, Clone, PartialEq)]
-pub struct TypeField {
-    pub name: String,
-    pub optional: bool,
-    pub ty: TypeExpr,
-    /// an optional default expression, only present on top-level workflow parameter fields. when
-    /// set the field is effectively optional and the expression fills it at run start if omitted.
-    pub default: Option<Expr>,
-    /// the source span of this field, used to attach comments for lossless formatting. defaults to an
-    /// empty span for fields synthesized outside the parser.
-    pub span: Span,
-    /// leading/trailing/dangling comments on this `params`/`type` struct field.
-    pub comments: CommentSet,
-}
+mod orchestration_budget_decl;
+pub use orchestration_budget_decl::OrchestrationBudgetDecl;
+
+mod orchestration_phase_decl;
+pub use orchestration_phase_decl::OrchestrationPhaseDecl;
+
+mod orchestration_workspace_decl;
+pub use orchestration_workspace_decl::OrchestrationWorkspaceDecl;
+
+mod type_field;
+pub use type_field::TypeField;

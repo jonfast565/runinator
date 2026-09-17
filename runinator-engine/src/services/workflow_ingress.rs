@@ -22,40 +22,6 @@ use runinator_store::{
 };
 use std::sync::Arc;
 use uuid::Uuid;
-pub trait WorkflowIngressStore:
-    RuntimeStore
-    + WorkflowVmStore
-    + RunStore
-    + ScheduleStore
-    + FileStore
-    + AuthStore
-    + RbacStore
-    + IngressStore
-    + OrchestrationStore
-{
-}
-impl<T> WorkflowIngressStore for T where
-    T: RuntimeStore
-        + WorkflowVmStore
-        + RunStore
-        + ScheduleStore
-        + FileStore
-        + AuthStore
-        + RbacStore
-        + IngressStore
-        + OrchestrationStore
-{
-}
-pub struct WorkflowIngressContext<T> {
-    pub db: Arc<T>,
-    pub operations: Arc<RunOperations<T>>,
-    pub caller_org_id: Option<Uuid>,
-    pub actor_id: Option<Uuid>,
-    pub workflow_id: Uuid,
-    pub request: PipelineIngressRequest,
-    pub provenance: WorkflowRunProvenance,
-    pub bypass_gate: bool,
-}
 
 pub async fn process_workflow_ingress<T: WorkflowIngressStore>(
     context: WorkflowIngressContext<T>,
@@ -372,3 +338,9 @@ fn conflict(message: impl Into<String>) -> Result<PipelineIngressResult, Pipelin
 fn api_error(message: impl Into<String>) -> Result<PipelineIngressResult, PipelineIngressError> {
     Err(PipelineIngressError::Internal(message.into()))
 }
+
+mod workflow_ingress_store;
+pub use workflow_ingress_store::WorkflowIngressStore;
+
+mod workflow_ingress_context;
+pub use workflow_ingress_context::WorkflowIngressContext;

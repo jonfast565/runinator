@@ -5,161 +5,29 @@
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
-/// a point-in-time resource snapshot for one replica process/host.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-pub struct ResourceTelemetry {
-    /// overall cpu utilization across all cores, 0-100.
-    pub cpu_percent: f32,
-    /// resident memory in use on the host, in bytes.
-    pub mem_used_bytes: u64,
-    /// total memory available on the host, in bytes.
-    pub mem_total_bytes: u64,
-    /// memory utilization, 0-100.
-    pub mem_percent: f32,
-    /// swap in use on the host, in bytes.
-    #[serde(default)]
-    pub swap_used_bytes: u64,
-    /// total swap configured on the host, in bytes.
-    #[serde(default)]
-    pub swap_total_bytes: u64,
-    /// 1/5/15-minute load average; absent on platforms that do not report it (e.g. windows).
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub load_average: Option<LoadAverage>,
-    /// cpu/memory for this replica's own process, isolating it from noisy neighbors on the host.
-    #[serde(default)]
-    pub process: ProcessTelemetry,
-    /// network throughput, summed across interfaces, since the previous sample.
-    #[serde(default)]
-    pub network: NetworkTelemetry,
-    /// per-mount disk capacity and i/o throughput since the previous sample.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub disks: Vec<DiskTelemetry>,
-    /// per-gpu telemetry; empty when no gpu is present or no backend is available.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub gpus: Vec<GpuTelemetry>,
-    pub sampled_at: DateTime<Utc>,
-}
+mod resource_telemetry;
+pub use resource_telemetry::ResourceTelemetry;
 
-/// a flattened, persisted telemetry point for one replica, stored in the `replica_samples`
-/// Time-series data used by the UI for historical sparklines.
-/// Keep only fields worth charting; full nested telemetry stays in live replica `attributes`.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-pub struct ReplicaSample {
-    pub replica_id: uuid::Uuid,
-    pub sampled_at: DateTime<Utc>,
-    pub cpu_percent: f32,
-    pub mem_percent: f32,
-    pub mem_used_bytes: u64,
-    pub mem_total_bytes: u64,
-    /// 1-minute load average, when reported by the host.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub load_one: Option<f64>,
-    pub process_cpu_percent: f32,
-    pub process_mem_bytes: u64,
-    pub net_rx_bytes_per_sec: f64,
-    pub net_tx_bytes_per_sec: f64,
-}
+mod replica_sample;
+pub use replica_sample::ReplicaSample;
 
-impl ReplicaSample {
-    /// derive a persisted sample from a live telemetry snapshot.
-    pub fn from_telemetry(replica_id: uuid::Uuid, telemetry: &ResourceTelemetry) -> Self {
-        Self {
-            replica_id,
-            sampled_at: telemetry.sampled_at,
-            cpu_percent: telemetry.cpu_percent,
-            mem_percent: telemetry.mem_percent,
-            mem_used_bytes: telemetry.mem_used_bytes,
-            mem_total_bytes: telemetry.mem_total_bytes,
-            load_one: telemetry.load_average.as_ref().map(|load| load.one),
-            process_cpu_percent: telemetry.process.cpu_percent,
-            process_mem_bytes: telemetry.process.mem_used_bytes,
-            net_rx_bytes_per_sec: telemetry.network.rx_bytes_per_sec,
-            net_tx_bytes_per_sec: telemetry.network.tx_bytes_per_sec,
-        }
-    }
-}
+mod replica_sample_series;
+pub use replica_sample_series::ReplicaSampleSeries;
 
-/// a replica's recent telemetry samples, oldest first, for charting.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ReplicaSampleSeries {
-    pub replica_id: uuid::Uuid,
-    pub samples: Vec<ReplicaSample>,
-}
+mod load_average;
+pub use load_average::LoadAverage;
 
-/// unix-style load average over 1, 5, and 15 minutes.
-#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
-pub struct LoadAverage {
-    pub one: f64,
-    pub five: f64,
-    pub fifteen: f64,
-}
+mod process_telemetry;
+pub use process_telemetry::ProcessTelemetry;
 
-/// resource usage attributed to the replica's own process.
-#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
-pub struct ProcessTelemetry {
-    /// process cpu utilization; may exceed 100 when the process spans multiple cores.
-    pub cpu_percent: f32,
-    /// resident set size of the process, in bytes.
-    pub mem_used_bytes: u64,
-}
+mod disk_telemetry;
+pub use disk_telemetry::DiskTelemetry;
 
-/// capacity and i/o throughput for one mounted filesystem.
-#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
-pub struct DiskTelemetry {
-    pub mount_point: String,
-    pub total_bytes: u64,
-    pub available_bytes: u64,
-    /// bytes read per second since the previous sample. zero on the first sample.
-    pub read_bytes_per_sec: f64,
-    /// bytes written per second since the previous sample. zero on the first sample.
-    pub written_bytes_per_sec: f64,
-}
+mod network_telemetry;
+pub use network_telemetry::NetworkTelemetry;
 
-/// network throughput for one replica host, aggregated over all interfaces. rates are derived from
-/// the byte delta and elapsed time between consecutive samples on the same collector.
-#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
-pub struct NetworkTelemetry {
-    /// received bytes per second since the previous sample. zero on the first sample.
-    pub rx_bytes_per_sec: f64,
-    /// transmitted bytes per second since the previous sample. zero on the first sample.
-    pub tx_bytes_per_sec: f64,
-    /// cumulative bytes received across all interfaces since the host started counting.
-    pub rx_total_bytes: u64,
-    /// cumulative bytes transmitted across all interfaces since the host started counting.
-    pub tx_total_bytes: u64,
-}
+mod host_metadata;
+pub use host_metadata::HostMetadata;
 
-/// static host facts that do not change over a process lifetime. carried once in the replica's
-/// registration attributes rather than on every heartbeat.
-#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
-pub struct HostMetadata {
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub host_name: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub os: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub os_version: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub kernel_version: Option<String>,
-    pub cpu_arch: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub cpu_brand: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub physical_cores: Option<usize>,
-    pub logical_cores: usize,
-    pub mem_total_bytes: u64,
-    /// host boot time as a unix timestamp in seconds.
-    pub boot_time_unix: u64,
-}
-
-/// telemetry for a single gpu. fields are optional because backends expose different metrics.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-pub struct GpuTelemetry {
-    pub name: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub utilization_percent: Option<f32>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub mem_used_bytes: Option<u64>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub mem_total_bytes: Option<u64>,
-}
+mod gpu_telemetry;
+pub use gpu_telemetry::GpuTelemetry;

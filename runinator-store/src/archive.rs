@@ -199,12 +199,6 @@ pub enum TableDataPolicy {
     ExplicitLifecycle,
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct DatabaseTablePolicy {
-    pub table: &'static str,
-    pub policy: TableDataPolicy,
-}
-
 macro_rules! table_policy {
     ($table:literal, $policy:ident) => {
         DatabaseTablePolicy {
@@ -328,25 +322,6 @@ pub const DATABASE_TABLE_POLICIES: &[DatabaseTablePolicy] = &[
     table_policy!("workspace_pins", ServiceRetention),
 ];
 
-#[derive(Clone, Debug)]
-pub struct ArchiveMark {
-    pub id: Uuid,
-    pub table: ArchiveTable,
-    pub primary_key: Uuid,
-    pub created_at: DateTime<Utc>,
-    pub eligible_before: DateTime<Utc>,
-    pub archive_day: String,
-}
-
-#[derive(Clone, Debug)]
-pub struct ArchiveRow {
-    pub mark_id: Uuid,
-    pub table: ArchiveTable,
-    pub primary_key: Uuid,
-    pub created_at: DateTime<Utc>,
-    pub row: Value,
-}
-
 #[cfg(test)]
 mod tests {
     use std::str::FromStr;
@@ -372,3 +347,12 @@ mod tests {
         );
     }
 }
+
+mod database_table_policy;
+pub use database_table_policy::DatabaseTablePolicy;
+
+mod archive_mark;
+pub use archive_mark::ArchiveMark;
+
+mod archive_row;
+pub use archive_row::ArchiveRow;

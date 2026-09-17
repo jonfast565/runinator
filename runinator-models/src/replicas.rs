@@ -98,55 +98,6 @@ pub enum AgentConnectionState {
     ReenrollmentRequired,
 }
 
-/// backward-compatible agent health payload carried inside replica registration/heartbeat
-/// attributes. servers that predate it preserve the object without interpreting it, while newer
-/// clients can render agent-specific health without widening the replica persistence contract.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
-pub struct AgentStatusReport {
-    pub connection_state: AgentConnectionState,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub reconnect_retry_seconds: Option<u64>,
-    /// which consecutive reconnect attempt is pending (1-based), while reconnecting or disconnected.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub reconnect_attempt: Option<u32>,
-    /// the agent's reconnect budget; `None` when it retries indefinitely.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub reconnect_max_attempts: Option<u32>,
-    pub broker_mode: String,
-    pub broker_endpoint: String,
-    pub in_flight: u32,
-    pub succeeded: u64,
-    pub failed: u64,
-    pub timed_out: u64,
-    pub canceled: u64,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub last_error: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub last_error_at: Option<DateTime<Utc>>,
-    #[serde(default)]
-    pub outbox_depth: u64,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub agent_version: Option<String>,
-    pub config_hash: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub max_concurrent_actions: Option<u64>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub shutdown_grace_seconds: Option<u64>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub worker_settings_source: Option<String>,
-    pub provider_count: usize,
-    #[serde(default)]
-    pub labels: BTreeMap<String, String>,
-    pub uptime_seconds: u64,
-    pub heartbeat_seq: u64,
-    /// estimated server minus agent wall-clock offset.
-    #[serde(default)]
-    pub clock_skew_ms: i64,
-    /// how long this agent expects to remain live without a heartbeat.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub stale_after_seconds: Option<u64>,
-}
-
 impl ReplicaStatus {
     pub fn as_str(self) -> &'static str {
         match self {
@@ -168,189 +119,6 @@ impl TryFrom<&str> for ReplicaStatus {
             other => Err(format!("Unknown replica status '{other}'")),
         }
     }
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ReplicaRegistrationRequest {
-    /// Caller-selected identity for broker-announced replicas. HTTP callers leave this unset and
-    /// the registry assigns one; a broker consumer must know its identity before the asynchronous
-    /// registration is applied so it can safely stamp executor claims and receive directives.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub replica_id: Option<Uuid>,
-    pub replica_type: ReplicaKind,
-    pub instance_id: String,
-    pub runtime_id: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub display_name: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub host: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub port: Option<u16>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub base_path: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub version: Option<String>,
-    #[serde(default)]
-    pub attributes: Value,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ReplicaHeartbeatRequest {
-    pub runtime_id: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub display_name: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub host: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub port: Option<u16>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub base_path: Option<String>,
-    #[serde(default)]
-    pub attributes: Value,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ReplicaOfflineRequest {
-    pub runtime_id: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ReplicaProviderRegistrationRequest {
-    pub runtime_id: String,
-    pub provider: ProviderMetadata,
-}
-
-impl Validate for ReplicaRegistrationRequest {
-    fn validate(&self) -> Result<(), ValidationError> {
-        identifier("instance_id", &self.instance_id)?;
-        identifier("runtime_id", &self.runtime_id)?;
-        optional_text("display_name", self.display_name.as_deref(), SHORT_TEXT_MAX)?;
-        optional_text("host", self.host.as_deref(), SHORT_TEXT_MAX)?;
-        optional_text("base_path", self.base_path.as_deref(), 2 * 1024)?;
-        optional_text("version", self.version.as_deref(), SHORT_TEXT_MAX)
-    }
-}
-
-impl Validate for ReplicaHeartbeatRequest {
-    fn validate(&self) -> Result<(), ValidationError> {
-        identifier("runtime_id", &self.runtime_id)?;
-        optional_text("display_name", self.display_name.as_deref(), SHORT_TEXT_MAX)?;
-        optional_text("host", self.host.as_deref(), SHORT_TEXT_MAX)?;
-        optional_text("base_path", self.base_path.as_deref(), 2 * 1024)
-    }
-}
-
-impl Validate for ReplicaOfflineRequest {
-    fn validate(&self) -> Result<(), ValidationError> {
-        identifier("runtime_id", &self.runtime_id)
-    }
-}
-
-impl Validate for ReplicaProviderRegistrationRequest {
-    fn validate(&self) -> Result<(), ValidationError> {
-        identifier("runtime_id", &self.runtime_id)?;
-        required_text("provider.name", &self.provider.name, SHORT_TEXT_MAX)
-    }
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ReplicaRecord {
-    pub replica_id: Uuid,
-    pub replica_type: ReplicaKind,
-    pub instance_id: String,
-    pub runtime_id: String,
-    pub status: ReplicaStatus,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub display_name: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub host: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub port: Option<u16>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub base_path: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub observed_ip: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub version: Option<String>,
-    #[serde(default)]
-    pub attributes: Value,
-    pub first_seen_at: DateTime<Utc>,
-    pub last_heartbeat_at: DateTime<Utc>,
-    pub last_seen_at: DateTime<Utc>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub offline_at: Option<DateTime<Utc>>,
-    /// Operator-enforced end of this activation. A kicked runtime cannot heartbeat or re-register;
-    /// the enrolled machine may start a fresh activation with a new replica id.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub kicked_at: Option<DateTime<Utc>>,
-    /// the identity that registered this replica, captured once at insert and never reassigned by
-    /// later heartbeats/upserts. lets a lower-trust external caller (e.g. a desktop-agent connecting
-    /// through the WS broker relay) be checked against the replica_id/labels it presents.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub registered_by_principal_id: Option<Uuid>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub registered_by_kind: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub registered_by_org_id: Option<Uuid>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ReplicaProviderRegistration {
-    pub replica_id: Uuid,
-    pub provider_name: String,
-    pub provider: ProviderMetadata,
-    pub first_registered_at: DateTime<Utc>,
-    pub last_registered_at: DateTime<Utc>,
-    pub last_heartbeat_at: DateTime<Utc>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ReplicaCounts {
-    pub workers: i64,
-    pub wakers: i64,
-    pub webservices: i64,
-    #[serde(default)]
-    pub background: i64,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ReplicaListResponse {
-    pub counts: ReplicaCounts,
-    pub replicas: Vec<ReplicaRecord>,
-    /// number of node runs currently executing on each replica, keyed by replica id. derived by the
-    /// web service from live executor claims, so only replicas actually running tasks appear.
-    #[serde(default)]
-    pub running_tasks: std::collections::HashMap<Uuid, i64>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
-pub struct WorkflowRunProvenance {
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub source_kind: Option<TriggerSourceKind>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub actor_type: Option<TriggerActorType>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub actor_replica_id: Option<Uuid>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub actor_display_name: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub request_host: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub request_ip: Option<String>,
-    #[serde(default)]
-    pub metadata: Value,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
-pub struct WorkflowNodeRunExecutor {
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub current_executor_replica_id: Option<Uuid>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub last_executor_replica_id: Option<Uuid>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub executor_claimed_at: Option<DateTime<Utc>>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub executor_released_at: Option<DateTime<Utc>>,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
@@ -447,3 +215,36 @@ impl TryFrom<&str> for TriggerActorType {
         }
     }
 }
+
+mod agent_status_report;
+pub use agent_status_report::AgentStatusReport;
+
+mod replica_registration_request;
+pub use replica_registration_request::ReplicaRegistrationRequest;
+
+mod replica_heartbeat_request;
+pub use replica_heartbeat_request::ReplicaHeartbeatRequest;
+
+mod replica_offline_request;
+pub use replica_offline_request::ReplicaOfflineRequest;
+
+mod replica_provider_registration_request;
+pub use replica_provider_registration_request::ReplicaProviderRegistrationRequest;
+
+mod replica_record;
+pub use replica_record::ReplicaRecord;
+
+mod replica_provider_registration;
+pub use replica_provider_registration::ReplicaProviderRegistration;
+
+mod replica_counts;
+pub use replica_counts::ReplicaCounts;
+
+mod replica_list_response;
+pub use replica_list_response::ReplicaListResponse;
+
+mod workflow_run_provenance;
+pub use workflow_run_provenance::WorkflowRunProvenance;
+
+mod workflow_node_run_executor;
+pub use workflow_node_run_executor::WorkflowNodeRunExecutor;

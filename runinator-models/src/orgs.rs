@@ -44,126 +44,7 @@ impl OrgRole {
     }
 }
 
-/// a tenant. `slug` is the stable, URL/label-safe identifier used for routing labels (`org=<slug>`).
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Organization {
-    pub id: Option<Uuid>,
-    pub name: String,
-    pub slug: String,
-    pub disabled: bool,
-    pub created_at: DateTime<Utc>,
-    pub updated_at: DateTime<Utc>,
-}
-
-/// a user's membership in one org, with their role there.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct OrgMembership {
-    pub org_id: Uuid,
-    pub user_id: Uuid,
-    pub role: OrgRole,
-    pub created_at: DateTime<Utc>,
-}
-
-/// an org plus the caller's role in it, returned from `/orgs/me`.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct OrgMembershipView {
-    pub org: Organization,
-    pub role: OrgRole,
-}
-
 // ---- request/response DTOs ----
-
-#[derive(Debug, Clone, Deserialize)]
-pub struct CreateOrgRequest {
-    pub name: String,
-    /// optional explicit slug; derived from `name` when omitted.
-    #[serde(default)]
-    pub slug: Option<String>,
-}
-
-#[derive(Debug, Clone, Deserialize)]
-pub struct UpdateOrgRequest {
-    #[serde(default)]
-    pub name: Option<String>,
-    #[serde(default)]
-    pub disabled: Option<bool>,
-}
-
-#[derive(Debug, Clone, Deserialize)]
-pub struct AddOrgMemberRequest {
-    pub user_id: Uuid,
-    pub role: OrgRole,
-}
-
-#[derive(Debug, Clone, Deserialize)]
-pub struct UpdateOrgMemberRequest {
-    pub role: OrgRole,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct SwitchOrgRequest {
-    pub org_id: Uuid,
-}
-
-impl Validate for CreateOrgRequest {
-    fn validate(&self) -> Result<(), ValidationError> {
-        required_text("name", &self.name, SHORT_TEXT_MAX)?;
-        optional_text("slug", self.slug.as_deref(), SHORT_TEXT_MAX)?;
-        if self
-            .slug
-            .as_deref()
-            .is_some_and(|slug| slugify(slug) != slug)
-        {
-            return Err(ValidationError::new(
-                "slug",
-                "must contain lowercase letters, numbers, and single hyphens only",
-            ));
-        }
-        Ok(())
-    }
-}
-
-impl Validate for UpdateOrgRequest {
-    fn validate(&self) -> Result<(), ValidationError> {
-        optional_text("name", self.name.as_deref(), SHORT_TEXT_MAX)
-    }
-}
-
-impl Validate for AddOrgMemberRequest {
-    fn validate(&self) -> Result<(), ValidationError> {
-        Ok(())
-    }
-}
-
-impl Validate for UpdateOrgMemberRequest {
-    fn validate(&self) -> Result<(), ValidationError> {
-        Ok(())
-    }
-}
-
-impl Validate for SwitchOrgRequest {
-    fn validate(&self) -> Result<(), ValidationError> {
-        Ok(())
-    }
-}
-
-/// the active-org context returned after a switch, with a re-issued access token.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct OrgContextResponse {
-    pub access_token: String,
-    /// access-token lifetime in seconds.
-    pub expires_in: i64,
-    pub org: Organization,
-    pub role: OrgRole,
-}
-
-/// the platform-scope context returned after leaving an active organization.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct PlatformContextResponse {
-    pub access_token: String,
-    /// access-token lifetime in seconds.
-    pub expires_in: i64,
-}
 
 /// derive a URL/label-safe slug from a display name: lowercase, non-alphanumerics to hyphens,
 /// collapsed and trimmed. empty input yields an empty string (callers should reject that).
@@ -181,3 +62,33 @@ pub fn slugify(name: &str) -> String {
     }
     out.trim_end_matches('-').to_string()
 }
+
+mod organization;
+pub use organization::Organization;
+
+mod org_membership;
+pub use org_membership::OrgMembership;
+
+mod org_membership_view;
+pub use org_membership_view::OrgMembershipView;
+
+mod create_org_request;
+pub use create_org_request::CreateOrgRequest;
+
+mod update_org_request;
+pub use update_org_request::UpdateOrgRequest;
+
+mod add_org_member_request;
+pub use add_org_member_request::AddOrgMemberRequest;
+
+mod update_org_member_request;
+pub use update_org_member_request::UpdateOrgMemberRequest;
+
+mod switch_org_request;
+pub use switch_org_request::SwitchOrgRequest;
+
+mod org_context_response;
+pub use org_context_response::OrgContextResponse;
+
+mod platform_context_response;
+pub use platform_context_response::PlatformContextResponse;

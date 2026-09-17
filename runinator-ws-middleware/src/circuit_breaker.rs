@@ -16,62 +16,6 @@ use axum::{
 use tower::{ServiceExt, service_fn};
 use tower_resilience_circuitbreaker::{CircuitBreakerError, CircuitBreakerLayer, FnClassifier};
 
-/// Runtime policy for all inbound circuit families on one API replica.
-#[derive(Debug, Clone, Copy)]
-pub struct CircuitBreakerConfig {
-    pub enabled: bool,
-    /// Failure fraction that opens a closed circuit once its sample is eligible.
-    pub failure_rate_threshold: f64,
-    /// Minimum number of handler calls sampled before evaluating the failure rate.
-    pub minimum_number_of_calls: usize,
-    /// Number of calls retained by the count-based sliding window.
-    pub sliding_window_size: usize,
-    /// How long an open circuit rejects requests before a half-open probe is admitted.
-    pub cooldown: Duration,
-    /// Number of simultaneous recovery probes admitted while half-open.
-    pub permitted_calls_in_half_open: usize,
-}
-
-impl Default for CircuitBreakerConfig {
-    fn default() -> Self {
-        Self {
-            enabled: true,
-            failure_rate_threshold: 0.5,
-            minimum_number_of_calls: 20,
-            sliding_window_size: 100,
-            cooldown: Duration::from_secs(30),
-            permitted_calls_in_half_open: 1,
-        }
-    }
-}
-
-impl CircuitBreakerConfig {
-    /// Check CLI/environment-derived values before the server begins accepting traffic.
-    pub fn validate(&self) -> Result<(), &'static str> {
-        if !self.failure_rate_threshold.is_finite()
-            || !(0.0..=1.0).contains(&self.failure_rate_threshold)
-        {
-            return Err("circuit breaker failure-rate threshold must be between 0 and 1");
-        }
-        if self.minimum_number_of_calls == 0 {
-            return Err("circuit breaker minimum calls must be greater than zero");
-        }
-        if self.sliding_window_size == 0 {
-            return Err("circuit breaker window size must be greater than zero");
-        }
-        if self.minimum_number_of_calls > self.sliding_window_size {
-            return Err("circuit breaker minimum calls cannot exceed the window size");
-        }
-        if self.cooldown.is_zero() {
-            return Err("circuit breaker cooldown must be greater than zero");
-        }
-        if self.permitted_calls_in_half_open == 0 {
-            return Err("circuit breaker half-open probe count must be greater than zero");
-        }
-        Ok(())
-    }
-}
-
 /// Low-cardinality request families. The families deliberately keep unrelated route failure
 /// histories apart while avoiding a circuit per unbounded URI parameter.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -91,60 +35,9 @@ impl CircuitFamily {
     }
 }
 
-/// Marks a response synthesized because an API circuit was open. The outer access-metrics layer
-/// reads this extension so it never attributes the `503` to overload protection.
-#[derive(Debug, Clone, Copy)]
-pub struct CircuitBreakerRejection {
-    pub family: CircuitFamily,
-}
-
 type HttpResult = Result<Response, Infallible>;
 type HttpClassifier = fn(&HttpResult) -> bool;
 type HttpCircuitLayer = CircuitBreakerLayer<FnClassifier<HttpClassifier>>;
-
-/// Stateful selector containing one library-owned breaker per request family.
-#[derive(Clone)]
-pub struct CircuitBreakers {
-    enabled: bool,
-    cooldown: Duration,
-    read_query: HttpCircuitLayer,
-    write_control: HttpCircuitLayer,
-    external_ingress: HttpCircuitLayer,
-}
-
-impl CircuitBreakers {
-    pub fn new(config: CircuitBreakerConfig) -> Self {
-        config
-            .validate()
-            .expect("inbound circuit breaker configuration was validated at startup");
-        Self {
-            enabled: config.enabled,
-            cooldown: config.cooldown,
-            read_query: make_breaker(config, CircuitFamily::ReadQuery),
-            write_control: make_breaker(config, CircuitFamily::WriteControl),
-            external_ingress: make_breaker(config, CircuitFamily::ExternalIngress),
-        }
-    }
-
-    fn select(&self, request: &Request<Body>) -> Option<(CircuitFamily, HttpCircuitLayer)> {
-        if !self.enabled || is_bypassed(request) {
-            return None;
-        }
-        let family = if is_external_ingress(request) {
-            CircuitFamily::ExternalIngress
-        } else if matches!(*request.method(), Method::GET | Method::HEAD) {
-            CircuitFamily::ReadQuery
-        } else {
-            CircuitFamily::WriteControl
-        };
-        let layer = match family {
-            CircuitFamily::ReadQuery => self.read_query.clone(),
-            CircuitFamily::WriteControl => self.write_control.clone(),
-            CircuitFamily::ExternalIngress => self.external_ingress.clone(),
-        };
-        Some((family, layer))
-    }
-}
 
 fn make_breaker(config: CircuitBreakerConfig, family: CircuitFamily) -> HttpCircuitLayer {
     let label = family.label();
@@ -246,3 +139,12 @@ fn circuit_open_response(family: CircuitFamily, cooldown: Duration) -> Response 
 #[cfg(test)]
 #[path = "circuit_breaker_tests.rs"]
 mod tests;
+
+mod circuit_breaker_config;
+pub use circuit_breaker_config::CircuitBreakerConfig;
+
+mod circuit_breaker_rejection;
+pub use circuit_breaker_rejection::CircuitBreakerRejection;
+
+mod circuit_breakers;
+pub use circuit_breakers::CircuitBreakers;

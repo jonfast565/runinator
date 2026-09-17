@@ -70,26 +70,6 @@ impl std::fmt::Display for WorkflowVmRecordKind {
     }
 }
 
-/// A persisted or wire record was produced by a VM revision this process does not understand.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct UnsupportedWorkflowVmVersion {
-    pub record: WorkflowVmRecordKind,
-    pub expected: u32,
-    pub actual: u32,
-}
-
-impl std::fmt::Display for UnsupportedWorkflowVmVersion {
-    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(
-            formatter,
-            "unsupported workflow VM {} version {}; expected {}",
-            self.record, self.actual, self.expected
-        )
-    }
-}
-
-impl std::error::Error for UnsupportedWorkflowVmVersion {}
-
 fn ensure_vm_version(
     record: WorkflowVmRecordKind,
     expected: u32,
@@ -116,151 +96,6 @@ pub fn ensure_effect_protocol_version(actual: u32) -> Result<(), UnsupportedWork
             expected: WORKFLOW_EFFECT_PROTOCOL_VERSION,
             actual,
         })
-    }
-}
-
-/// An immutable compiled workflow snapshot attached to a run.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct WorkflowModule {
-    pub version: u32,
-    pub instructions: Vec<WorkflowInstruction>,
-    /// Maps executable locations back to the author-facing graph.
-    #[serde(default)]
-    pub source_map: Vec<WorkflowSourceMapEntry>,
-    /// Compiled interrupt handler entries. Frozen into the module rather than looked up in mutable
-    /// workflow metadata, so a run in flight keeps the handlers it started with. Timer handlers
-    /// are keyed by their distinct `timer_id`, allowing several periodic handlers in one workflow.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub interrupt_handlers: Vec<WorkflowVmInterruptHandler>,
-}
-
-impl WorkflowModule {
-    pub fn new(instructions: Vec<WorkflowInstruction>) -> Self {
-        Self {
-            version: WORKFLOW_VM_VERSION,
-            instructions,
-            source_map: Vec::new(),
-            interrupt_handlers: Vec::new(),
-        }
-    }
-
-    pub fn is_supported(&self) -> bool {
-        self.version == WORKFLOW_VM_VERSION
-    }
-
-    pub fn ensure_supported(&self) -> Result<(), UnsupportedWorkflowVmVersion> {
-        ensure_vm_version(
-            WorkflowVmRecordKind::Module,
-            WORKFLOW_VM_VERSION,
-            self.version,
-        )?;
-        for entry in &self.source_map {
-            entry.ensure_supported()?;
-        }
-        Ok(())
-    }
-
-    /// Return the graph location containing an instruction pointer.
-    ///
-    /// The compiler lays blocks out consecutively, so the ranges are sorted and disjoint and this
-    /// can bisect rather than scan — it is called once per drive and once per rendered cursor.
-    /// `source_map_is_ordered` pins the invariant this relies on.
-    pub fn graph_location(&self, ip: usize) -> Option<&WorkflowSourceMapEntry> {
-        let index = self
-            .source_map
-            .binary_search_by(|entry| {
-                if entry.instruction_end <= ip {
-                    std::cmp::Ordering::Less
-                } else if entry.instruction_start > ip {
-                    std::cmp::Ordering::Greater
-                } else {
-                    std::cmp::Ordering::Equal
-                }
-            })
-            .ok()?;
-        self.source_map.get(index)
-    }
-
-    /// Whether the source map is sorted and non-overlapping, which is what makes
-    /// [`Self::graph_location`] a bisection. Compiled modules always satisfy it.
-    pub fn source_map_is_ordered(&self) -> bool {
-        self.source_map.windows(2).all(|pair| {
-            pair[0].instruction_start <= pair[0].instruction_end
-                && pair[0].instruction_end <= pair[1].instruction_start
-        })
-    }
-
-    /// The compiled handler for one non-timer source, if the workflow declared it.
-    pub fn interrupt_handler(
-        &self,
-        source: InterruptSource,
-    ) -> Option<&WorkflowVmInterruptHandler> {
-        self.interrupt_handlers
-            .iter()
-            .find(|handler| handler.source == source)
-    }
-
-    /// Select the frozen handler for a pending request. Timer requests carry the declaration's
-    /// stable handler id in their payload, while the other sources remain one-per-source.
-    pub fn interrupt_handler_for(
-        &self,
-        source: InterruptSource,
-        payload: &Value,
-    ) -> Option<&WorkflowVmInterruptHandler> {
-        if source != InterruptSource::Timer {
-            return self.interrupt_handler(source);
-        }
-        let timer_id = payload.get("timer_id").and_then(Value::as_str)?;
-        self.interrupt_handlers.iter().find(|handler| {
-            handler.source == InterruptSource::Timer
-                && handler.timer_id.as_deref() == Some(timer_id)
-        })
-    }
-}
-
-/// A source-map range used by graph cursors, breakpoints, and execution history.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct WorkflowSourceMapEntry {
-    pub version: u32,
-    pub instruction_start: usize,
-    pub instruction_end: usize,
-    pub node_id: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub edge_label: Option<String>,
-    /// Whether an interrupt may suspend a thread positioned in this range. Compiled from the node
-    /// kind's `GraphRole`, so the runtime never has to re-read the authoring definition.
-    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
-    pub interruptible: bool,
-    /// Where control leaves this node on its normal path — the first instruction of its trailing
-    /// exit sequence. An interrupt handler that answers `continue` sends the interrupted thread
-    /// here; absent means the node has no single exit and `continue` degrades to `resume`.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub exit_instruction_pointer: Option<usize>,
-}
-
-impl WorkflowSourceMapEntry {
-    pub fn new(instruction_start: usize, instruction_end: usize, node_id: String) -> Self {
-        Self {
-            version: WORKFLOW_SOURCE_MAP_VERSION,
-            instruction_start,
-            instruction_end,
-            node_id,
-            edge_label: None,
-            interruptible: false,
-            exit_instruction_pointer: None,
-        }
-    }
-
-    pub fn is_supported(&self) -> bool {
-        self.version == WORKFLOW_SOURCE_MAP_VERSION
-    }
-
-    pub fn ensure_supported(&self) -> Result<(), UnsupportedWorkflowVmVersion> {
-        ensure_vm_version(
-            WorkflowVmRecordKind::SourceMap,
-            WORKFLOW_SOURCE_MAP_VERSION,
-            self.version,
-        )
     }
 }
 
@@ -443,30 +278,6 @@ impl WorkflowBranchPolicy {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct WorkflowVmBranch {
-    pub condition: WorkflowCondition,
-    pub target: usize,
-}
-
-/// One run-level artifact declaration attached to an output instruction.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct WorkflowOutputArtifact {
-    pub name: String,
-    pub source: InvocationModule,
-}
-
-/// An interrupt asked for out of band, recorded on the thread it targets until that thread reaches
-/// a safe point. `External` and `OrphanSignal` arrive this way; the sources the VM detects for
-/// itself never take this route.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct WorkflowPendingInterrupt {
-    pub id: Uuid,
-    pub source: InterruptSource,
-    #[serde(default, skip_serializing_if = "Value::is_null")]
-    pub payload: Value,
-}
-
 /// What a finished handler decided for the thread it suspended.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
@@ -476,22 +287,6 @@ pub enum WorkflowInterruptOutcome {
     /// Settle the interrupted node failed and let the main flow's own routing decide. A handler
     /// can never fail the run directly; this is the strongest thing it can say.
     Fail { message: String },
-}
-
-/// One compiled interrupt handler target. The source is part of bytecode rather than a lookup in
-/// mutable workflow metadata, so a run remains reproducible after its definition changes.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct WorkflowVmInterruptHandler {
-    pub source: InterruptSource,
-    pub target: usize,
-    /// Stable identity of a periodic timer declaration. Only set for [`InterruptSource::Timer`].
-    /// It is distinct even when two schedules use the same handler region; the timer relay carries
-    /// it in its pending-interrupt payload, so multiple timers are never ambiguous.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub timer_id: Option<String>,
-    /// The frozen period for a periodic timer handler, in seconds. Only set for timer handlers.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub interval_seconds: Option<i64>,
 }
 
 /// Durable state scoped to one continuation. Frames replace the graph reducer's cursor, node-run,
@@ -510,29 +305,6 @@ pub enum WorkflowFrame {
     Compensation(Box<WorkflowCompensationFrame>),
     Invocation(WorkflowInvocationFrame),
     Debug(WorkflowDebugFrame),
-}
-
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct WorkflowLoopFrame {
-    pub loop_key: String,
-    pub body: usize,
-    pub exit: usize,
-    #[serde(default)]
-    pub index: u64,
-    #[serde(default)]
-    pub items: Vec<Value>,
-    #[serde(default)]
-    pub results: Vec<Value>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub max_iterations: Option<u64>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct WorkflowReentryFrame {
-    pub reentry_key: String,
-    #[serde(default)]
-    pub visits: u64,
-    pub max_visits: u64,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -555,273 +327,6 @@ pub enum WorkflowFailureKind {
     Canceled,
 }
 
-/// A classified failure travelling through the VM. `Canceled` deliberately routes like `Failed`:
-/// the graph has no cancel edge, and a run-level cancel retires continuations at the store instead
-/// of resuming one.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct WorkflowFailure {
-    #[serde(default)]
-    pub kind: WorkflowFailureKind,
-    pub message: String,
-}
-
-impl WorkflowFailure {
-    pub fn new(kind: WorkflowFailureKind, message: impl Into<String>) -> Self {
-        Self {
-            kind,
-            message: message.into(),
-        }
-    }
-
-    pub fn failed(message: impl Into<String>) -> Self {
-        Self::new(WorkflowFailureKind::Failed, message)
-    }
-}
-
-impl From<String> for WorkflowFailure {
-    fn from(message: String) -> Self {
-        Self::failed(message)
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct WorkflowTryFrame {
-    pub try_key: String,
-    pub phase: WorkflowTryPhase,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub catch: Option<usize>,
-    /// Preferred catch target for a timed-out step (`on_timeout`), falling back to `catch`.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub on_timeout: Option<usize>,
-    /// Preferred catch target for a rejected step (`on_reject`), falling back to `catch`.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub on_reject: Option<usize>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub finally: Option<usize>,
-    /// Captured before `finally` runs, then re-applied after it completes.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub pending_failure: Option<String>,
-}
-
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct WorkflowMapFrame {
-    pub map_key: String,
-    pub body: usize,
-    pub exit: usize,
-    pub concurrency: u64,
-    #[serde(default)]
-    pub next_index: u64,
-    #[serde(default)]
-    pub items: Vec<Value>,
-    #[serde(default)]
-    pub results: Vec<WorkflowIndexedValue>,
-    /// The item carried by a child continuation. Its index is enough to order the parent result.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub item: Option<Value>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub item_index: Option<u64>,
-}
-
-/// A result labelled with a fork or map index. A vector is intentional: JSON object keys are
-/// strings, while this representation preserves a numeric index and a deterministic order.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct WorkflowIndexedValue {
-    pub index: u64,
-    pub value: Value,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct WorkflowForkFrame {
-    pub fork_key: String,
-    pub parent_id: Uuid,
-    pub branch_index: u64,
-}
-
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct WorkflowJoinFrame {
-    pub join_key: String,
-    pub expected: u64,
-    #[serde(default)]
-    pub mode: WorkflowBranchPolicy,
-    #[serde(default)]
-    pub arrivals: Vec<WorkflowIndexedValue>,
-}
-
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct WorkflowRaceFrame {
-    pub race_key: String,
-    pub expected: u64,
-    #[serde(default = "WorkflowBranchPolicy::first_success")]
-    pub winner_policy: WorkflowBranchPolicy,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub winner: Option<Uuid>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub winner_value: Option<Value>,
-}
-
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct WorkflowInterruptFrame {
-    pub source: InterruptSource,
-    pub interrupted_continuation_id: Uuid,
-    pub resume_instruction_pointer: usize,
-    /// First instruction of the interrupted node, for `restart`.
-    #[serde(default)]
-    pub node_start_instruction_pointer: usize,
-    /// Where the interrupted node hands control on, for `continue`. Absent when the node has no
-    /// single exit, which makes `continue` behave as `resume`.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub node_exit_instruction_pointer: Option<usize>,
-    #[serde(default, skip_serializing_if = "Value::is_null")]
-    pub payload: Value,
-    #[serde(default)]
-    pub handled_at_instruction_pointers: Vec<usize>,
-}
-
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct WorkflowCompensationFrame {
-    #[serde(default)]
-    pub pending: Vec<WorkflowEffectRequest>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub active: Option<WorkflowEffectRequest>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub resume: Option<usize>,
-}
-
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct WorkflowInvocationFrame {
-    pub module: InvocationModule,
-    pub continuation: crate::invocation::InvocationContinuation,
-}
-
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct WorkflowDebugFrame {
-    #[serde(default)]
-    pub paused: bool,
-    #[serde(default)]
-    pub step_requested: bool,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub breakpoint: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub run_to_node_id: Option<String>,
-    /// A failure parked before structured error routing. Resuming consumes it exactly once.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub pending_failure: Option<WorkflowFailure>,
-    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
-    pub pause_on_failure: bool,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub last_output: Option<Value>,
-    /// Speculative continuations cannot settle durable effects unless explicitly armed.
-    #[serde(default)]
-    pub speculative: bool,
-}
-
-/// Frozen workflow-machine state. One record represents one independently schedulable branch.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct WorkflowContinuation {
-    /// Serialized continuation format version, checked independently from module bytecode.
-    pub version: u32,
-    pub id: Uuid,
-    pub workflow_run_id: Uuid,
-    pub module_version: u32,
-    pub instruction_pointer: usize,
-    #[serde(default)]
-    pub stack: Vec<Value>,
-    #[serde(default)]
-    pub locals: BTreeMap<String, Value>,
-    /// Node entries observed since the last durable VM boundary. Persistence drains these into
-    /// journal records atomically with the boundary, so inline nodes remain visible after reload.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub pending_node_entries: Vec<String>,
-    /// Structured execution state for nested control flow, invocation calls, compensation, and
-    /// debugging. This deliberately has no graph cursor or node-run identity.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub frames: Vec<WorkflowFrame>,
-    /// Increments only after an effect is successfully requested; it is part of the idempotency
-    /// identity for the next effect this branch emits.
-    #[serde(default)]
-    pub next_effect_sequence: u64,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub parent_id: Option<Uuid>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub fork_key: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub awaiting_effect_id: Option<Uuid>,
-    pub status: WorkflowContinuationStatus,
-    /// Run/debug operator hold, independent of an effect wait. A result settling while this is set
-    /// leaves the continuation paused instead of making it runnable.
-    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
-    pub operator_paused: bool,
-    /// An externally requested interrupt waiting for this thread to reach a safe point. It is
-    /// consumed by the drive that decides about it — raised or refused — so nothing lingers to fire
-    /// at an arbitrary later point.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub pending_interrupt: Option<WorkflowPendingInterrupt>,
-    /// Compare-and-swap revision. Every durable transition increments this value.
-    #[serde(default)]
-    pub revision: u64,
-}
-
-/// The graph-facing view of a durable continuation.  Execution identity stays the continuation
-/// id; the node id is derived only for rendering from the frozen module source map.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct WorkflowVmCursor {
-    pub continuation_id: Uuid,
-    pub instruction_pointer: usize,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub node_id: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub edge_label: Option<String>,
-    pub status: WorkflowContinuationStatus,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub stop_reason: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub run_to_node_id: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub pending_failure: Option<WorkflowFailure>,
-}
-
-impl WorkflowContinuation {
-    pub fn start(workflow_run_id: Uuid, module_version: u32) -> Self {
-        Self {
-            version: WORKFLOW_CONTINUATION_VERSION,
-            id: Uuid::now_v7(),
-            workflow_run_id,
-            module_version,
-            instruction_pointer: 0,
-            stack: Vec::new(),
-            locals: BTreeMap::new(),
-            pending_node_entries: Vec::new(),
-            frames: Vec::new(),
-            next_effect_sequence: 0,
-            parent_id: None,
-            fork_key: None,
-            awaiting_effect_id: None,
-            status: WorkflowContinuationStatus::Runnable,
-            operator_paused: false,
-            pending_interrupt: None,
-            revision: 0,
-        }
-    }
-
-    pub fn ensure_supported(&self) -> Result<(), UnsupportedWorkflowVmVersion> {
-        ensure_vm_version(
-            WorkflowVmRecordKind::Continuation,
-            WORKFLOW_CONTINUATION_VERSION,
-            self.version,
-        )
-    }
-
-    /// Whether this continuation is an interrupt handler running beside a frozen thread.
-    ///
-    /// A handler is excluded from run-terminal accounting: it can settle the interrupted node, but
-    /// it can never decide the fate of the run.
-    pub fn is_interrupt_handler(&self) -> bool {
-        self.frames
-            .iter()
-            .any(|frame| matches!(frame, WorkflowFrame::Interrupt(_)))
-    }
-}
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum WorkflowContinuationStatus {
@@ -837,22 +342,6 @@ pub enum WorkflowContinuationStatus {
     Succeeded,
     Failed,
     Canceled,
-}
-
-/// A durable, deduplicated piece of output produced while an effect is executing. Output events
-/// are addressed by effect/continuation identity and never by a graph node-run.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct WorkflowEffectOutputEvent {
-    pub event_id: Uuid,
-    pub effect_id: Uuid,
-    pub workflow_run_id: Uuid,
-    pub continuation_id: Uuid,
-    pub attempt: u32,
-    /// Derived from the output kind by the backend rather than persisted independently.
-    #[serde(default)]
-    pub timeline_category: WorkflowTimelineCategory,
-    pub output: WorkflowEffectOutput,
-    pub created_at: i64,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -1015,99 +504,6 @@ pub enum WorkflowEffectRequest {
 
 fn default_await_run_mode() -> String {
     "all".to_string()
-}
-
-/// The canonical durable receipt for a yielded effect.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct WorkflowEffect {
-    pub version: u32,
-    pub id: Uuid,
-    pub workflow_run_id: Uuid,
-    pub continuation_id: Uuid,
-    pub sequence: u64,
-    pub attempt: u32,
-    /// Source-map projection populated by the operator API. It is not stored with the effect
-    /// receipt, because the pinned module is the source of truth for that relationship.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub node_id: Option<String>,
-    /// Derived from the effect request by the backend rather than persisted independently.
-    #[serde(default)]
-    pub timeline_category: WorkflowTimelineCategory,
-    pub request: WorkflowEffectRequest,
-    pub status: WorkflowEffectStatus,
-    /// Replica currently executing this attempt, set when a host claims the delivery and cleared
-    /// when the effect settles. This is the VM's executor lease: it replaces the node-run executor
-    /// columns, so replica load and dead-worker recovery read effects rather than node runs.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub current_executor_replica_id: Option<Uuid>,
-    /// Last replica to have claimed this effect, retained after settlement for attribution.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub last_executor_replica_id: Option<Uuid>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub result: Option<Value>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub message: Option<String>,
-    /// Unix seconds. Immutable receipt creation time, independent of broker publication.
-    pub created_at: i64,
-    pub updated_at: i64,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub finished_at: Option<i64>,
-}
-
-/// One immutable execution-history record. `sequence` is per workflow run and is allocated by the
-/// transaction that mutates the continuation/effect state, making UI history stable across retries.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct WorkflowJournalRecord {
-    pub version: u32,
-    pub id: Uuid,
-    pub workflow_run_id: Uuid,
-    pub sequence: u64,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub continuation_id: Option<Uuid>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub effect_id: Option<Uuid>,
-    /// Derived from the journal entry by the backend rather than persisted independently.
-    #[serde(default)]
-    pub timeline_category: WorkflowTimelineCategory,
-    pub entry: WorkflowJournalEntry,
-    pub created_at: i64,
-}
-
-impl WorkflowEffect {
-    pub fn idempotency_key(&self) -> String {
-        format!(
-            "workflow-effect:{}:{}:{}",
-            self.continuation_id, self.sequence, self.attempt
-        )
-    }
-
-    pub fn is_supported(&self) -> bool {
-        self.version == WORKFLOW_EFFECT_PROTOCOL_VERSION
-    }
-
-    pub fn ensure_supported(&self) -> Result<(), UnsupportedWorkflowVmVersion> {
-        ensure_effect_protocol_version(self.version)
-    }
-}
-
-impl WorkflowContinuation {
-    pub fn is_supported(&self) -> bool {
-        self.version == WORKFLOW_CONTINUATION_VERSION
-    }
-}
-
-impl WorkflowJournalRecord {
-    pub fn is_supported(&self) -> bool {
-        self.version == WORKFLOW_JOURNAL_VERSION
-    }
-
-    pub fn ensure_supported(&self) -> Result<(), UnsupportedWorkflowVmVersion> {
-        ensure_vm_version(
-            WorkflowVmRecordKind::Journal,
-            WORKFLOW_JOURNAL_VERSION,
-            self.version,
-        )
-    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -1597,3 +993,78 @@ mod tests {
         assert!(!encoded.contains("node_run"));
     }
 }
+
+mod unsupported_workflow_vm_version;
+pub use unsupported_workflow_vm_version::UnsupportedWorkflowVmVersion;
+
+mod workflow_module;
+pub use workflow_module::WorkflowModule;
+
+mod workflow_source_map_entry;
+pub use workflow_source_map_entry::WorkflowSourceMapEntry;
+
+mod workflow_vm_branch;
+pub use workflow_vm_branch::WorkflowVmBranch;
+
+mod workflow_output_artifact;
+pub use workflow_output_artifact::WorkflowOutputArtifact;
+
+mod workflow_pending_interrupt;
+pub use workflow_pending_interrupt::WorkflowPendingInterrupt;
+
+mod workflow_vm_interrupt_handler;
+pub use workflow_vm_interrupt_handler::WorkflowVmInterruptHandler;
+
+mod workflow_loop_frame;
+pub use workflow_loop_frame::WorkflowLoopFrame;
+
+mod workflow_reentry_frame;
+pub use workflow_reentry_frame::WorkflowReentryFrame;
+
+mod workflow_failure;
+pub use workflow_failure::WorkflowFailure;
+
+mod workflow_try_frame;
+pub use workflow_try_frame::WorkflowTryFrame;
+
+mod workflow_map_frame;
+pub use workflow_map_frame::WorkflowMapFrame;
+
+mod workflow_indexed_value;
+pub use workflow_indexed_value::WorkflowIndexedValue;
+
+mod workflow_fork_frame;
+pub use workflow_fork_frame::WorkflowForkFrame;
+
+mod workflow_join_frame;
+pub use workflow_join_frame::WorkflowJoinFrame;
+
+mod workflow_race_frame;
+pub use workflow_race_frame::WorkflowRaceFrame;
+
+mod workflow_interrupt_frame;
+pub use workflow_interrupt_frame::WorkflowInterruptFrame;
+
+mod workflow_compensation_frame;
+pub use workflow_compensation_frame::WorkflowCompensationFrame;
+
+mod workflow_invocation_frame;
+pub use workflow_invocation_frame::WorkflowInvocationFrame;
+
+mod workflow_debug_frame;
+pub use workflow_debug_frame::WorkflowDebugFrame;
+
+mod workflow_continuation;
+pub use workflow_continuation::WorkflowContinuation;
+
+mod workflow_vm_cursor;
+pub use workflow_vm_cursor::WorkflowVmCursor;
+
+mod workflow_effect_output_event;
+pub use workflow_effect_output_event::WorkflowEffectOutputEvent;
+
+mod workflow_effect;
+pub use workflow_effect::WorkflowEffect;
+
+mod workflow_journal_record;
+pub use workflow_journal_record::WorkflowJournalRecord;

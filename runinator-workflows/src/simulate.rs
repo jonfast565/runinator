@@ -16,121 +16,12 @@ use runinator_compute::{evaluate_workflow_condition, next_transition};
 // upper bound on simulated steps; a runaway back-edge stops here instead of spinning forever.
 const MAX_SIM_STEPS: usize = 10_000;
 
-/// how a task or parked node resolved in a simulation. decouples the state-machine walk from any
-/// concrete backend (a mock spec, or a database-backed replay).
-#[derive(Debug, Clone, PartialEq)]
-pub struct NodeOutcome {
-    /// the terminal status the node reached.
-    pub status: WorkflowStatus,
-    /// the value recorded as the node's `output` (addressable downstream as `steps.<id>.output`).
-    pub output: Value,
-}
-
-impl NodeOutcome {
-    /// a succeeded outcome carrying `output`.
-    pub fn succeeded(output: Value) -> Self {
-        Self {
-            status: WorkflowStatus::Succeeded,
-            output,
-        }
-    }
-
-    /// a failed outcome with a null output.
-    pub fn failed() -> Self {
-        Self {
-            status: WorkflowStatus::Failed,
-            output: Value::Null,
-        }
-    }
-}
-
 /// the request handed to the evaluator when the walk reaches a node whose outcome is not pure graph
 /// logic — a task action, or a parked node awaiting an external decision.
-pub struct NodeEvalRequest<'a> {
-    /// the node being resolved.
-    pub node: &'a WorkflowNode,
-    /// the node's action configuration / parameters already resolved against the run context.
-    pub resolved: Value,
-    /// the full run context at this point in the walk (`input`, `steps`, `config`, ...).
-    pub context: &'a Value,
-}
 
 /// the evaluator interface: supplies the parts of a workflow walk a pure graph simulation cannot
 /// compute on its own — the `config.*` tree and the outcome of task/park nodes. Implementors back
 /// this with a mock spec (offline tests) or a database (live replay); the walker stays identical.
-pub trait SimulationEnv {
-    /// the `config.*` reference tree merged into every node's context. Defaults to empty.
-    fn config_tree(&mut self) -> Value {
-        Value::Object(Map::new())
-    }
-
-    /// resolve a task (action) node: its simulated status and output.
-    fn evaluate_action(&mut self, request: &NodeEvalRequest<'_>) -> NodeOutcome;
-
-    /// resolve a parked node (approval/gate/signal/input/mutex/...). Defaults to succeeding with a
-    /// null output so a park never blocks a simulation unless an env overrides it.
-    fn resolve_park(&mut self, _request: &NodeEvalRequest<'_>) -> NodeOutcome {
-        NodeOutcome::succeeded(Value::Null)
-    }
-}
-
-/// one visited node in a simulation trace.
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-pub struct SimStep {
-    pub node_id: String,
-    pub kind: WorkflowNodeKind,
-    pub status: WorkflowStatus,
-    /// the next node the walk routed to, when the node had an outgoing edge.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub next: Option<String>,
-    /// the value recorded as this node's output, when it produced one.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub output: Option<Value>,
-    /// a short reason string mirroring the reducer's transition reasons.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub note: Option<String>,
-}
-
-/// the result of walking a workflow with a `SimulationEnv`.
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-pub struct SimulationRun {
-    /// the terminal status the run settled on.
-    pub status: WorkflowStatus,
-    /// the ordered nodes visited.
-    pub steps: Vec<SimStep>,
-    /// the run's final output (from the last output node, else null).
-    pub output: Value,
-    /// set when the walk could not continue: an unsupported node kind, a missing node, or a node
-    /// that blocked with no outgoing edge.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub error: Option<String>,
-}
-
-impl SimulationRun {
-    /// true when a node with `node_id` was visited during the walk.
-    pub fn reached(&self, node_id: &str) -> bool {
-        self.steps.iter().any(|step| step.node_id == node_id)
-    }
-
-    /// the target the last visit to `node_id` routed to, if any. Used to assert which branch a
-    /// condition/switch/toggle/percentage node took.
-    pub fn branch_target(&self, node_id: &str) -> Option<&str> {
-        self.steps
-            .iter()
-            .rev()
-            .find(|step| step.node_id == node_id)
-            .and_then(|step| step.next.as_deref())
-    }
-
-    /// the recorded output of the last visit to `node_id`, if any.
-    pub fn node_output(&self, node_id: &str) -> Option<&Value> {
-        self.steps
-            .iter()
-            .rev()
-            .find(|step| step.node_id == node_id)
-            .and_then(|step| step.output.as_ref())
-    }
-}
 
 // the control decision a single node makes: continue to another node, or terminate the run.
 enum Flow {
@@ -295,41 +186,6 @@ fn is_unsupported(kind: &WorkflowNodeKind) -> bool {
 
 // a single node's computed result: its status, optional output, a short reason, and — for router
 // nodes — the target the walk must jump to directly instead of following transition edges.
-struct Outcome {
-    status: WorkflowStatus,
-    output: Option<Value>,
-    note: Option<String>,
-    route_override: Option<String>,
-    force_terminal: bool,
-}
-
-struct SimLoopFrame {
-    items: Vec<Value>,
-    index: usize,
-    results: Vec<Value>,
-}
-
-impl Outcome {
-    fn new(status: WorkflowStatus, output: Option<Value>, note: &str) -> Self {
-        Self {
-            status,
-            output,
-            note: Some(note.to_string()),
-            route_override: None,
-            force_terminal: false,
-        }
-    }
-
-    fn plain(status: WorkflowStatus) -> Self {
-        Self {
-            status,
-            output: None,
-            note: None,
-            route_override: None,
-            force_terminal: false,
-        }
-    }
-}
 
 // compute a single node's outcome, reusing the same evaluators as the reducer.
 fn evaluate_node(
@@ -594,3 +450,24 @@ fn stuck(steps: Vec<SimStep>, output: Value, error: String) -> SimulationRun {
 
 #[cfg(test)]
 mod tests;
+
+mod node_outcome;
+pub use node_outcome::NodeOutcome;
+
+mod node_eval_request;
+pub use node_eval_request::NodeEvalRequest;
+
+mod simulation_env;
+pub use simulation_env::SimulationEnv;
+
+mod sim_step;
+pub use sim_step::SimStep;
+
+mod simulation_run;
+pub use simulation_run::SimulationRun;
+
+mod outcome;
+use outcome::Outcome;
+
+mod sim_loop_frame;
+use sim_loop_frame::SimLoopFrame;

@@ -114,81 +114,6 @@ pub fn functions_provider_metadata() -> crate::providers::ProviderMetadata {
     }
 }
 
-/// one export as the rest of the system sees it: everything needed to type a call, pin it, and
-/// dispatch it, flattened out of the package/version/export nesting.
-///
-/// this is the compile-time and catalog view. it is deliberately denormalised — a compiler running
-/// offline against a pack's own sources has no database to join through.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct FunctionCatalogEntry {
-    pub package_id: Uuid,
-    pub package_name: String,
-    /// the namespace qualifying the package name, if it has one.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub namespace: Option<String>,
-    pub version_id: Uuid,
-    /// the package version this entry describes, monotonic per package.
-    pub version: i64,
-    pub export_id: Uuid,
-    pub export_name: String,
-    pub artifact_digest: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub description: Option<String>,
-    #[serde(default)]
-    pub input: Vec<ParameterMetadata>,
-    #[serde(default)]
-    pub output: Vec<ResultMetadata>,
-    /// the aliases currently resolving to this entry's version, e.g. `["production", "latest"]`.
-    #[serde(default)]
-    pub aliases: Vec<String>,
-}
-
-impl FunctionCatalogEntry {
-    /// the provider name this export is authored under, e.g. `functions.image_tools`.
-    ///
-    /// the namespace is folded in so two orgs' packages of the same name stay distinguishable in a
-    /// catalog that is keyed by provider name.
-    pub fn provider_name(&self) -> String {
-        match &self.namespace {
-            Some(namespace) => format!(
-                "{FUNCTIONS_NAMESPACE_PREFIX}{namespace}.{}",
-                self.package_name
-            ),
-            None => format!("{FUNCTIONS_NAMESPACE_PREFIX}{}", self.package_name),
-        }
-    }
-
-    /// the action metadata a compiler and the editor type this call against.
-    pub fn action_metadata(&self) -> ActionMetadata {
-        ActionMetadata {
-            function_name: self.export_name.clone(),
-            description: self.description.clone(),
-            parameters: self.input.clone(),
-            results: self.output.clone(),
-            // packaged code runs a container; it is never reducer-evaluable in process.
-            pure: false,
-            delivery_semantics: Default::default(),
-            agent: None,
-            authentication: None,
-            credential_scopes: None,
-        }
-    }
-
-    /// the binding a compiled workflow records so it keeps calling exactly this version.
-    pub fn binding(&self) -> FunctionBinding {
-        FunctionBinding {
-            package_id: self.package_id,
-            package_name: self.package_name.clone(),
-            namespace: self.namespace.clone(),
-            version_id: self.version_id,
-            version: self.version,
-            export_id: self.export_id,
-            export_name: self.export_name.clone(),
-            artifact_digest: self.artifact_digest.clone(),
-        }
-    }
-}
-
 /// how a caller named the version it wants.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -205,168 +130,27 @@ impl Default for FunctionVersionRef {
     }
 }
 
-/// a package plus everything published under it, as the API and UI read it.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct FunctionPackageDetail {
-    #[serde(flatten)]
-    pub package: FunctionPackage,
-    #[serde(default)]
-    pub versions: Vec<FunctionVersion>,
-    #[serde(default)]
-    pub aliases: Vec<FunctionAlias>,
-    /// exports of the version this package's default alias resolves to.
-    #[serde(default)]
-    pub exports: Vec<FunctionExport>,
-}
-
-/// a request to publish one version of a package.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct NewFunctionVersion {
-    pub package: NewFunctionPackage,
-    pub artifact_digest: String,
-    /// the parsed manifest, kept verbatim so a republish can be compared against what was published.
-    #[serde(default)]
-    pub manifest: Value,
-    pub runtime: FunctionRuntimeSpec,
-    pub exports: Vec<NewFunctionExport>,
-    /// move this alias onto the new version once it is published.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub alias: Option<String>,
-}
-
-/// the package half of a publish, which is upserted rather than required to exist.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct NewFunctionPackage {
-    pub name: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub namespace: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub description: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub org_id: Option<Uuid>,
-}
-
-/// one export in a publish request.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct NewFunctionExport {
-    pub name: String,
-    /// the entry point inside the package, e.g. `src.images.resize`.
-    pub handler: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub description: Option<String>,
-    #[serde(default)]
-    pub input: Vec<ParameterMetadata>,
-    #[serde(default)]
-    pub output: Vec<ResultMetadata>,
-    #[serde(default)]
-    pub limits: FunctionResourceLimits,
-}
-
-impl Validate for NewFunctionVersion {
-    fn validate(&self) -> Result<(), ValidationError> {
-        self.package.validate()?;
-        if !is_valid_digest(&self.artifact_digest) {
-            return Err(ValidationError::new(
-                "artifact_digest",
-                "must be a sha256: digest with 64 hexadecimal characters",
-            ));
-        }
-        identifier("runtime.runtime", &self.runtime.runtime)?;
-        optional_text("runtime.image", self.runtime.image.as_deref(), 2 * 1024)?;
-        optional_text(
-            "runtime.setup_script",
-            self.runtime.setup_script.as_deref(),
-            LONG_TEXT_MAX,
-        )?;
-        optional_text("alias", self.alias.as_deref(), SHORT_TEXT_MAX)?;
-        if self.exports.is_empty() {
-            return Err(ValidationError::new(
-                "exports",
-                "must contain at least one export",
-            ));
-        }
-        if self.exports.len() > 256 {
-            return Err(ValidationError::new(
-                "exports",
-                "must contain at most 256 exports",
-            ));
-        }
-        for (index, export) in self.exports.iter().enumerate() {
-            export.validate_at(index)?;
-        }
-        Ok(())
-    }
-}
-
-impl Validate for NewFunctionPackage {
-    fn validate(&self) -> Result<(), ValidationError> {
-        identifier("package.name", &self.name)?;
-        if let Some(namespace) = self.namespace.as_deref() {
-            identifier("package.namespace", namespace)?;
-        }
-        optional_text(
-            "package.description",
-            self.description.as_deref(),
-            LONG_TEXT_MAX,
-        )
-    }
-}
-
-impl NewFunctionExport {
-    fn validate_at(&self, index: usize) -> Result<(), ValidationError> {
-        let path = format!("exports[{index}]");
-        identifier(&format!("{path}.name"), &self.name)?;
-        required_text(&format!("{path}.handler"), &self.handler, SHORT_TEXT_MAX)?;
-        optional_text(
-            &format!("{path}.description"),
-            self.description.as_deref(),
-            LONG_TEXT_MAX,
-        )?;
-        for (field, value, max) in [
-            ("timeout_seconds", self.limits.timeout_seconds, 86_400),
-            ("memory_mb", self.limits.memory_mb, 1_048_576),
-            ("cpu_millis", self.limits.cpu_millis, 1_000_000),
-            ("pids", self.limits.pids, 65_536),
-            ("tmp_mb", self.limits.tmp_mb, 1_048_576),
-        ] {
-            if !(1..=max).contains(&value) {
-                return Err(ValidationError::new(
-                    format!("{path}.limits.{field}"),
-                    format!("must be between 1 and {max}"),
-                ));
-            }
-        }
-        Ok(())
-    }
-}
-
-/// everything a worker needs to run one export, resolved from its id.
-///
-/// the binding on a compiled action pins *which* code to run; this is *how* to run it. keeping the
-/// handler, runtime, and limits here rather than on the binding keeps a compiled workflow small and
-/// keeps one published fact in one place — a version is immutable, so resolving it is a cache hit
-/// after the first call rather than a per-invocation round trip.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct FunctionInvocationTarget {
-    pub package_name: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub namespace: Option<String>,
-    pub version: i64,
-    pub artifact_digest: String,
-    pub runtime: FunctionRuntimeSpec,
-    pub export: FunctionExport,
-}
-
-/// an adapter workflow generated for one export, so a direct http invocation runs through the same
-/// reducer path a workflow call does.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct FunctionAdapterWorkflow {
-    pub id: Uuid,
-    pub export_id: Uuid,
-    pub workflow_id: Uuid,
-    pub created_at: DateTime<Utc>,
-}
-
 #[cfg(test)]
 #[path = "functions_tests.rs"]
 mod tests;
+
+mod function_catalog_entry;
+pub use function_catalog_entry::FunctionCatalogEntry;
+
+mod function_package_detail;
+pub use function_package_detail::FunctionPackageDetail;
+
+mod new_function_version;
+pub use new_function_version::NewFunctionVersion;
+
+mod new_function_package;
+pub use new_function_package::NewFunctionPackage;
+
+mod new_function_export;
+pub use new_function_export::NewFunctionExport;
+
+mod function_invocation_target;
+pub use function_invocation_target::FunctionInvocationTarget;
+
+mod function_adapter_workflow;
+pub use function_adapter_workflow::FunctionAdapterWorkflow;

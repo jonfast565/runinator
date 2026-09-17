@@ -15,64 +15,6 @@ use runinator_tui::console as tui;
 use super::repl;
 use super::repl_completer::ReplCompleter;
 
-struct RexRapValidator;
-
-pub(super) struct ConsoleRequest<'a> {
-    pub requested_session: Option<&'a str>,
-    pub new_session: Option<&'a str>,
-    pub execute: Option<&'a str>,
-    pub file: Option<&'a Path>,
-    pub no_follow: bool,
-    pub json_output: bool,
-    pub api_base_url: &'a str,
-    pub plain: bool,
-}
-
-impl Validator for RexRapValidator {
-    fn validate(&self, line: &str) -> ValidationResult {
-        let mut stack = Vec::new();
-        let mut quote = None;
-        let mut escaped = false;
-        for character in line.chars() {
-            if escaped {
-                escaped = false;
-                continue;
-            }
-            if character == '\\' {
-                escaped = true;
-                continue;
-            }
-            if let Some(open) = quote {
-                if character == open {
-                    quote = None;
-                }
-                continue;
-            }
-            if matches!(character, '\'' | '"') {
-                quote = Some(character);
-                continue;
-            }
-            match character {
-                '{' | '[' | '(' => stack.push(character),
-                '}' if stack.last() == Some(&'{') => {
-                    stack.pop();
-                }
-                ']' if stack.last() == Some(&'[') => {
-                    stack.pop();
-                }
-                ')' if stack.last() == Some(&'(') => {
-                    stack.pop();
-                }
-                _ => {}
-            }
-        }
-        if quote.is_some() || !stack.is_empty() || line.trim_end().ends_with('\\') {
-            ValidationResult::Incomplete
-        } else {
-            ValidationResult::Complete
-        }
-    }
-}
 pub(super) async fn console(client: &Client, request: ConsoleRequest<'_>) -> Result<()> {
     let ConsoleRequest {
         requested_session,
@@ -851,3 +793,9 @@ fn one_line(source: &str) -> String {
 #[cfg(test)]
 #[path = "console_tests.rs"]
 mod tests;
+
+mod rex_rap_validator;
+use rex_rap_validator::RexRapValidator;
+
+mod console_request;
+pub(super) use console_request::ConsoleRequest;

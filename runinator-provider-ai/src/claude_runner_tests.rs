@@ -4,27 +4,6 @@ use std::sync::Mutex;
 
 use runinator_provider_support::process_runner::ProcessResult;
 
-#[derive(Default)]
-struct MemorySink {
-    events: Mutex<Vec<ProviderExecutionEvent>>,
-}
-
-impl ProviderEventSink for MemorySink {
-    fn emit(&self, event: ProviderExecutionEvent) {
-        self.events.lock().unwrap().push(event);
-    }
-}
-
-struct Runner;
-impl ProcessRunner for Runner {
-    fn run(&self, request: ProcessRequest<'_>) -> Result<ProcessResult, ProcessFailure> {
-        assert_eq!(request.command.get_program(), "test-claude");
-        let args: Vec<_> = request.command.get_args().collect();
-        assert!(args.contains(&std::ffi::OsStr::new("prompt text")));
-        assert_eq!(request.timeout, Duration::from_secs(5));
-        Err(ProcessFailure::TimedOut)
-    }
-}
 #[test]
 fn preserves_timeout_descriptor() {
     let request = ProviderExecutionRequest {
@@ -342,3 +321,11 @@ fn harness_reader_truncates_a_single_line_without_losing_the_next_line() {
     );
     assert_eq!(read_bounded_line(&mut reader, 3).unwrap(), None);
 }
+
+#[path = "claude_runner_tests/memory_sink.rs"]
+mod memory_sink;
+use memory_sink::MemorySink;
+
+#[path = "claude_runner_tests/runner.rs"]
+mod runner;
+use runner::Runner;

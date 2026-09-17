@@ -30,30 +30,6 @@ use serde::{Deserialize, Serialize};
 
 pub type DynError = Box<dyn std::error::Error + Send + Sync>;
 
-#[derive(Debug, Serialize, Deserialize)]
-pub struct StateSnapshot {
-    pub supervisor_pid: u32,
-    pub config_path: String,
-    pub started_at: String,
-    pub updated_at: String,
-    pub processes: Vec<ProcessSnapshot>,
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-pub struct ProcessSnapshot {
-    pub name: String,
-    pub status: String,
-    pub pid: Option<u32>,
-    pub restarts: u32,
-    pub uptime_seconds: Option<u64>,
-    pub last_exit_code: Option<i32>,
-    pub last_error: Option<String>,
-    pub started_at: Option<String>,
-    pub command: String,
-    pub cwd: String,
-    pub log_file: String,
-}
-
 fn read_snapshot(path: &Path) -> Result<StateSnapshot, DynError> {
     Ok(serde_json::from_str(&fs::read_to_string(path)?)?)
 }
@@ -82,194 +58,6 @@ pub enum DashboardAction {
 
 /// An alternate-screen process monitor. It owns terminal restoration so a failed draw or read
 /// cannot strand a shell in raw mode.
-pub struct SupervisorTui {
-    terminal: Terminal<CrosstermBackend<io::Stdout>>,
-    mode: DashboardMode,
-    selected: usize,
-    process_count: usize,
-    /// Number of data rows visible in the process table on the last draw. Keeping this alongside
-    /// the selection lets left/right move through a whole visible page even after a resize.
-    process_page_rows: usize,
-    history: MetricHistory,
-    active: bool,
-    _claim: crate::TerminalClaim,
-}
-
-impl SupervisorTui {
-    /// Enter the dashboard only when both streams point at a real terminal. A pipe continues to
-    /// use the script-friendly table renderer instead of emitting control sequences into output.
-    pub fn open(mode: DashboardMode) -> Result<Option<Self>, DynError> {
-        if !io::stdin().is_terminal() || !io::stdout().is_terminal() {
-            return Ok(None);
-        }
-
-        let claim = crate::claim_terminal()?;
-        enable_raw_mode()?;
-        let mut terminal = match Terminal::new(CrosstermBackend::new(io::stdout())) {
-            Ok(terminal) => terminal,
-            Err(error) => {
-                let _ = disable_raw_mode();
-                return Err(error.into());
-            }
-        };
-
-        if let Err(error) = execute!(terminal.backend_mut(), EnterAlternateScreen) {
-            let _ = disable_raw_mode();
-            let _ = terminal.show_cursor();
-            return Err(error.into());
-        }
-
-        Ok(Some(Self {
-            terminal,
-            mode,
-            selected: 0,
-            process_count: 0,
-            process_page_rows: 1,
-            history: MetricHistory::default(),
-            active: true,
-            _claim: claim,
-        }))
-    }
-
-    /// Run a read-only dashboard for a daemon that is already running.
-    pub fn watch(mut self, state_file: &Path) -> Result<(), DynError> {
-        let mut snapshot = None;
-        let mut warning = None;
-        let mut next_refresh = Instant::now();
-
-        loop {
-            if Instant::now() >= next_refresh {
-                match read_snapshot(state_file) {
-                    Ok(next) => {
-                        self.observe(&next);
-                        snapshot = Some(next);
-                        warning = None;
-                    }
-                    Err(error) => {
-                        warning = Some(format!("Waiting for supervisor state: {error}"));
-                    }
-                }
-                next_refresh = Instant::now() + REFRESH_INTERVAL;
-            }
-
-            self.draw(snapshot.as_ref(), warning.as_deref())?;
-            match self.poll_input(Duration::from_millis(100))? {
-                DashboardAction::Continue => {}
-                DashboardAction::CloseMonitor => return Ok(()),
-                DashboardAction::StopSupervisor => unreachable!("monitor cannot stop a supervisor"),
-            }
-        }
-    }
-
-    /// Record one fresh state snapshot before it is drawn. The history is intentionally local to
-    /// the UI session: snapshots are the durable contract, while rolling chart data has no reason
-    /// to outlive an attached monitor.
-    pub fn observe(&mut self, snapshot: &StateSnapshot) {
-        self.history.observe(snapshot);
-        self.process_count = snapshot.processes.len();
-        if snapshot.processes.is_empty() {
-            self.selected = 0;
-        } else {
-            self.selected = self.selected.min(snapshot.processes.len() - 1);
-        }
-    }
-
-    pub fn draw(
-        &mut self,
-        snapshot: Option<&StateSnapshot>,
-        warning: Option<&str>,
-    ) -> Result<(), DynError> {
-        let selected = self.selected;
-        let mode = self.mode;
-        let history = &self.history;
-        let mut process_page_rows = self.process_page_rows;
-        self.terminal.draw(|frame| {
-            process_page_rows = visible_process_rows(frame.area().height);
-            render(
-                frame,
-                snapshot,
-                warning,
-                selected,
-                history,
-                mode,
-                process_page_rows,
-            )
-        })?;
-        self.process_page_rows = process_page_rows;
-        Ok(())
-    }
-
-    pub fn poll_input(&mut self, timeout: Duration) -> Result<DashboardAction, DynError> {
-        if !event::poll(timeout)? {
-            return Ok(DashboardAction::Continue);
-        }
-
-        let Event::Key(key) = event::read()? else {
-            return Ok(DashboardAction::Continue);
-        };
-        if key.kind == KeyEventKind::Release {
-            return Ok(DashboardAction::Continue);
-        }
-
-        match key.code {
-            KeyCode::Up | KeyCode::Char('k') => {
-                self.selected = self.selected.saturating_sub(1);
-            }
-            KeyCode::Down | KeyCode::Char('j') => {
-                if self.process_count > 0 {
-                    self.selected = (self.selected + 1).min(self.process_count - 1);
-                }
-            }
-            KeyCode::Left | KeyCode::PageUp | KeyCode::Char('h') => {
-                self.selected = previous_process_page(self.selected, self.process_page_rows);
-            }
-            KeyCode::Right | KeyCode::PageDown | KeyCode::Char('l') => {
-                self.selected =
-                    next_process_page(self.selected, self.process_count, self.process_page_rows);
-            }
-            KeyCode::Char('q') | KeyCode::Esc => {
-                return Ok(match self.mode {
-                    DashboardMode::Monitor => DashboardAction::CloseMonitor,
-                    DashboardMode::ForegroundSupervisor => DashboardAction::StopSupervisor,
-                });
-            }
-            KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-                return Ok(match self.mode {
-                    DashboardMode::Monitor => DashboardAction::CloseMonitor,
-                    DashboardMode::ForegroundSupervisor => DashboardAction::StopSupervisor,
-                });
-            }
-            _ => {}
-        }
-        Ok(DashboardAction::Continue)
-    }
-
-    fn restore(&mut self) -> io::Result<()> {
-        if !self.active {
-            return Ok(());
-        }
-        self.active = false;
-
-        let mut result = execute!(self.terminal.backend_mut(), LeaveAlternateScreen);
-        if let Err(error) = disable_raw_mode()
-            && result.is_ok()
-        {
-            result = Err(error);
-        }
-        if let Err(error) = self.terminal.show_cursor()
-            && result.is_ok()
-        {
-            result = Err(error);
-        }
-        result
-    }
-}
-
-impl Drop for SupervisorTui {
-    fn drop(&mut self) {
-        let _ = self.restore();
-    }
-}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum StatusTone {
@@ -309,60 +97,11 @@ fn status_tone(status: &str) -> StatusTone {
     }
 }
 
-#[derive(Default)]
-struct MetricHistory {
-    healthy_percent: VecDeque<u64>,
-    restart_events: VecDeque<u64>,
-    previous_restarts: BTreeMap<String, u32>,
-}
-
-impl MetricHistory {
-    fn observe(&mut self, snapshot: &StateSnapshot) {
-        let total = snapshot.processes.len();
-        let healthy = snapshot
-            .processes
-            .iter()
-            .filter(|process| status_tone(&process.status) == StatusTone::Good)
-            .count();
-        let percent = healthy
-            .saturating_mul(100)
-            .checked_div(total)
-            .unwrap_or_default() as u64;
-        push_sample(&mut self.healthy_percent, percent);
-
-        let mut restarts = 0;
-        let mut current = BTreeMap::new();
-        for process in &snapshot.processes {
-            let previous = self
-                .previous_restarts
-                .get(&process.name)
-                .copied()
-                .unwrap_or(process.restarts);
-            restarts += u64::from(process.restarts.saturating_sub(previous));
-            current.insert(process.name.clone(), process.restarts);
-        }
-        self.previous_restarts = current;
-        push_sample(&mut self.restart_events, restarts);
-    }
-
-    fn restart_count(&self) -> u64 {
-        self.restart_events.iter().sum()
-    }
-}
-
 fn push_sample(samples: &mut VecDeque<u64>, sample: u64) {
     if samples.len() == HISTORY_CAPACITY {
         samples.pop_front();
     }
     samples.push_back(sample);
-}
-
-#[derive(Default)]
-struct Summary {
-    healthy: usize,
-    attention: usize,
-    bad: usize,
-    inactive: usize,
 }
 
 fn summarize(processes: &[ProcessSnapshot]) -> Summary {
@@ -861,3 +600,18 @@ mod tests {
         assert!(lines.iter().any(|line| line.contains("FAILED")));
     }
 }
+
+mod state_snapshot;
+pub use state_snapshot::StateSnapshot;
+
+mod process_snapshot;
+pub use process_snapshot::ProcessSnapshot;
+
+mod supervisor_tui;
+pub use supervisor_tui::SupervisorTui;
+
+mod metric_history;
+use metric_history::MetricHistory;
+
+mod summary;
+use summary::Summary;

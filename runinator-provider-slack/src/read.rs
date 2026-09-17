@@ -26,23 +26,6 @@ pub(crate) enum ParamKind {
     StrList,
 }
 
-pub(crate) struct ReadParam {
-    pub name: &'static str,
-    pub kind: ParamKind,
-    pub required: bool,
-    pub description: &'static str,
-}
-
-pub(crate) struct ReadAction {
-    pub function: &'static str,
-    pub summary: &'static str,
-    pub endpoint: &'static str,
-    pub params: &'static [ReadParam],
-    // the principal collection/object key in the response, advertised as a result.
-    pub result_key: &'static str,
-    pub result_is_array: bool,
-}
-
 // shared pagination params for cursor-based conversations.* endpoints.
 const LIMIT: ReadParam = ReadParam {
     name: "limit",
@@ -367,3 +350,9 @@ fn scalarize(param: &ReadParam, value: &Value) -> Result<String, SendableError> 
         }
     }
 }
+
+mod read_param;
+pub(crate) use read_param::ReadParam;
+
+mod read_action;
+pub(crate) use read_action::ReadAction;

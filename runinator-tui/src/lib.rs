@@ -44,19 +44,11 @@ use ansi::{AnsiParser, StyledLine};
 static DASHBOARD: OnceLock<Arc<Dashboard>> = OnceLock::new();
 static TERMINAL_ACTIVE: AtomicBool = AtomicBool::new(false);
 
-struct TerminalClaim;
-
 fn claim_terminal() -> io::Result<TerminalClaim> {
     TERMINAL_ACTIVE
         .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
         .map(|_| TerminalClaim)
         .map_err(|_| io::Error::other("a Runinator full-screen terminal is already active"))
-}
-
-impl Drop for TerminalClaim {
-    fn drop(&mut self) {
-        TERMINAL_ACTIVE.store(false, Ordering::Release);
-    }
 }
 
 /// The compact dashboard reserves exactly three rows for recent events. Retaining the same number
@@ -117,49 +109,6 @@ pub fn is_active() -> bool {
 pub fn log_line(line: impl Into<String>) {
     if let Some(dashboard) = current() {
         dashboard.log_line(line.into());
-    }
-}
-
-/// Writer for a `tracing_subscriber::fmt` layer that forwards each formatted event to the dashboard
-/// log pane. The caller still controls event filtering and any persistent log sink.
-#[derive(Clone, Copy, Default)]
-pub struct LogMakeWriter;
-
-impl<'a> MakeWriter<'a> for LogMakeWriter {
-    type Writer = LogWriter;
-
-    fn make_writer(&'a self) -> Self::Writer {
-        LogWriter::default()
-    }
-}
-
-/// Buffer one tracing event before atomically adding its non-empty physical lines to the rolling
-/// pane. A fmt layer constructs a fresh writer per event, so no mutex is needed here.
-#[derive(Default)]
-pub struct LogWriter {
-    buffer: Vec<u8>,
-}
-
-impl Write for LogWriter {
-    fn write(&mut self, data: &[u8]) -> io::Result<usize> {
-        self.buffer.extend_from_slice(data);
-        Ok(data.len())
-    }
-
-    fn flush(&mut self) -> io::Result<()> {
-        Ok(())
-    }
-}
-
-impl Drop for LogWriter {
-    fn drop(&mut self) {
-        let text = String::from_utf8_lossy(&self.buffer);
-        for line in text.lines() {
-            let line = line.trim_end();
-            if !line.is_empty() {
-                log_line(line.to_string());
-            }
-        }
     }
 }
 
@@ -229,204 +178,6 @@ pub fn spawn_with_key_handler(
 
 /// Shared mutable dashboard state. This only takes locks while the optional TUI is active; normal
 /// production telemetry continues through the binaries' existing OTEL/Prometheus instrumentation.
-pub struct Dashboard {
-    started: Instant,
-    components: RwLock<BTreeMap<&'static str, Component>>,
-    logs: RwLock<VecDeque<StyledLine>>,
-    ansi: Mutex<AnsiParser>,
-}
-
-impl Default for Dashboard {
-    fn default() -> Self {
-        Self {
-            started: Instant::now(),
-            components: RwLock::new(BTreeMap::new()),
-            logs: RwLock::new(VecDeque::with_capacity(MAX_LOG_LINES)),
-            ansi: Mutex::new(AnsiParser::default()),
-        }
-    }
-}
-
-#[derive(Clone)]
-struct Component {
-    details: Vec<String>,
-    activity: String,
-    activity_started: Instant,
-    expected_done: Option<Instant>,
-    counters: BTreeMap<&'static str, u64>,
-    gauges: BTreeMap<&'static str, i64>,
-}
-
-impl Default for Component {
-    fn default() -> Self {
-        Self {
-            details: Vec::new(),
-            activity: "starting".to_string(),
-            activity_started: Instant::now(),
-            expected_done: None,
-            counters: BTreeMap::new(),
-            gauges: BTreeMap::new(),
-        }
-    }
-}
-
-impl Dashboard {
-    fn register(&self, name: &'static str, details: impl IntoIterator<Item = String>) {
-        let mut components = self
-            .components
-            .write()
-            .unwrap_or_else(|err| err.into_inner());
-        let component = components.entry(name).or_default();
-        component.details = details.into_iter().collect();
-    }
-
-    fn activity(&self, name: &'static str, what: String, expected: Option<Duration>) {
-        let mut components = self
-            .components
-            .write()
-            .unwrap_or_else(|err| err.into_inner());
-        let component = components.entry(name).or_default();
-        component.activity = what;
-        component.activity_started = Instant::now();
-        component.expected_done = expected.map(|duration| Instant::now() + duration);
-    }
-
-    fn counter(&self, name: &'static str, metric: &'static str, amount: u64) {
-        let mut components = self
-            .components
-            .write()
-            .unwrap_or_else(|err| err.into_inner());
-        let component = components.entry(name).or_default();
-        *component.counters.entry(metric).or_default() += amount;
-    }
-
-    fn gauge(&self, name: &'static str, metric: &'static str, value: i64) {
-        let mut components = self
-            .components
-            .write()
-            .unwrap_or_else(|err| err.into_inner());
-        let component = components.entry(name).or_default();
-        component.gauges.insert(metric, value);
-    }
-
-    fn gauge_increment(&self, name: &'static str, metric: &'static str, amount: i64) {
-        let mut components = self
-            .components
-            .write()
-            .unwrap_or_else(|err| err.into_inner());
-        let component = components.entry(name).or_default();
-        *component.gauges.entry(metric).or_default() += amount;
-    }
-
-    fn log_line(&self, line: String) {
-        let line = self
-            .ansi
-            .lock()
-            .unwrap_or_else(|err| err.into_inner())
-            .parse_line(&line);
-        if line.plain.is_empty() {
-            return;
-        }
-        let mut logs = self.logs.write().unwrap_or_else(|err| err.into_inner());
-        if logs.len() == MAX_LOG_LINES {
-            logs.pop_front();
-        }
-        logs.push_back(line);
-    }
-
-    fn snapshot(&self) -> DashboardSnapshot {
-        let components = self
-            .components
-            .read()
-            .unwrap_or_else(|err| err.into_inner());
-        let logs = self
-            .logs
-            .read()
-            .unwrap_or_else(|err| err.into_inner())
-            .iter()
-            .cloned()
-            .collect();
-        DashboardSnapshot {
-            uptime: self.started.elapsed(),
-            components: components
-                .iter()
-                .map(|(name, component)| ComponentSnapshot {
-                    name,
-                    details: component.details.clone(),
-                    activity: component.activity.clone(),
-                    activity_age: component.activity_started.elapsed(),
-                    expected_remaining: component
-                        .expected_done
-                        .map(|deadline| deadline.saturating_duration_since(Instant::now())),
-                    counters: component.counters.clone(),
-                    gauges: component.gauges.clone(),
-                })
-                .collect(),
-            logs,
-        }
-    }
-}
-
-struct DashboardSnapshot {
-    uptime: Duration,
-    components: Vec<ComponentSnapshot>,
-    logs: Vec<StyledLine>,
-}
-
-struct ComponentSnapshot {
-    name: &'static str,
-    details: Vec<String>,
-    activity: String,
-    activity_age: Duration,
-    expected_remaining: Option<Duration>,
-    counters: BTreeMap<&'static str, u64>,
-    gauges: BTreeMap<&'static str, i64>,
-}
-
-/// The recent host-resource values rendered by the dashboard. The TUI owns this short window so
-/// it can graph a local process without depending on a web service or durable store.
-#[derive(Default)]
-struct ResourceHistory {
-    host_cpu: Vec<u64>,
-    host_memory: Vec<u64>,
-    host_memory_used: u64,
-    host_memory_total: u64,
-    process_cpu: Vec<u64>,
-    network_rx: Vec<u64>,
-    network_tx: Vec<u64>,
-    disk_io: Vec<u64>,
-}
-
-impl ResourceHistory {
-    fn push(&mut self, resources: &runinator_models::telemetry::ResourceTelemetry) {
-        push_history(&mut self.host_cpu, percent(resources.cpu_percent));
-        push_history(&mut self.host_memory, percent(resources.mem_percent));
-        self.host_memory_used = resources.mem_used_bytes;
-        self.host_memory_total = resources.mem_total_bytes;
-        push_history(
-            &mut self.process_cpu,
-            percent(resources.process.cpu_percent),
-        );
-        push_history(
-            &mut self.network_rx,
-            rate(resources.network.rx_bytes_per_sec),
-        );
-        push_history(
-            &mut self.network_tx,
-            rate(resources.network.tx_bytes_per_sec),
-        );
-        push_history(
-            &mut self.disk_io,
-            rate(
-                resources
-                    .disks
-                    .iter()
-                    .map(|disk| disk.read_bytes_per_sec + disk.written_bytes_per_sec)
-                    .sum(),
-            ),
-        );
-    }
-}
 
 fn push_history(history: &mut Vec<u64>, value: u64) {
     if history.len() == RESOURCE_HISTORY_CAPACITY {
@@ -990,3 +741,27 @@ mod tests {
         assert!(super::claim_terminal().is_ok());
     }
 }
+
+mod terminal_claim;
+use terminal_claim::TerminalClaim;
+
+mod log_make_writer;
+pub use log_make_writer::LogMakeWriter;
+
+mod log_writer;
+pub use log_writer::LogWriter;
+
+mod dashboard;
+pub use dashboard::Dashboard;
+
+mod component;
+use component::Component;
+
+mod dashboard_snapshot;
+use dashboard_snapshot::DashboardSnapshot;
+
+mod component_snapshot;
+use component_snapshot::ComponentSnapshot;
+
+mod resource_history;
+use resource_history::ResourceHistory;

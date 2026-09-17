@@ -3,69 +3,26 @@ use uuid::Uuid;
 
 use crate::value::Value;
 
-/// wait node-run state.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct WaitState {
-    pub deadline_unix: i64,
-    pub status: String,
-}
+mod wait_state;
+pub use wait_state::WaitState;
 
-/// wait node output recorded when the deadline elapses.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct WaitElapsedOutput {
-    pub deadline_unix: i64,
-}
+mod wait_elapsed_output;
+pub use wait_elapsed_output::WaitElapsedOutput;
 
-/// output node output recorded when an output node publishes its payload.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct OutputPayload {
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub event_type: Option<String>,
-    pub data: Value,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub artifacts: Vec<Value>,
-}
+mod output_payload;
+pub use output_payload::OutputPayload;
 
-/// input node state while it waits for a user response in the UI.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct InputState {
-    pub input: Value,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub input_id: Option<Uuid>,
-}
+mod input_state;
+pub use input_state::InputState;
 
-/// subflow node-run state.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct SubflowState {
-    pub subflow_run_id: Uuid,
-    #[serde(default)]
-    pub subflow_workflow_id: Uuid,
-    #[serde(default)]
-    pub run_name: Option<String>,
-    #[serde(default)]
-    pub reused: bool,
-}
+mod subflow_state;
+pub use subflow_state::SubflowState;
 
-/// approval node-run state.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ApprovalState {
-    pub approval: Value,
-    pub approval_id: Option<Uuid>,
-}
+mod approval_state;
+pub use approval_state::ApprovalState;
 
-/// gate node-run state.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct GateState {
-    pub gate_id: Option<Uuid>,
-    #[serde(default)]
-    pub deadline_unix: Option<i64>,
-    pub poll_interval: i64,
-}
+mod gate_state;
+pub use gate_state::GateState;
 
-/// signal node-run state.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct SignalState {
-    pub name: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub correlation_key: Option<String>,
-}
+mod signal_state;
+pub use signal_state::SignalState;

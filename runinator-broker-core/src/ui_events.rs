@@ -13,69 +13,6 @@ use uuid::Uuid;
 
 use crate::{Broker, EventMessage};
 
-/// A reusable, broker-backed publisher for best-effort UI events.
-///
-/// The publisher owns no web-service broadcast state and no engine-loop controls, so an embedded
-/// web service and a standalone engine worker can share exactly the same event path.
-#[derive(Clone)]
-pub struct UiEventPublisher {
-    broker: Arc<dyn Broker>,
-}
-
-impl UiEventPublisher {
-    pub fn new(broker: Arc<dyn Broker>) -> Self {
-        Self { broker }
-    }
-
-    /// Publish without delaying the caller's durable operation. A failed UI hint is logged, while
-    /// the durable state change that caused it remains the source of truth for a later resync.
-    pub fn emit(&self, event: UiEvent) {
-        let broker = self.broker.clone();
-        tokio::spawn(async move {
-            if let Err(err) = broker.publish_event(EventMessage::new(event)).await {
-                log::warn!("failed to publish UI event: {err}");
-            }
-        });
-    }
-}
-
-/// Process-local signals shared only by the composition root that embeds an engine.
-///
-/// They reduce the time until durable work is polled after an HTTP write. Standalone engines receive
-/// no handle and remain correct through their normal polling intervals.
-#[derive(Clone, Default)]
-pub struct EmbeddedEngineSignals {
-    workflow_vm: Arc<Notify>,
-    agent_directives: Arc<Notify>,
-}
-
-impl EmbeddedEngineSignals {
-    pub fn new() -> Self {
-        Self::default()
-    }
-
-    /// Prompt the VM driver to check its durable continuation queue now.
-    pub fn nudge_workflow_vm(&self) {
-        self.workflow_vm.notify_one();
-    }
-
-    /// Prompt the agent-directive publisher to drain its durable outbox now.
-    pub fn nudge_agent_directives(&self) {
-        self.agent_directives.notify_one();
-    }
-
-    /// A signal the engine loop can await. Kept separate from the public nudge method so callers
-    /// can only reduce latency, never take responsibility for consuming durable work.
-    pub fn workflow_vm_notifier(&self) -> Arc<Notify> {
-        self.workflow_vm.clone()
-    }
-
-    /// A signal the engine loop can await for its durable agent-directive outbox.
-    pub fn agent_directives_notifier(&self) -> Arc<Notify> {
-        self.agent_directives.clone()
-    }
-}
-
 pub use runinator_comm::{UiEvent as AppEvent, UiEventKind as AppEventKind};
 
 pub fn emit(events: &UiEventPublisher, event: AppEvent) {
@@ -160,3 +97,9 @@ mod tests {
         .expect("agent directive nudge should retain a permit");
     }
 }
+
+mod ui_event_publisher;
+pub use ui_event_publisher::UiEventPublisher;
+
+mod embedded_engine_signals;
+pub use embedded_engine_signals::EmbeddedEngineSignals;

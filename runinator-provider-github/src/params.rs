@@ -1,131 +1,47 @@
 use serde::Deserialize;
 use serde_json::Value;
 
-#[derive(Deserialize)]
-pub(crate) struct GitHubBaseParams {
-    pub token: String,
-    pub owner: String,
-    pub repo: String,
-}
+mod git_hub_base_params;
+pub(crate) use git_hub_base_params::GitHubBaseParams;
 
-#[derive(Deserialize)]
-pub(crate) struct CreatePrParams {
-    #[serde(flatten)]
-    pub base: GitHubBaseParams,
-    pub title: String,
-    pub head: String,
-    #[serde(alias = "base")]
-    pub base_branch: Option<String>,
-    pub body: Option<String>,
-    pub operation_key: Option<String>,
-}
+mod create_pr_params;
+pub(crate) use create_pr_params::CreatePrParams;
 
-#[derive(Deserialize)]
-pub(crate) struct PrNumberParams {
-    #[serde(flatten)]
-    pub base: GitHubBaseParams,
-    pub pull_number: String,
-}
+mod pr_number_params;
+pub(crate) use pr_number_params::PrNumberParams;
 
-#[derive(Deserialize)]
-pub(crate) struct MergePrParams {
-    #[serde(flatten)]
-    pub base: GitHubBaseParams,
-    pub pull_number: String,
-    pub merge_method: Option<String>,
-    pub commit_title: Option<String>,
-    pub commit_message: Option<String>,
-    pub sha: Option<String>,
-}
+mod merge_pr_params;
+pub(crate) use merge_pr_params::MergePrParams;
 
-#[derive(Deserialize)]
-pub(crate) struct IssueNumberParams {
-    #[serde(flatten)]
-    pub base: GitHubBaseParams,
-    pub issue_number: String,
-}
+mod issue_number_params;
+pub(crate) use issue_number_params::IssueNumberParams;
 
-#[derive(Deserialize)]
-pub(crate) struct RefParams {
-    #[serde(flatten)]
-    pub base: GitHubBaseParams,
-    #[serde(rename = "ref")]
-    pub git_ref: String,
-}
+mod ref_params;
+pub(crate) use ref_params::RefParams;
 
-#[derive(Deserialize)]
-pub(crate) struct AddCommentParams {
-    #[serde(flatten)]
-    pub base: GitHubBaseParams,
-    pub issue_number: String,
-    pub body: String,
-}
+mod add_comment_params;
+pub(crate) use add_comment_params::AddCommentParams;
 
-#[derive(Deserialize)]
-pub(crate) struct EnsureCommentParams {
-    #[serde(flatten)]
-    pub base: GitHubBaseParams,
-    pub issue_number: String,
-    pub body: String,
-    pub operation_key: Option<String>,
-}
+mod ensure_comment_params;
+pub(crate) use ensure_comment_params::EnsureCommentParams;
 
-#[derive(Deserialize)]
-pub(crate) struct ExactRevisionParams {
-    #[serde(flatten)]
-    pub base: GitHubBaseParams,
-    pub revision: String,
-}
+mod exact_revision_params;
+pub(crate) use exact_revision_params::ExactRevisionParams;
 
-#[derive(Deserialize)]
-pub(crate) struct WorkflowRunParams {
-    #[serde(flatten)]
-    pub base: GitHubBaseParams,
-    pub run_id: String,
-}
+mod workflow_run_params;
+pub(crate) use workflow_run_params::WorkflowRunParams;
 
-#[derive(Deserialize)]
-pub(crate) struct CheckRunParams {
-    #[serde(flatten)]
-    pub base: GitHubBaseParams,
-    pub check_run_id: String,
-}
+mod check_run_params;
+pub(crate) use check_run_params::CheckRunParams;
 
-#[derive(Deserialize)]
-pub(crate) struct RequestReviewersParams {
-    #[serde(flatten)]
-    pub base: GitHubBaseParams,
-    pub pull_number: String,
-    #[serde(default)]
-    pub reviewers: Vec<String>,
-    #[serde(default)]
-    pub team_reviewers: Vec<String>,
-}
+mod request_reviewers_params;
+pub(crate) use request_reviewers_params::RequestReviewersParams;
 
-#[derive(Deserialize)]
-pub(crate) struct AddAssigneesParams {
-    #[serde(flatten)]
-    pub base: GitHubBaseParams,
-    pub issue_number: String,
-    pub assignees: Vec<String>,
-}
+mod add_assignees_params;
+pub(crate) use add_assignees_params::AddAssigneesParams;
 
-#[derive(Deserialize)]
-pub(crate) struct DispatchParams {
-    #[serde(flatten)]
-    pub base: GitHubBaseParams,
-    pub workflow_id: String,
-    #[serde(rename = "ref")]
-    pub git_ref: String,
-    pub inputs: Option<Value>,
-}
+mod dispatch_params;
+pub(crate) use dispatch_params::DispatchParams;
 
-#[derive(Deserialize)]
-pub(crate) struct WorkflowRunsParams {
-    #[serde(flatten)]
-    pub base: GitHubBaseParams,
-    pub branch: Option<String>,
-    pub event: Option<String>,
-    pub status: Option<String>,
-    pub workflow_id: Option<String>,
-}
+mod workflow_runs_params;
+pub(crate) use workflow_runs_params::WorkflowRunsParams;

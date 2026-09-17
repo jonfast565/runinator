@@ -49,37 +49,6 @@ static PROMETHEUS: OnceLock<PrometheusHandle> = OnceLock::new();
 // otel counter handles, lazily bound to the global meter so the same stability counters also export
 // over otlp when otel is configured (a no-op meter otherwise). prometheus stays the source for the
 // /metrics endpoint; this is an additive parallel path.
-struct OtelCounters {
-    result_applied: Counter<u64>,
-    result_duplicate: Counter<u64>,
-    result_retried: Counter<u64>,
-    result_dead_lettered: Counter<u64>,
-    result_receive_errors: Counter<u64>,
-    handler_panics: Counter<u64>,
-    background_loop_failures: Counter<u64>,
-    ingress_applied: Counter<u64>,
-    ingress_retried: Counter<u64>,
-    ingress_dead_lettered: Counter<u64>,
-    triggers_fired: Counter<u64>,
-    vm_drive_ms: Histogram<f64>,
-    vm_continuations_driven: Counter<u64>,
-    vm_drive_duration_ms: Histogram<f64>,
-    vm_driver_failures: Counter<u64>,
-    loop_iterations: Counter<u64>,
-    loop_duration_ms: Histogram<f64>,
-    loop_last_success: Gauge<u64>,
-    cleanup: Counter<u64>,
-    queue_depth: Gauge<u64>,
-    queue_oldest_age: Gauge<u64>,
-    queue_claimed: Gauge<u64>,
-    queue_failures: Counter<u64>,
-    replicas: Gauge<u64>,
-    replica_heartbeat_age: Gauge<u64>,
-    replica_transitions: Counter<u64>,
-    adapter_poll_attempts: Counter<u64>,
-    adapter_poll_duration_ms: Histogram<f64>,
-    adapter_delivery_outcomes: Counter<u64>,
-}
 
 static OTEL_COUNTERS: OnceLock<OtelCounters> = OnceLock::new();
 
@@ -181,15 +150,6 @@ pub fn render_metrics() -> String {
         .get()
         .map(PrometheusHandle::render)
         .unwrap_or_default()
-}
-
-#[derive(Debug, Clone, Serialize, ToSchema)]
-pub struct StabilityCounters {
-    pub result_events_applied: u64,
-    pub result_events_duplicate: u64,
-    pub result_events_retried: u64,
-    pub result_events_dead_lettered: u64,
-    pub result_receive_errors: u64,
 }
 
 pub fn result_event_applied(applied: bool) {
@@ -415,3 +375,9 @@ pub fn snapshot() -> StabilityCounters {
         result_receive_errors: RESULT_RECEIVE_ERRORS.load(Ordering::Relaxed),
     }
 }
+
+mod otel_counters;
+use otel_counters::OtelCounters;
+
+mod stability_counters;
+pub use stability_counters::StabilityCounters;

@@ -14,45 +14,6 @@ use std::sync::{
     atomic::{AtomicBool, Ordering},
 };
 
-struct Renewal {
-    task: tokio::task::JoinHandle<()>,
-    valid: Arc<AtomicBool>,
-}
-
-struct RevocableStore<S> {
-    inner: S,
-    valid: Arc<AtomicBool>,
-}
-
-impl<S: ReadStore> ReadStore for RevocableStore<S> {
-    fn get_many(&self, ids: &[Id]) -> storage::Result<Vec<Object>> {
-        if !self.valid.load(Ordering::Acquire) {
-            return Err(storage::Error::Conflict);
-        }
-        self.inner.get_many(ids)
-    }
-
-    fn get(&self, id: Id) -> storage::Result<Object> {
-        if !self.valid.load(Ordering::Acquire) {
-            return Err(storage::Error::Conflict);
-        }
-        self.inner.get(id)
-    }
-
-    fn info(&self, id: Id) -> storage::Result<ObjectInfo> {
-        if !self.valid.load(Ordering::Acquire) {
-            return Err(storage::Error::Conflict);
-        }
-        self.inner.info(id)
-    }
-}
-
-impl Drop for Renewal {
-    fn drop(&mut self) {
-        self.task.abort();
-    }
-}
-
 impl<T: DurableWorkspaceStore> ObjectGraphStorageProvider<T> {
     pub(super) async fn cleanup_native_orphans(
         &self,
@@ -217,3 +178,9 @@ impl<T: DurableWorkspaceStore> ObjectGraphStorageProvider<T> {
         Ok(())
     }
 }
+
+mod renewal;
+use renewal::Renewal;
+
+mod revocable_store;
+use revocable_store::RevocableStore;

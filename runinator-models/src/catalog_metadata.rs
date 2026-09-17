@@ -28,95 +28,6 @@ pub enum LocationBase {
     TopLevel,
 }
 
-/// a json pointer relative to a `LocationBase`. `path` is a sequence of object keys.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-pub struct FieldLocation {
-    pub base: LocationBase,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub path: Vec<String>,
-}
-
-impl FieldLocation {
-    fn new(base: LocationBase, path: &[&str]) -> Self {
-        Self {
-            base,
-            path: path.iter().map(|segment| (*segment).to_string()).collect(),
-        }
-    }
-
-    pub fn parameters(path: &[&str]) -> Self {
-        Self::new(LocationBase::Parameters, path)
-    }
-
-    pub fn wait(path: &[&str]) -> Self {
-        Self::new(LocationBase::Wait, path)
-    }
-
-    pub fn condition(path: &[&str]) -> Self {
-        Self::new(LocationBase::Condition, path)
-    }
-
-    pub fn action(path: &[&str]) -> Self {
-        Self::new(LocationBase::Action, path)
-    }
-
-    pub fn transitions(path: &[&str]) -> Self {
-        Self::new(LocationBase::Transitions, path)
-    }
-
-    pub fn top_level(key: &str) -> Self {
-        Self::new(LocationBase::TopLevel, &[key])
-    }
-}
-
-/// a single editable field on a form. wraps the shared `ParameterMetadata` schema with an
-/// optional widget hint so the frontend can pick a richer control (`cron`, `duration`,
-/// `node_ref`, `json`, `expression`, ...).
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-pub struct UiField {
-    #[serde(flatten)]
-    pub param: ParameterMetadata,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub widget: Option<String>,
-}
-
-impl UiField {
-    pub fn new(param: ParameterMetadata) -> Self {
-        Self {
-            param,
-            widget: None,
-        }
-    }
-
-    pub fn with_widget(mut self, widget: impl Into<String>) -> Self {
-        self.widget = Some(widget.into());
-        self
-    }
-}
-
-impl From<ParameterMetadata> for UiField {
-    fn from(param: ParameterMetadata) -> Self {
-        Self::new(param)
-    }
-}
-
-/// a form field bound to a specific location within the node json.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-pub struct NodeFieldMetadata {
-    #[serde(flatten)]
-    pub field: UiField,
-    pub location: FieldLocation,
-}
-
-impl NodeFieldMetadata {
-    pub fn new(field: impl Into<UiField>, location: FieldLocation) -> Self {
-        Self {
-            field: field.into(),
-            location,
-        }
-    }
-}
-
 /// the frontend edge classification. `direct` = a `transitions.<key>` slot; `branch` = a
 /// predicate/condition branch in `transitions.branches`; `control` = a routing target stored in
 /// the node's `parameters` (toggle on/off, try body/catch/finally, join wait_for, ...).
@@ -128,133 +39,26 @@ pub enum EdgeTaxonomy {
     Control,
 }
 
-/// an outgoing edge a node kind exposes. drives the edge palette and semantic connection handles.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-pub struct NodeEdgeSlot {
-    /// stable identifier for the slot: a transition key (`on_success`), or a control key
-    /// (`on`, `off`, `body`, `catch`, `finally`, `branches`, `wait_for`, `cases`, `buckets`,
-    /// `target`, `default`).
-    pub key: String,
-    pub label: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub description: Option<String>,
-    pub taxonomy: EdgeTaxonomy,
-    /// where the target node reference is written in the node json.
-    pub target: FieldLocation,
-    /// whether the slot holds a list of targets (branches, wait_for, cases, buckets).
-    #[serde(default)]
-    pub multiple: bool,
-    #[serde(default)]
-    pub editable_label: bool,
-    #[serde(default)]
-    pub editable_condition: bool,
-    #[serde(default)]
-    pub orderable: bool,
-}
+mod field_location;
+pub use field_location::FieldLocation;
 
-/// full UI descriptor for one workflow node kind.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-pub struct WorkflowNodeKindMetadata {
-    pub kind: WorkflowNodeKind,
-    pub label: String,
-    pub icon: String,
-    pub description: String,
-    /// grouping used by the palette: `task`, `control-flow`, `concurrency`, `io`, `sync`, `terminal`.
-    pub category: String,
-    /// start/end/fail: cannot be deleted and their kind cannot change.
-    #[serde(default)]
-    pub protected: bool,
-    /// a terminal node (end/fail): has no outgoing edges.
-    #[serde(default)]
-    pub terminal: bool,
-    /// whether this kind appears in the "add node" palette (start/end/fail do not).
-    #[serde(default)]
-    pub addable: bool,
-    /// may appear inside an interrupt handler region. an opt-in allowlist: a kind that could park
-    /// or fan out inside a handler is not on it. the header editor reads this to validate a region
-    /// and to pick what it scaffolds, rather than keeping a second copy of the list.
-    #[serde(default)]
-    pub handler_safe: bool,
-    /// may be entered as a branch, body, or handler-region target — true for everything but
-    /// `start`/`end`/`fail`.
-    #[serde(default)]
-    pub runnable_entry: bool,
-    /// an entry point the runtime places a cursor on directly: `start` and `interrupt`. no edge may
-    /// target one, which is the rule the graph editor enforces when it offers a connection.
-    #[serde(default)]
-    pub entry_point: bool,
-    /// whether this kind can host user-defined predicate edges (a `when -> target` route in
-    /// `transitions.branches`, evaluated before status routing). control-flow kinds that own their
-    /// routing (condition, switch, parallel, ...) and terminals do not.
-    #[serde(default)]
-    pub supports_predicate_edges: bool,
-    #[serde(default)]
-    pub fields: Vec<NodeFieldMetadata>,
-    /// per-kind control-flow edges and semantic overrides for direct transitions. universal direct
-    /// transitions remain available in the frontend even when a kind does not rename them here.
-    #[serde(default)]
-    pub edge_slots: Vec<NodeEdgeSlot>,
-    /// output shape known from the kind's default node, for generic authoring surfaces.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub output_type: Option<crate::types::RuninatorType>,
-    /// the default node json produced when this kind is created from the palette (minus the id).
-    #[serde(default)]
-    pub default_template: Value,
-}
+mod ui_field;
+pub use ui_field::UiField;
 
-/// full UI descriptor for one workflow trigger kind. trigger config lives in the untyped
-/// `configuration` blob, so fields are plain `UiField`s (no `FieldLocation`).
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-pub struct WorkflowTriggerKindMetadata {
-    pub kind: WorkflowTriggerKind,
-    pub label: String,
-    pub icon: String,
-    pub description: String,
-    #[serde(default)]
-    pub fields: Vec<UiField>,
-    #[serde(default)]
-    pub default_configuration: Value,
-}
+mod node_field_metadata;
+pub use node_field_metadata::NodeFieldMetadata;
 
-/// one option of a small closed enum (gate kind, edge match kind, branch policy, setting kind,
-/// interrupt source, resume mode, concurrency policy).
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-pub struct EnumOptionMetadata {
-    pub value: String,
-    pub label: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub description: Option<String>,
-}
+mod node_edge_slot;
+pub use node_edge_slot::NodeEdgeSlot;
 
-impl EnumOptionMetadata {
-    pub fn new(value: &str, label: &str) -> Self {
-        Self {
-            value: value.to_string(),
-            label: label.to_string(),
-            description: None,
-        }
-    }
+mod workflow_node_kind_metadata;
+pub use workflow_node_kind_metadata::WorkflowNodeKindMetadata;
 
-    pub fn with_description(mut self, description: &str) -> Self {
-        self.description = Some(description.to_string());
-        self
-    }
-}
+mod workflow_trigger_kind_metadata;
+pub use workflow_trigger_kind_metadata::WorkflowTriggerKindMetadata;
 
-/// a named closed enum served for the frontend's `<select>` controls.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-pub struct EnumCatalogMetadata {
-    /// stable name: `gate_kind`, `match_kind`, `branch_policy`, `setting_kind`,
-    /// `interrupt_source`, `resume_mode`, `concurrency_policy`.
-    pub name: String,
-    pub options: Vec<EnumOptionMetadata>,
-}
+mod enum_option_metadata;
+pub use enum_option_metadata::EnumOptionMetadata;
 
-impl EnumCatalogMetadata {
-    pub fn new(name: &str, options: Vec<EnumOptionMetadata>) -> Self {
-        Self {
-            name: name.to_string(),
-            options,
-        }
-    }
-}
+mod enum_catalog_metadata;
+pub use enum_catalog_metadata::EnumCatalogMetadata;

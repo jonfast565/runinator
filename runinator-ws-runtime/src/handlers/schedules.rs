@@ -34,17 +34,6 @@ use runinator_ws_middleware::authz::{AuthContextExt, AuthorizationStore, AuthzCh
 
 type Reply = (StatusCode, Json<ApiResponse>);
 
-#[derive(Debug, Clone, Copy, Deserialize, Default)]
-pub struct FreezeWindowsQuery {
-    /// narrow to one org's windows; the platform-wide ones are always included, since those are
-    /// what actually freeze that org's schedules.
-    #[serde(default)]
-    pub org_id: Option<Uuid>,
-    /// list only the windows in effect right now.
-    #[serde(default)]
-    pub active: Option<bool>,
-}
-
 #[derive(Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
 pub enum CalendarScope {
@@ -52,29 +41,6 @@ pub enum CalendarScope {
     Organization,
     #[default]
     User,
-}
-
-#[derive(Deserialize, Default)]
-pub struct CalendarQuery {
-    #[serde(default)]
-    pub scope: CalendarScope,
-    #[serde(default)]
-    pub org_id: Option<Uuid>,
-    #[serde(default)]
-    pub horizon_days: Option<i64>,
-}
-
-#[derive(Deserialize)]
-pub struct CalendarSubscriptionRequest {
-    pub scope: CalendarScope,
-    #[serde(default)]
-    pub org_id: Option<Uuid>,
-}
-
-impl Validate for CalendarSubscriptionRequest {
-    fn validate(&self) -> Result<(), ValidationError> {
-        Ok(())
-    }
 }
 
 pub async fn create_calendar_subscription<
@@ -634,3 +600,12 @@ pub fn routes<T: AuthorizationStore + RuntimeStore + DefinitionStore + ScheduleS
             post(backfill_workflow_trigger::<T>).layer(Extension(pool.clone())),
         )
 }
+
+mod freeze_windows_query;
+pub use freeze_windows_query::FreezeWindowsQuery;
+
+mod calendar_query;
+pub use calendar_query::CalendarQuery;
+
+mod calendar_subscription_request;
+pub use calendar_subscription_request::CalendarSubscriptionRequest;

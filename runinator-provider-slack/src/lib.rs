@@ -21,119 +21,10 @@ use serde::Deserialize;
 
 use crate::errors::{API_ERROR, HTTP_ERROR, INVALID_JSON, INVALID_PARAMS, UNSUPPORTED_ACTION};
 
-#[derive(Deserialize)]
-struct SendMessageParams {
-    channel: String,
-    text: String,
-    team_id: Option<String>,
-    attachments: Option<Value>,
-    blocks: Option<Value>,
-    thread_ts: Option<String>,
-    mrkdwn: Option<bool>,
-    unfurl_links: Option<bool>,
-    unfurl_media: Option<bool>,
-}
-
 // typed shape of a Slack message attachment, used to validate the `attachments`
 // parameter at runtime. unknown fields are ignored (Slack accepts more), so this
 // type-checks the known fields without rejecting forward-compatible ones. the
 // matching metadata schema is attachment_type().
-#[allow(dead_code)]
-#[derive(Deserialize)]
-struct SlackAttachment {
-    fallback: Option<String>,
-    color: Option<String>,
-    pretext: Option<String>,
-    author_name: Option<String>,
-    author_link: Option<String>,
-    author_icon: Option<String>,
-    title: Option<String>,
-    title_link: Option<String>,
-    text: Option<String>,
-    fields: Option<Vec<AttachmentField>>,
-    image_url: Option<String>,
-    thumb_url: Option<String>,
-    footer: Option<String>,
-    footer_icon: Option<String>,
-    ts: Option<i64>,
-    mrkdwn_in: Option<Vec<String>>,
-}
-
-#[allow(dead_code)]
-#[derive(Deserialize)]
-struct AttachmentField {
-    title: Option<String>,
-    value: Option<String>,
-    short: Option<bool>,
-}
-
-#[derive(Clone)]
-pub struct SlackProvider;
-
-impl Provider for SlackProvider {
-    fn name(&self) -> String {
-        "slack".into()
-    }
-
-    fn metadata(&self) -> ProviderMetadata {
-        let mut actions = vec![
-            ActionMetadata::new("send_message", "Send a Slack message")
-                .with_parameters(vec![
-                    token_param(),
-                    ParameterMetadata::required("channel", RuninatorType::String),
-                    ParameterMetadata::required("text", RuninatorType::String),
-                    ParameterMetadata::optional("team_id", RuninatorType::String)
-                        .with_description("Slack workspace id retained in the delivery receipt for inbound thread correlation."),
-                    ParameterMetadata::optional(
-                        "attachments",
-                        RuninatorType::array(attachment_type()),
-                    )
-                    .with_description("Slack attachment array (typed)."),
-                    ParameterMetadata::optional(
-                        "blocks",
-                        RuninatorType::array(RuninatorType::map(RuninatorType::Any)),
-                    )
-                    .with_description("Slack block kit array."),
-                    ParameterMetadata::optional("thread_ts", RuninatorType::String),
-                    ParameterMetadata::optional("mrkdwn", RuninatorType::Boolean),
-                    ParameterMetadata::optional("unfurl_links", RuninatorType::Boolean),
-                    ParameterMetadata::optional("unfurl_media", RuninatorType::Boolean),
-                ])
-                .with_results(slack_results()),
-        ];
-        actions.extend(read::read_action_metadata());
-        for action in &mut actions {
-            action.authentication = Some(ActionAuthenticationMetadata::required(vec![
-                ActionAuthenticationAlternative::secrets(["token"]),
-            ]));
-        }
-
-        ProviderMetadata {
-            name: self.name(),
-            actions,
-            metadata: ProviderRuntimeMetadata {
-                credential_scopes: vec!["slack".into()],
-                contract: None,
-                execution_profile: Default::default(),
-            },
-        }
-    }
-
-    fn execute_service(
-        &self,
-        request: ProviderExecutionRequest,
-        _sink: Option<Arc<dyn ProviderEventSink>>,
-        _token: runinator_plugin::cancel::CancellationToken,
-    ) -> Result<TaskExecutionResult, SendableError> {
-        match request.action_function.as_str() {
-            "send" | "send_message" => send_message(request),
-            other => match read::find_action(other) {
-                Some(def) => read::execute_read(def, &request),
-                None => Err(UNSUPPORTED_ACTION.error(other)),
-            },
-        }
-    }
-}
 
 fn send_message(request: ProviderExecutionRequest) -> Result<TaskExecutionResult, SendableError> {
     let params: SendMessageParams = parse_params(&request)?;
@@ -336,3 +227,15 @@ fn slack_results() -> Vec<ResultMetadata> {
 
 #[cfg(test)]
 mod tests;
+
+mod send_message_params;
+use send_message_params::SendMessageParams;
+
+mod slack_attachment;
+use slack_attachment::SlackAttachment;
+
+mod attachment_field;
+use attachment_field::AttachmentField;
+
+mod slack_provider;
+pub use slack_provider::SlackProvider;

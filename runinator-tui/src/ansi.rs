@@ -5,89 +5,6 @@ use ratatui::{
     text::{Line, Span},
 };
 
-#[derive(Clone, Debug, Default, Eq, PartialEq)]
-pub(crate) struct StyledLine {
-    pub(crate) plain: String,
-    spans: Vec<StyledSpan>,
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-struct StyledSpan {
-    text: String,
-    style: Style,
-}
-
-impl StyledLine {
-    pub(crate) fn to_ratatui_line(&self) -> Line<'static> {
-        Line::from(
-            self.spans
-                .iter()
-                .map(|span| Span::styled(span.text.clone(), span.style))
-                .collect::<Vec<_>>(),
-        )
-    }
-}
-
-#[derive(Debug, Default)]
-pub(crate) struct AnsiParser {
-    style: Style,
-    pending_escape: Vec<u8>,
-}
-
-impl AnsiParser {
-    pub(crate) fn parse_line(&mut self, input: &str) -> StyledLine {
-        let mut result = StyledLine::default();
-        let mut text = String::new();
-        let mut combined = std::mem::take(&mut self.pending_escape);
-        combined.extend_from_slice(input.as_bytes());
-        let source = String::from_utf8_lossy(&combined);
-        let bytes = source.as_bytes();
-        let mut index = 0;
-        while index < bytes.len() {
-            if bytes[index] == 0x1b {
-                self.flush(&mut result, &mut text);
-                let Some(end) = skip_escape(bytes, index, &mut self.style) else {
-                    self.pending_escape.extend_from_slice(&bytes[index..]);
-                    break;
-                };
-                index = end;
-                continue;
-            }
-            let Some(character) = source[index..].chars().next() else {
-                break;
-            };
-            index += character.len_utf8();
-            match character {
-                '\t' => text.push(' '),
-                character if !character.is_control() => text.push(character),
-                _ => {}
-            }
-        }
-        self.flush(&mut result, &mut text);
-        while result.plain.ends_with(' ') {
-            result.plain.pop();
-            if let Some(last) = result.spans.last_mut() {
-                last.text.pop();
-                if last.text.is_empty() {
-                    result.spans.pop();
-                }
-            }
-        }
-        result
-    }
-
-    fn flush(&self, result: &mut StyledLine, text: &mut String) {
-        if text.is_empty() {
-            return;
-        }
-        result.plain.push_str(text);
-        result.spans.push(StyledSpan {
-            text: std::mem::take(text),
-            style: self.style,
-        });
-    }
-}
-
 fn skip_escape(bytes: &[u8], start: usize, style: &mut Style) -> Option<usize> {
     let kind = bytes.get(start + 1).copied()?;
     if kind == b'[' {
@@ -241,3 +158,12 @@ mod tests {
         assert_eq!(second.spans[0].style.fg, Some(Color::Red));
     }
 }
+
+mod styled_line;
+pub(crate) use styled_line::StyledLine;
+
+mod styled_span;
+use styled_span::StyledSpan;
+
+mod ansi_parser;
+pub(crate) use ansi_parser::AnsiParser;

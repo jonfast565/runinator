@@ -17,164 +17,6 @@ use crate::{
     store::{ReadStore, WriteStore, load, save},
 };
 
-#[derive(Clone, Debug)]
-pub struct PathNode {
-    pub inode_number: u64,
-    pub inode_id: Id,
-    pub children: Option<Id>,
-}
-impl PathNode {
-    pub fn child<S: ReadStore + ?Sized>(&self, store: &S, name: &str) -> Result<Option<Id>> {
-        radix::get(store, self.children, name.as_bytes())
-    }
-    pub fn entries<S: ReadStore + ?Sized>(&self, store: &S) -> Result<Vec<(String, Id)>> {
-        let mut entries = Vec::new();
-        radix::visit(store, self.children, &mut |name, id| {
-            let name = std::str::from_utf8(name).map_err(|_| corrupt("invalid projected name"))?;
-            validate_name(name)?;
-            entries.push((name.to_owned(), id));
-            Ok(())
-        })?;
-        Ok(entries)
-    }
-}
-impl Binary for PathNode {
-    fn encode(&self) -> Result<Vec<u8>> {
-        if self.inode_number == 0 {
-            return Err(invalid("invalid projection inode"));
-        }
-        let mut e = Encoder::new();
-        e.u64(self.inode_number);
-        e.id(self.inode_id);
-        e.optional_id(self.children);
-        e.finish()
-    }
-    fn decode(bytes: &[u8]) -> Result<Self> {
-        let mut d = Decoder::new(bytes)?;
-        let node = Self {
-            inode_number: d.u64()?,
-            inode_id: d.id()?,
-            children: d.optional_id()?,
-        };
-        if node.inode_number == 0 {
-            return Err(corrupt("invalid projection inode"));
-        }
-        d.finish()?;
-        Ok(node)
-    }
-}
-
-/// Stable structural name for one directory entry.
-///
-/// The parent is an inode number, not another path object, so moving an
-/// ancestor does not invalidate this ref. The basename is the only string
-/// retained and is bounded by the namespace component limit.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct PathRef {
-    pub parent_inode: u64,
-    pub name: String,
-}
-
-impl Binary for PathRef {
-    fn encode(&self) -> Result<Vec<u8>> {
-        if self.parent_inode == 0 {
-            return Err(invalid("path ref parent inode is zero"));
-        }
-        validate_name(&self.name)?;
-        let mut e = Encoder::new();
-        e.u64(self.parent_inode);
-        e.string(&self.name)?;
-        e.finish()
-    }
-
-    fn decode(bytes: &[u8]) -> Result<Self> {
-        let mut d = Decoder::new(bytes)?;
-        let parent_inode = d.u64()?;
-        let name = d.string(255)?;
-        if parent_inode == 0 || validate_name(&name).is_err() {
-            return Err(corrupt("invalid structural path ref"));
-        }
-        d.finish()?;
-        Ok(Self { parent_inode, name })
-    }
-}
-
-/// Canonically sorted set of structural PathRef object IDs.
-#[derive(Clone, Debug)]
-pub struct RefList {
-    pub refs: Vec<Id>,
-}
-
-impl Binary for RefList {
-    fn encode(&self) -> Result<Vec<u8>> {
-        if self.refs.len() < 2 || self.refs.len() > 1_000_000 {
-            return Err(invalid("invalid hard-link ref list"));
-        }
-        let mut e = Encoder::new();
-        e.u32(self.refs.len() as u32);
-        let mut previous: Option<Id> = None;
-        for id in &self.refs {
-            if previous.is_some_and(|p| p >= *id) {
-                return Err(invalid("noncanonical hard-link ref list"));
-            }
-            e.id(*id);
-            previous = Some(*id);
-        }
-        e.finish()
-    }
-
-    fn decode(bytes: &[u8]) -> Result<Self> {
-        let mut d = Decoder::new(bytes)?;
-        let count = d.u32()?;
-        if !(2..=1_000_000).contains(&count) {
-            return Err(corrupt("invalid hard-link ref list"));
-        }
-        let mut refs = Vec::with_capacity(count as usize);
-        let mut previous: Option<Id> = None;
-        for _ in 0..count {
-            let id = d.id()?;
-            if previous.is_some_and(|p| p >= id) {
-                return Err(corrupt("noncanonical hard-link ref list"));
-            }
-            refs.push(id);
-            previous = Some(id);
-        }
-        d.finish()?;
-        Ok(Self { refs })
-    }
-}
-
-#[derive(Clone, Debug)]
-pub struct PathProjection {
-    pub root: Id,
-    /// inode-number -> RefList for inodes having more than one pathname.
-    pub hardlinks: Option<Id>,
-    /// directory-inode -> PathRef that names that directory in its parent.
-    /// Root inode 1 intentionally has no entry.
-    pub directory_refs: Option<Id>,
-}
-
-impl Binary for PathProjection {
-    fn encode(&self) -> Result<Vec<u8>> {
-        let mut e = Encoder::new();
-        e.id(self.root);
-        e.optional_id(self.hardlinks);
-        e.optional_id(self.directory_refs);
-        e.finish()
-    }
-
-    fn decode(bytes: &[u8]) -> Result<Self> {
-        let mut d = Decoder::new(bytes)?;
-        let value = Self {
-            root: d.id()?,
-            hardlinks: d.optional_id()?,
-            directory_refs: d.optional_id()?,
-        };
-        d.finish()?;
-        Ok(value)
-    }
-}
-
 fn validate_name(name: &str) -> Result<()> {
     if name.is_empty()
         || name.len() > 255
@@ -774,3 +616,15 @@ pub fn replace_hardlink_ref<S: WriteStore + ?Sized>(
     *slot = new_ref;
     set_hardlink_refs(store, projection, inode, refs)
 }
+
+mod path_node;
+pub use path_node::PathNode;
+
+mod path_ref;
+pub use path_ref::PathRef;
+
+mod ref_list;
+pub use ref_list::RefList;
+
+mod path_projection;
+pub use path_projection::PathProjection;

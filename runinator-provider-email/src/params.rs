@@ -2,48 +2,11 @@ use runinator_models::value::Value;
 use serde::Deserialize;
 use uuid::Uuid;
 
-#[derive(Deserialize, Default)]
-pub(crate) struct EmailSendParams {
-    #[serde(default)]
-    pub to: String,
-    #[serde(default)]
-    pub from: Option<String>,
-    #[serde(default)]
-    pub subject: String,
-    #[serde(default)]
-    pub body: Option<String>,
-    #[serde(default)]
-    pub html_body: Option<String>,
-    #[serde(default)]
-    pub smtp_host: Option<String>,
-    #[serde(default)]
-    pub smtp_port: Option<u16>,
-    #[serde(default)]
-    pub smtp_user: Option<String>,
-    #[serde(default)]
-    pub smtp_password: Option<String>,
-}
+mod email_send_params;
+pub(crate) use email_send_params::EmailSendParams;
 
-#[derive(Deserialize, Default)]
-pub(crate) struct NotificationSendParams {
-    #[serde(default)]
-    pub title: String,
-    #[serde(default)]
-    pub body: Option<String>,
-    #[serde(default)]
-    pub severity: Option<String>,
-    #[serde(default)]
-    pub target: Option<String>,
-    #[serde(default)]
-    pub metadata: Value,
-}
+mod notification_send_params;
+pub(crate) use notification_send_params::NotificationSendParams;
 
-pub(crate) struct NotificationPayload {
-    pub workflow_run_id: Option<Uuid>,
-    pub channel: String,
-    pub severity: String,
-    pub title: String,
-    pub body: Option<String>,
-    pub target: Option<String>,
-    pub metadata: Value,
-}
+mod notification_payload;
+pub(crate) use notification_payload::NotificationPayload;

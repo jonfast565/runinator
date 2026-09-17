@@ -49,17 +49,6 @@ pub async fn announce_agent_replica(
 }
 
 /// Heartbeat the agent through broker ingress and explicitly retire it on a clean stop.
-pub(crate) struct AgentHeartbeat {
-    pub(crate) broker: Arc<dyn Broker>,
-    pub(crate) availability: AgentAvailability,
-    pub(crate) heartbeat_interval: std::time::Duration,
-    pub(crate) replica_id: Uuid,
-    pub(crate) runtime_id: String,
-    pub(crate) reporter: Arc<StatusReporter>,
-    pub(crate) report_context: Arc<AgentReportContext>,
-    pub(crate) telemetry: Option<Arc<TelemetryCollector>>,
-    pub(crate) shutdown: Shutdown,
-}
 
 pub(crate) fn spawn_agent_heartbeat(heartbeat: AgentHeartbeat) -> JoinHandle<()> {
     let AgentHeartbeat {
@@ -129,40 +118,6 @@ async fn mark_offline(
     {
         reporter.record_error(format!("failed to mark replica offline: {err}"));
     }
-}
-
-#[derive(Clone)]
-pub(crate) struct AgentAvailability {
-    instance_id: String,
-    display_name: Option<String>,
-    host: Option<String>,
-    version: Option<String>,
-    attributes: Value,
-    providers: crate::provider_repository::ProviderFactory,
-    publish_providers: bool,
-}
-
-impl AgentAvailability {
-    pub(crate) fn from_config(config: &AgentRuntimeConfig) -> Self {
-        Self {
-            instance_id: config.instance_id.clone(),
-            display_name: config.display_name.clone(),
-            host: config.advertise_host.clone(),
-            version: config.version.clone(),
-            attributes: registration_attributes(config),
-            providers: Arc::clone(&config.providers),
-            publish_providers: config.publish_providers,
-        }
-    }
-}
-struct AvailabilityPublication<'a> {
-    availability: &'a AgentAvailability,
-    reporter: &'a StatusReporter,
-    report_context: &'a AgentReportContext,
-    replica_id: Uuid,
-    runtime_id: &'a str,
-    heartbeat_seq: u64,
-    telemetry: Option<&'a TelemetryCollector>,
 }
 
 async fn publish_agent_availability(
@@ -300,3 +255,12 @@ mod tests {
         );
     }
 }
+
+mod agent_heartbeat;
+pub(crate) use agent_heartbeat::AgentHeartbeat;
+
+mod agent_availability;
+pub(crate) use agent_availability::AgentAvailability;
+
+mod availability_publication;
+use availability_publication::AvailabilityPublication;

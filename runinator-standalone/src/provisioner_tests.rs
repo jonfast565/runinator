@@ -1,52 +1,6 @@
 use super::*;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
-struct TestFactory {
-    tracker: StateTracker,
-}
-
-struct ExitingFactory {
-    tracker: StateTracker,
-    spawns: AtomicUsize,
-}
-
-#[async_trait]
-impl RuntimeFactory for ExitingFactory {
-    async fn spawn(
-        &self,
-        kind: ReplicaKind,
-        node_id: String,
-        _spec: NodeSpec,
-        shutdown: Arc<Notify>,
-    ) -> Result<JoinHandle<()>, SendableError> {
-        self.tracker.starting(&node_id, kind.as_str());
-        self.tracker.running(&node_id);
-        let attempt = self.spawns.fetch_add(1, Ordering::SeqCst);
-        Ok(tokio::spawn(async move {
-            if attempt > 0 {
-                shutdown.notified().await;
-            }
-        }))
-    }
-}
-
-#[async_trait]
-impl RuntimeFactory for TestFactory {
-    async fn spawn(
-        &self,
-        kind: ReplicaKind,
-        node_id: String,
-        _spec: NodeSpec,
-        shutdown: Arc<Notify>,
-    ) -> Result<JoinHandle<()>, SendableError> {
-        self.tracker.starting(&node_id, kind.as_str());
-        self.tracker.running(&node_id);
-        Ok(tokio::spawn(async move {
-            shutdown.notified().await;
-        }))
-    }
-}
-
 #[tokio::test]
 async fn scales_runtime_tasks_up_and_down() {
     let tracker = StateTracker::new();
@@ -100,3 +54,11 @@ async fn replaces_a_runtime_that_exits_unexpectedly() {
     shutdown.notify_waiters();
     supervisor.await.unwrap();
 }
+
+#[path = "provisioner_tests/test_factory.rs"]
+mod test_factory;
+use test_factory::TestFactory;
+
+#[path = "provisioner_tests/exiting_factory.rs"]
+mod exiting_factory;
+use exiting_factory::ExitingFactory;

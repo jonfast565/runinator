@@ -21,39 +21,6 @@ use crate::{
     state::CommandCenterState,
 };
 
-#[derive(Debug, Clone, Serialize)]
-pub struct DevPackFile {
-    pub path: String,
-    pub kind: String,
-    pub size_bytes: Option<u64>,
-    pub modified_at: Option<DateTime<Utc>>,
-}
-
-#[derive(Debug, Clone, Serialize)]
-pub struct DevPackInspectResult {
-    pub path: String,
-    pub files: Vec<DevPackFile>,
-    pub workflows: Vec<WorkflowDefinition>,
-    pub triggers: Vec<WorkflowTrigger>,
-    pub settings_count: usize,
-    // identities (no values) of the setting slots the pack would write on import.
-    pub settings: Vec<SettingSummary>,
-}
-
-#[derive(Debug, Clone, Serialize)]
-pub struct DevPackApplyResult {
-    pub path: String,
-    pub files: Vec<DevPackFile>,
-    pub imported: PackImportResult,
-}
-
-#[derive(Debug, Clone, Serialize)]
-pub struct DevPackTextFile {
-    pub path: String,
-    pub content: String,
-    pub modified_at: Option<DateTime<Utc>>,
-}
-
 /// Upload a pack which has already been compiled into the shared pack ZIP wire format.
 /// Compilation intentionally remains on the client (the desktop dev panel and runinatorctl do it
 /// from local source); this command only proxies bytes selected in the Command Center UI.
@@ -254,3 +221,15 @@ pub(crate) fn rexrap_context_workflow_signatures(
     runinator_pack::source::rexrap_context_workflow_signatures(path, current_source)
         .map_err(|err| command_error(err.to_string()))
 }
+
+mod dev_pack_file;
+pub use dev_pack_file::DevPackFile;
+
+mod dev_pack_inspect_result;
+pub use dev_pack_inspect_result::DevPackInspectResult;
+
+mod dev_pack_apply_result;
+pub use dev_pack_apply_result::DevPackApplyResult;
+
+mod dev_pack_text_file;
+pub use dev_pack_text_file::DevPackTextFile;

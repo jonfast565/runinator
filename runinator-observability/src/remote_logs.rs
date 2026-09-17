@@ -26,19 +26,6 @@ thread_local! {
     static EXPORTING: Cell<bool> = const { Cell::new(false) };
 }
 
-struct Publisher {
-    sender: SyncSender<RuntimeLogRecord>,
-    queued_bytes: Arc<AtomicUsize>,
-    dropped: Arc<AtomicU64>,
-    source: String,
-}
-
-#[derive(Clone)]
-struct RemoteConfig {
-    base: String,
-    token: Option<String>,
-}
-
 static PUBLISHER: OnceLock<Publisher> = OnceLock::new();
 static CONFIG: OnceLock<RemoteConfig> = OnceLock::new();
 
@@ -143,84 +130,6 @@ pub fn prepare(source: &str) -> Option<RemoteLogMakeWriter> {
     })
 }
 
-#[derive(Clone)]
-pub struct RemoteLogMakeWriter {
-    source: String,
-}
-
-impl<'a> MakeWriter<'a> for RemoteLogMakeWriter {
-    type Writer = RemoteLogWriter;
-
-    fn make_writer(&'a self) -> Self::Writer {
-        RemoteLogWriter {
-            source: self.source.clone(),
-            buffer: Vec::new(),
-        }
-    }
-}
-
-pub struct RemoteLogWriter {
-    source: String,
-    buffer: Vec<u8>,
-}
-
-impl Write for RemoteLogWriter {
-    fn write(&mut self, data: &[u8]) -> io::Result<usize> {
-        self.buffer.extend_from_slice(data);
-        Ok(data.len())
-    }
-
-    fn flush(&mut self) -> io::Result<()> {
-        Ok(())
-    }
-}
-
-impl Drop for RemoteLogWriter {
-    fn drop(&mut self) {
-        if EXPORTING.with(Cell::get) {
-            return;
-        }
-        let Some(publisher) = PUBLISHER.get() else {
-            return;
-        };
-        for line in String::from_utf8_lossy(&self.buffer)
-            .lines()
-            .map(str::trim)
-            .filter(|line| !line.is_empty())
-        {
-            let message = line.chars().take(16 * 1024).collect::<String>();
-            let size = message.len();
-            let previous = publisher.queued_bytes.fetch_add(size, Ordering::Relaxed);
-            if previous.saturating_add(size) > MEMORY_LIMIT {
-                publisher.queued_bytes.fetch_sub(size, Ordering::Relaxed);
-                publisher.dropped.fetch_add(1, Ordering::Relaxed);
-                continue;
-            }
-            let (level, target) = level_and_target(&message, &self.source);
-            let record = RuntimeLogRecord {
-                event_id: uuid::Uuid::now_v7(),
-                occurred_at: chrono::Utc::now(),
-                source: self.source.clone(),
-                runtime_id: env::var("RUNINATOR_RUNTIME_ID").ok(),
-                replica_id: env::var("RUNINATOR_REPLICA_ID")
-                    .ok()
-                    .and_then(|value| value.parse().ok()),
-                level: level.into(),
-                target,
-                message,
-                dropped_before: 0,
-                workflow_run_id: None,
-                effect_id: None,
-                trace_id: None,
-            };
-            if publisher.sender.try_send(record).is_err() {
-                publisher.queued_bytes.fetch_sub(size, Ordering::Relaxed);
-                publisher.dropped.fetch_add(1, Ordering::Relaxed);
-            }
-        }
-    }
-}
-
 fn level_and_target(line: &str, fallback_target: &str) -> (&'static str, String) {
     for (needle, level) in [
         (" ERROR ", "error"),
@@ -253,3 +162,15 @@ pub fn dropped() -> u64 {
 #[cfg(test)]
 #[path = "remote_logs_tests.rs"]
 mod tests;
+
+mod publisher;
+use publisher::Publisher;
+
+mod remote_config;
+use remote_config::RemoteConfig;
+
+mod remote_log_make_writer;
+pub use remote_log_make_writer::RemoteLogMakeWriter;
+
+mod remote_log_writer;
+pub use remote_log_writer::RemoteLogWriter;

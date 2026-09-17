@@ -18,74 +18,6 @@ application/vnd.docker.distribution.manifest.v2+json, \
 application/vnd.docker.distribution.manifest.list.v2+json";
 const CONTENT_DIGEST: &str = "docker-content-digest";
 
-#[derive(Debug, Clone, Eq, Ord, PartialEq, PartialOrd)]
-struct ReleaseKey {
-    timestamp: u64,
-    major: u64,
-    minor: u64,
-    build: u64,
-    tag: String,
-}
-
-#[derive(Debug)]
-struct RegistryLocation {
-    api_base: Url,
-    repository_prefix: String,
-}
-
-impl RegistryLocation {
-    fn parse(value: &str) -> Result<Self> {
-        let value = value.trim().trim_end_matches('/');
-        anyhow::ensure!(!value.is_empty(), "local registry cannot be empty");
-        anyhow::ensure!(
-            !value.contains("://"),
-            "--local-registry must be a Docker registry reference without a URL scheme"
-        );
-
-        let (authority, repository_prefix) = value
-            .split_once('/')
-            .map_or((value, ""), |(authority, prefix)| (authority, prefix));
-        anyhow::ensure!(!authority.is_empty(), "local registry host cannot be empty");
-        let api_base = Url::parse(&format!("http://{authority}/"))
-            .with_context(|| format!("invalid local registry '{value}'"))?;
-        anyhow::ensure!(
-            api_base.host_str().is_some(),
-            "local registry '{value}' has no host"
-        );
-
-        Ok(Self {
-            api_base,
-            repository_prefix: repository_prefix.trim_matches('/').to_string(),
-        })
-    }
-
-    fn repository(&self, image_name: &str) -> String {
-        if self.repository_prefix.is_empty() {
-            image_name.to_string()
-        } else {
-            format!("{}/{image_name}", self.repository_prefix)
-        }
-    }
-
-    fn endpoint(&self, repository: &str, operation: &str, reference: Option<&str>) -> Url {
-        let mut url = self.api_base.clone();
-        {
-            let mut segments = url
-                .path_segments_mut()
-                .expect("an HTTP registry URL supports path segments");
-            segments.push("v2");
-            for segment in repository.split('/') {
-                segments.push(segment);
-            }
-            segments.push(operation);
-            if let Some(reference) = reference {
-                segments.push(reference);
-            }
-        }
-        url
-    }
-}
-
 /// Removes timestamped Runinator manifests beyond `retention` for every image pushed by this
 /// deployment. Explicit/custom tags and any digest they share remain untouched.
 pub fn prune_release_images<'a>(
@@ -327,3 +259,9 @@ mod tests {
         );
     }
 }
+
+mod release_key;
+use release_key::ReleaseKey;
+
+mod registry_location;
+use registry_location::RegistryLocation;

@@ -11,49 +11,14 @@ pub enum ReplayVerdict {
     Blocked,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ReplaySeedReceipt {
-    pub node_id: String,
-    pub effect_id: Uuid,
-    pub attempt: u32,
-}
+mod replay_seed_receipt;
+pub use replay_seed_receipt::ReplaySeedReceipt;
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ReplayAction {
-    pub node_id: String,
-    pub provider: String,
-    pub function: String,
-    pub declared_idempotency_key: Option<Value>,
-    /// Historical resolved key, not a guarantee about the next execution.
-    pub previous_resolved_idempotency_keys: Vec<Value>,
-    pub reason: String,
-}
+mod replay_action;
+pub use replay_action::ReplayAction;
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ReplayPlan {
-    pub source_run_id: Uuid,
-    pub from_step_id: Option<String>,
-    pub workflow_snapshot: Option<WorkflowDefinition>,
-    pub seeded_receipts: Vec<ReplaySeedReceipt>,
-    pub actions: Vec<ReplayAction>,
-    pub reasons: Vec<String>,
-    pub verdict: ReplayVerdict,
-    pub plan_fingerprint: String,
-}
+mod replay_plan;
+pub use replay_plan::ReplayPlan;
 
-impl ReplayPlan {
-    pub fn fingerprint(payload: &[u8]) -> String {
-        use sha2::{Digest, Sha256};
-        format!("sha256:{}", hex::encode(Sha256::digest(payload)))
-    }
-}
-
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
-pub struct ReplayOptions {
-    #[serde(default)]
-    pub from_step_id: Option<String>,
-    #[serde(default)]
-    pub plan_fingerprint: Option<String>,
-    #[serde(default)]
-    pub acknowledge_review: bool,
-}
+mod replay_options;
+pub use replay_options::ReplayOptions;

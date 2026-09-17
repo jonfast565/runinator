@@ -21,51 +21,6 @@ const DELTA_DICT: u8 = 2;
 const NONE_BASE: u32 = u32::MAX;
 const MIN_DELTA_SAVING: usize = 64;
 
-#[derive(Clone, Debug)]
-pub struct Member {
-    pub id: Id,
-    pub raw: Vec<u8>,
-    #[cfg(test)]
-    pub is_delta: bool,
-}
-
-#[derive(Default)]
-pub struct Pending {
-    members: Vec<(Id, Vec<u8>)>,
-    bytes: usize,
-}
-impl Pending {
-    pub fn would_overflow(&self, n: usize) -> bool {
-        !self.members.is_empty()
-            && (self.bytes.saturating_add(n) > BLOCK_LIMIT || self.members.len() >= MAX_MEMBERS)
-    }
-    pub fn push(&mut self, id: Id, raw: &[u8]) -> Result<()> {
-        if raw.is_empty() || raw.len() > crate::codec::MAX_OBJECT {
-            return Err(invalid("invalid chunk block member"));
-        }
-        self.bytes = self
-            .bytes
-            .checked_add(raw.len())
-            .ok_or_else(|| invalid("chunk group size overflow"))?;
-        self.members.push((id, raw.to_vec()));
-        Ok(())
-    }
-    pub fn take(&mut self) -> Result<Option<(Vec<u8>, Vec<Id>)>> {
-        let Some(members) = self.take_members() else {
-            return Ok(None);
-        };
-        encode(&members).map(Some)
-    }
-
-    pub(crate) fn take_members(&mut self) -> Option<Vec<(Id, Vec<u8>)>> {
-        if self.members.is_empty() {
-            return None;
-        }
-        self.bytes = 0;
-        Some(std::mem::take(&mut self.members))
-    }
-}
-
 fn dictionary(members: &[(Id, Vec<u8>)]) -> Vec<u8> {
     let mut out = Vec::with_capacity(DICT_LIMIT);
     for (_, raw) in members {
@@ -236,13 +191,6 @@ pub fn encode(members: &[(Id, Vec<u8>)]) -> Result<(Vec<u8>, Vec<Id>)> {
     Ok((out, members.iter().map(|m| m.0).collect()))
 }
 
-struct Meta<'a> {
-    id: Id,
-    raw_len: usize,
-    codec: u8,
-    base: u32,
-    payload: &'a [u8],
-}
 fn parse(raw: &[u8]) -> Result<(Vec<u8>, Vec<Meta<'_>>)> {
     if raw.len() < 16 || &raw[..8] != MAGIC {
         return Err(corrupt("bad chunk block"));
@@ -363,3 +311,12 @@ pub fn table(raw: &[u8]) -> Result<Vec<Member>> {
 #[cfg(test)]
 #[path = "chunkblock_tests.rs"]
 mod tests;
+
+mod member;
+pub use member::Member;
+
+mod pending;
+pub use pending::Pending;
+
+mod meta;
+use meta::Meta;

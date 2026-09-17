@@ -15,19 +15,6 @@ use crate::validation::{
 
 use crate::value::Value;
 
-/// one notebook.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct ConsoleSession {
-    pub id: Uuid,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub org_id: Option<Uuid>,
-    pub name: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub created_by: Option<Uuid>,
-    pub created_at: DateTime<Utc>,
-    pub updated_at: DateTime<Utc>,
-}
-
 /// what the classifier decided a cell was.
 ///
 /// persisted rather than re-derived so a reader can see why a cell did or did not start a run
@@ -109,107 +96,30 @@ impl TryFrom<&str> for ConsoleCellStatus {
     }
 }
 
-/// one cell.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct ConsoleCell {
-    pub id: Uuid,
-    pub session_id: Uuid,
-    /// ordering within the session.
-    pub position: i64,
-    /// the name this cell's result binds to, if the author gave one.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub label: Option<String>,
-    pub source: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub kind: Option<ConsoleCellKind>,
-    pub status: ConsoleCellStatus,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub result: Option<Value>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub error: Option<String>,
-    /// set only for a cell that became a scratch workflow.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub workflow_run_id: Option<Uuid>,
-    pub created_at: DateTime<Utc>,
-    pub updated_at: DateTime<Utc>,
-}
-
-/// one name in a session's scope.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct ConsoleBinding {
-    pub id: Uuid,
-    pub session_id: Uuid,
-    pub name: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub cell_id: Option<Uuid>,
-    pub value: Value,
-    pub created_at: DateTime<Utc>,
-    pub updated_at: DateTime<Utc>,
-}
-
-/// One active top-level REXRAP definition in a console session.
-///
-/// Source is stored per declaration rather than reconstructing it from a notebook cell: the active
-/// library has latest-successful semantics, and a cell may define several names independently.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct ConsoleFunction {
-    pub id: Uuid,
-    pub session_id: Uuid,
-    /// The cell whose successful execution most recently published this definition.
-    pub cell_id: Uuid,
-    pub name: String,
-    pub is_task: bool,
-    pub source: String,
-    pub created_at: DateTime<Utc>,
-    pub updated_at: DateTime<Utc>,
-}
-
-/// A definition candidate published by a successful console cell.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct NewConsoleFunction {
-    pub name: String,
-    pub is_task: bool,
-    pub source: String,
-}
-
-/// a session with everything under it, as the API and UI read it.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct ConsoleSessionDetail {
-    #[serde(flatten)]
-    pub session: ConsoleSession,
-    #[serde(default)]
-    pub cells: Vec<ConsoleCell>,
-    #[serde(default)]
-    pub bindings: Vec<ConsoleBinding>,
-    #[serde(default)]
-    pub functions: Vec<ConsoleFunction>,
-}
-
-/// what a caller sends to create or replace a cell.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct NewConsoleCell {
-    pub source: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub label: Option<String>,
-    /// append when omitted.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub position: Option<i64>,
-}
-
-impl Validate for NewConsoleCell {
-    fn validate(&self) -> Result<(), ValidationError> {
-        required_text("source", &self.source, LONG_TEXT_MAX)?;
-        optional_text("label", self.label.as_deref(), SHORT_TEXT_MAX)?;
-        if self.position.is_some_and(|position| position < 0) {
-            return Err(ValidationError::new("position", "must not be negative"));
-        }
-        Ok(())
-    }
-}
-
 /// the reserved workflow-name prefix a console scratch workflow carries.
 pub const CONSOLE_WORKFLOW_PREFIX: &str = "console.";
 
 /// the `metadata.managed_by` value a console scratch workflow carries, so it is filtered out of the
 /// workflow list the same way a function adapter is.
 pub const CONSOLE_MANAGED_BY: &str = "console";
+
+mod console_session;
+pub use console_session::ConsoleSession;
+
+mod console_cell;
+pub use console_cell::ConsoleCell;
+
+mod console_binding;
+pub use console_binding::ConsoleBinding;
+
+mod console_function;
+pub use console_function::ConsoleFunction;
+
+mod new_console_function;
+pub use new_console_function::NewConsoleFunction;
+
+mod console_session_detail;
+pub use console_session_detail::ConsoleSessionDetail;
+
+mod new_console_cell;
+pub use new_console_cell::NewConsoleCell;

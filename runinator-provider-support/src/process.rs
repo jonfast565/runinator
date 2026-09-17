@@ -8,61 +8,7 @@ use std::thread::{self, JoinHandle};
 use runinator_models::runs::ProviderExecutionEvent;
 use runinator_plugin::provider::ProviderEventSink;
 
-/// Output retained while both streams were also emitted to the provider event sink.
-#[derive(Debug, Default)]
-pub struct ProcessOutput {
-    pub stdout: String,
-    pub stderr: String,
-}
-
 /// Concurrent drains for one child's piped stdout and stderr.
-pub struct ProcessOutputPump {
-    stdout: Option<JoinHandle<String>>,
-    stderr: Option<JoinHandle<String>>,
-}
-
-impl ProcessOutputPump {
-    /// Take both piped streams from `child` and begin draining them immediately.
-    pub fn start(
-        child: &mut Child,
-        sink: Option<Arc<dyn ProviderEventSink>>,
-    ) -> std::io::Result<Self> {
-        Self::start_with_retention(child, sink, true)
-    }
-
-    /// Begin draining and streaming without retaining a second in-memory copy.
-    pub fn start_discarding(
-        child: &mut Child,
-        sink: Option<Arc<dyn ProviderEventSink>>,
-    ) -> std::io::Result<Self> {
-        Self::start_with_retention(child, sink, false)
-    }
-
-    fn start_with_retention(
-        child: &mut Child,
-        sink: Option<Arc<dyn ProviderEventSink>>,
-        retain: bool,
-    ) -> std::io::Result<Self> {
-        let stdout = child.stdout.take().ok_or_else(|| {
-            std::io::Error::other("child stdout is unavailable; configure it as piped")
-        })?;
-        let stderr = child.stderr.take().ok_or_else(|| {
-            std::io::Error::other("child stderr is unavailable; configure it as piped")
-        })?;
-        Ok(Self {
-            stdout: Some(spawn_stream(stdout, "stdout", sink.clone(), retain)),
-            stderr: Some(spawn_stream(stderr, "stderr", sink, retain)),
-        })
-    }
-
-    /// Wait for both streams to reach EOF and return the retained text.
-    pub fn finish(mut self) -> ProcessOutput {
-        ProcessOutput {
-            stdout: join_stream(self.stdout.take()),
-            stderr: join_stream(self.stderr.take()),
-        }
-    }
-}
 
 fn join_stream(handle: Option<JoinHandle<String>>) -> String {
     handle
@@ -125,3 +71,9 @@ fn emit(sink: Option<&Arc<dyn ProviderEventSink>>, stream: &str, content: String
 #[cfg(test)]
 #[path = "process_tests.rs"]
 mod tests;
+
+mod process_output;
+pub use process_output::ProcessOutput;
+
+mod process_output_pump;
+pub use process_output_pump::ProcessOutputPump;

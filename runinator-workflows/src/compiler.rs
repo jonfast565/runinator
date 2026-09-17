@@ -28,29 +28,6 @@ use crate::{
     parse_wait_parameters, target_slots, validate_workflow,
 };
 
-/// A symbolic basic-block address.  Keeping these until the final layout pass means graph
-/// traversal never needs to guess an instruction offset while it is lowering a node.
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
-struct Label(String);
-
-impl Label {
-    fn node(node_id: &str) -> Self {
-        Self(node_id.to_owned())
-    }
-
-    /// A synthetic block owned by `node_id`. The `#` prefix cannot collide with a graph node id,
-    /// which validation restricts to identifier characters.
-    fn synthetic(node_id: &str, suffix: &str) -> Self {
-        Self(format!("{node_id}#{suffix}"))
-    }
-
-    /// The edge slot a synthetic block stands for (`on_failure`, `on_timeout`, ...), or `None` for
-    /// a node's own block. This is what tells an operator watching a cursor which edge it took.
-    fn edge_slot(&self) -> Option<&str> {
-        self.0.split_once('#').map(|(_, slot)| slot)
-    }
-}
-
 /// An instruction before its graph targets have been laid out.
 enum PendingInstruction {
     Instruction(Box<WorkflowInstruction>),
@@ -102,15 +79,6 @@ impl PendingInstruction {
 
 /// A node-owned basic block.  The block boundary is also the unit recorded in the module's
 /// source map, so every instruction generated for a graph node has one stable graph location.
-struct BasicBlock {
-    label: Label,
-    node_id: String,
-    instructions: Vec<PendingInstruction>,
-    /// Whether an interrupt may suspend a thread positioned here.
-    interruptible: bool,
-    /// Offset within the block of its trailing exit sequence, when it has one.
-    exit_offset: Option<usize>,
-}
 
 /// Compile a validated authoring graph into an immutable module with a mandatory graph source map.
 pub fn compile_workflow_module(
@@ -2151,3 +2119,9 @@ mod tests {
         }
     }
 }
+
+mod label;
+use label::Label;
+
+mod basic_block;
+use basic_block::BasicBlock;

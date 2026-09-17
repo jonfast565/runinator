@@ -10,38 +10,7 @@ use std::{
     io::Read,
     sync::atomic::{AtomicU64, Ordering},
 };
-struct Random {
-    remaining: u64,
-    state: u64,
-}
-impl Read for Random {
-    fn read(&mut self, output: &mut [u8]) -> std::io::Result<usize> {
-        let n = self.remaining.min(output.len() as u64) as usize;
-        for chunk in output[..n].chunks_mut(8) {
-            self.state ^= self.state << 13;
-            self.state ^= self.state >> 7;
-            self.state ^= self.state << 17;
-            chunk.copy_from_slice(&self.state.to_le_bytes()[..chunk.len()]);
-        }
-        self.remaining -= n as u64;
-        Ok(n)
-    }
-}
-struct Count<S> {
-    inner: S,
-    bytes: AtomicU64,
-}
-impl<S: ReadStore> ReadStore for Count<S> {
-    fn info(&self, id: Id) -> storage::Result<ObjectInfo> {
-        self.inner.info(id)
-    }
-    fn get(&self, id: Id) -> storage::Result<Object> {
-        let object = self.inner.get(id)?;
-        self.bytes
-            .fetch_add(object.bytes.len() as u64, Ordering::Relaxed);
-        Ok(object)
-    }
-}
+
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let gib: u64 = std::env::args()
         .nth(1)
@@ -123,3 +92,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     );
     Ok(())
 }
+
+#[path = "qualification/random.rs"]
+mod random;
+use random::Random;
+
+#[path = "qualification/count.rs"]
+mod count;
+use count::Count;

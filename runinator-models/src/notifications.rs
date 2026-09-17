@@ -8,63 +8,6 @@ use crate::validation::{
     LONG_TEXT_MAX, SHORT_TEXT_MAX, Validate, ValidationError, optional_text, required_text,
 };
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Notification {
-    pub id: Uuid,
-    #[serde(default)]
-    pub org_id: Option<Uuid>,
-    #[serde(default)]
-    pub source_resource_type: Option<ResourceType>,
-    #[serde(default)]
-    pub source_resource_id: Option<Uuid>,
-    #[serde(default)]
-    pub workflow_run_id: Option<Uuid>,
-    #[serde(default)]
-    pub workflow_node_id: Option<String>,
-    pub channel: String,
-    pub severity: String,
-    pub title: String,
-    #[serde(default)]
-    pub body: Option<String>,
-    #[serde(default)]
-    pub target: Option<String>,
-    #[serde(default)]
-    pub metadata: Value,
-    #[serde(default)]
-    pub interaction: Option<NotificationInteraction>,
-    #[serde(default)]
-    pub read_at: Option<DateTime<Utc>>,
-    pub created_at: DateTime<Utc>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
-pub struct NewNotification {
-    #[serde(default)]
-    pub org_id: Option<Uuid>,
-    #[serde(default)]
-    pub source_resource_type: Option<ResourceType>,
-    #[serde(default)]
-    pub source_resource_id: Option<Uuid>,
-    #[serde(default)]
-    pub workflow_run_id: Option<Uuid>,
-    #[serde(default)]
-    pub workflow_node_id: Option<String>,
-    pub channel: String,
-    #[serde(default = "default_severity")]
-    pub severity: String,
-    pub title: String,
-    #[serde(default)]
-    pub body: Option<String>,
-    #[serde(default)]
-    pub target: Option<String>,
-    #[serde(default)]
-    pub metadata: Value,
-    /// stable key making engine-emitted notifications idempotent: a policy that keeps matching on
-    /// every scan tick collapses onto one row instead of one per tick. `None` for manual posts.
-    #[serde(default)]
-    pub dedupe_key: Option<String>,
-}
-
 fn default_severity() -> String {
     "info".to_string()
 }
@@ -218,122 +161,6 @@ impl TryFrom<&str> for NotificationChannel {
     }
 }
 
-/// a declarative rule mapping a runtime failure condition to a severity and a delivery channel.
-/// `workflow_id = None` makes the policy global (every workflow); pack-managed policies carry
-/// `managed_by = "rexrap"` and are reconciled wholesale on import, the same way triggers are.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct NotificationPolicy {
-    pub id: Uuid,
-    #[serde(default)]
-    pub org_id: Option<Uuid>,
-    #[serde(default)]
-    pub workflow_id: Option<Uuid>,
-    pub name: String,
-    pub event: NotificationEvent,
-    #[serde(default)]
-    pub severity: NotificationSeverity,
-    #[serde(default)]
-    pub channel: NotificationChannel,
-    #[serde(default)]
-    pub provider: Option<String>,
-    #[serde(default)]
-    pub function: Option<String>,
-    #[serde(default)]
-    pub interactive: bool,
-    #[serde(default)]
-    pub target: Option<String>,
-    /// threshold for duration events, or the warning window for `secret_expiring`.
-    /// `secret_expiring` defaults to the engine's 30-day window when omitted.
-    #[serde(default)]
-    pub threshold_seconds: Option<i64>,
-    #[serde(default = "default_true")]
-    pub enabled: bool,
-    #[serde(default)]
-    pub managed_by: Option<String>,
-    #[serde(default)]
-    pub configuration: Value,
-    pub created_at: DateTime<Utc>,
-    pub updated_at: DateTime<Utc>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
-pub struct NewNotificationPolicy {
-    #[serde(default)]
-    pub org_id: Option<Uuid>,
-    #[serde(default)]
-    pub workflow_id: Option<Uuid>,
-    pub name: String,
-    pub event: NotificationEvent,
-    #[serde(default)]
-    pub severity: NotificationSeverity,
-    #[serde(default)]
-    pub channel: NotificationChannel,
-    #[serde(default)]
-    pub provider: Option<String>,
-    #[serde(default)]
-    pub function: Option<String>,
-    #[serde(default)]
-    pub interactive: bool,
-    #[serde(default)]
-    pub target: Option<String>,
-    #[serde(default)]
-    pub threshold_seconds: Option<i64>,
-    #[serde(default = "default_true")]
-    pub enabled: bool,
-    #[serde(default)]
-    pub managed_by: Option<String>,
-    #[serde(default)]
-    pub configuration: Value,
-}
-
-impl Validate for NewNotification {
-    fn validate(&self) -> Result<(), ValidationError> {
-        required_text("channel", &self.channel, SHORT_TEXT_MAX)?;
-        required_text("severity", &self.severity, SHORT_TEXT_MAX)?;
-        required_text("title", &self.title, SHORT_TEXT_MAX)?;
-        optional_text("body", self.body.as_deref(), LONG_TEXT_MAX)?;
-        optional_text("target", self.target.as_deref(), 2 * 1024)?;
-        optional_text("dedupe_key", self.dedupe_key.as_deref(), SHORT_TEXT_MAX)
-    }
-}
-
-impl Validate for NewNotificationPolicy {
-    fn validate(&self) -> Result<(), ValidationError> {
-        required_text("name", &self.name, SHORT_TEXT_MAX)?;
-        optional_text("target", self.target.as_deref(), 2 * 1024)?;
-        optional_text("managed_by", self.managed_by.as_deref(), SHORT_TEXT_MAX)?;
-        optional_text("provider", self.provider.as_deref(), SHORT_TEXT_MAX)?;
-        optional_text("function", self.function.as_deref(), SHORT_TEXT_MAX)?;
-        if self.provider.is_some() != self.function.is_some() {
-            return Err(ValidationError::new(
-                "provider",
-                "provider and function must be supplied together",
-            ));
-        }
-        if let Some(provider) = &self.provider {
-            required_text("provider", provider, SHORT_TEXT_MAX)?;
-        }
-        if let Some(function) = &self.function {
-            required_text("function", function, SHORT_TEXT_MAX)?;
-        }
-        if let Some(seconds) = self.threshold_seconds
-            && seconds <= 0
-        {
-            return Err(ValidationError::new(
-                "threshold_seconds",
-                "must be greater than zero",
-            ));
-        }
-        if self.event.is_duration_based() && self.threshold_seconds.is_none() {
-            return Err(ValidationError::new(
-                "threshold_seconds",
-                "is required for duration-based events",
-            ));
-        }
-        Ok(())
-    }
-}
-
 fn default_true() -> bool {
     true
 }
@@ -375,34 +202,6 @@ impl TryFrom<&str> for NotificationDeliveryStatus {
     }
 }
 
-/// one external-channel send attributed to a notification. tracked durably so a delivery that fails
-/// in the worker is visible rather than lost, and so the result consumer has a row to settle.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct NotificationDelivery {
-    pub id: Uuid,
-    pub notification_id: Uuid,
-    #[serde(default)]
-    pub policy_id: Option<Uuid>,
-    pub channel: NotificationChannel,
-    #[serde(default)]
-    pub provider: Option<String>,
-    #[serde(default)]
-    pub function: Option<String>,
-    #[serde(default)]
-    pub target: Option<String>,
-    #[serde(default)]
-    pub workflow_run_id: Option<Uuid>,
-    pub status: NotificationDeliveryStatus,
-    #[serde(default)]
-    pub attempts: i64,
-    #[serde(default)]
-    pub last_error: Option<String>,
-    #[serde(default)]
-    pub response: Value,
-    pub created_at: DateTime<Utc>,
-    pub updated_at: DateTime<Utc>,
-}
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum NotificationInteractionState {
@@ -440,14 +239,6 @@ pub enum NotificationInteractionInput {
     None,
     Text,
     Json,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct NotificationInteractionAction {
-    pub id: String,
-    pub label: String,
-    #[serde(default = "default_interaction_input")]
-    pub input: NotificationInteractionInput,
 }
 
 fn default_interaction_input() -> NotificationInteractionInput {
@@ -507,50 +298,32 @@ impl NotificationInteractionTarget {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct NotificationInteraction {
-    pub id: Uuid,
-    pub notification_id: Uuid,
-    #[serde(default)]
-    pub org_id: Option<Uuid>,
-    pub target: NotificationInteractionTarget,
-    pub actions: Vec<NotificationInteractionAction>,
-    pub state: NotificationInteractionState,
-    #[serde(default)]
-    pub resolved_action: Option<String>,
-    #[serde(default)]
-    pub resolved_by: Option<Uuid>,
-    #[serde(default)]
-    pub resolved_at: Option<DateTime<Utc>>,
-    pub created_at: DateTime<Utc>,
-    pub updated_at: DateTime<Utc>,
-}
+mod notification;
+pub use notification::Notification;
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct ConversationReceipt {
-    pub source: String,
-    pub scope: String,
-    pub correlation_key: String,
-}
+mod new_notification;
+pub use new_notification::NewNotification;
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ExternalInteractionResponse {
-    pub actor_subject: String,
-    pub action_id: String,
-    #[serde(default)]
-    pub input: Value,
-    #[serde(default)]
-    pub message_id: Option<String>,
-}
+mod notification_policy;
+pub use notification_policy::NotificationPolicy;
 
-#[derive(Debug, Clone, Deserialize)]
-pub struct NotificationInteractionActionRequest {
-    #[serde(default)]
-    pub input: Value,
-}
+mod new_notification_policy;
+pub use new_notification_policy::NewNotificationPolicy;
 
-impl Validate for NotificationInteractionActionRequest {
-    fn validate(&self) -> Result<(), ValidationError> {
-        Ok(())
-    }
-}
+mod notification_delivery;
+pub use notification_delivery::NotificationDelivery;
+
+mod notification_interaction_action;
+pub use notification_interaction_action::NotificationInteractionAction;
+
+mod notification_interaction;
+pub use notification_interaction::NotificationInteraction;
+
+mod conversation_receipt;
+pub use conversation_receipt::ConversationReceipt;
+
+mod external_interaction_response;
+pub use external_interaction_response::ExternalInteractionResponse;
+
+mod notification_interaction_action_request;
+pub use notification_interaction_action_request::NotificationInteractionActionRequest;

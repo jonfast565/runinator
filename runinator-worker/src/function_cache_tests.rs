@@ -220,19 +220,6 @@ fn eviction_drops_the_least_recently_used_entry_first() {
     let _ = std::fs::remove_dir_all(root);
 }
 
-struct ArtifactSource {
-    bytes: Vec<u8>,
-    calls: Arc<std::sync::atomic::AtomicUsize>,
-}
-
-#[async_trait::async_trait]
-impl FunctionArtifactSource for ArtifactSource {
-    async fn download_function_artifact(&self, _digest: &str) -> runinator_api::Result<Vec<u8>> {
-        self.calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-        Ok(self.bytes.clone())
-    }
-}
-
 #[tokio::test]
 async fn staging_validates_injected_bytes_and_reuses_only_verified_packages() {
     use std::sync::atomic::{AtomicUsize, Ordering};
@@ -267,19 +254,6 @@ async fn staging_validates_injected_bytes_and_reuses_only_verified_packages() {
     assert!(!root.path().join("0".repeat(64)).join(READY_MARKER).exists());
 }
 
-struct MissingExport;
-#[async_trait::async_trait]
-impl FunctionExportResolver for MissingExport {
-    async fn resolve_function_export(
-        &self,
-        _id: uuid::Uuid,
-    ) -> runinator_api::Result<runinator_models::functions::FunctionInvocationTarget> {
-        Err(runinator_api::ApiError::UnexpectedResponse(
-            "export was removed".into(),
-        ))
-    }
-}
-
 #[tokio::test]
 async fn unresolved_exports_do_not_download_or_stage_code() {
     let calls = Arc::new(std::sync::atomic::AtomicUsize::new(0));
@@ -307,3 +281,11 @@ async fn unresolved_exports_do_not_download_or_stage_code() {
     assert!(error.to_string().contains("export was removed"));
     assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 0);
 }
+
+#[path = "function_cache_tests/artifact_source.rs"]
+mod artifact_source;
+use artifact_source::ArtifactSource;
+
+#[path = "function_cache_tests/missing_export.rs"]
+mod missing_export;
+use missing_export::MissingExport;

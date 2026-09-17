@@ -2,18 +2,8 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-#[derive(Debug, Serialize, Deserialize)]
-pub struct TaskResponse {
-    pub success: bool,
-    pub message: String,
-}
+mod task_response;
+pub use task_response::TaskResponse;
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct TaskInput {
-    pub id: Option<Uuid>,
-    pub name: String,
-    pub cron_schedule: String,
-    pub action_name: String,
-    pub timeout: i64,
-    pub next_execution: Option<DateTime<Utc>>,
-}
+mod task_input;
+pub use task_input::TaskInput;

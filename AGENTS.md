@@ -223,6 +223,11 @@ Authorization is deny-by-default and hierarchical; `docs/permissions.md` is the 
 
 - Build UI workflows with purpose-built, rich editors for their domain inputs. Do not make a raw JSON
   form the primary experience; reserve JSON for clearly labeled advanced or escape-hatch inputs.
+- Keep each Rust source file to one file-scope `struct` or `trait`. Keep that type's inherent and
+  trait implementations with its definition; supporting enums, aliases, constants, functions, and
+  nested modules may remain alongside it when they are genuinely shared. Name the file after the
+  primary type in snake case. Run `scripts/check-rust-type-layout.py` when adding or moving Rust
+  types; CI enforces the same check.
 - Require guard clauses for preconditions, missing/invalid values, and inapplicable work: use early
   `return`, `continue`, or Rust `let ... else` to keep the main path flat. Do not nest the main path
   inside success-only `if`/`else` branches when a guard preserves behavior. Extract a focused helper

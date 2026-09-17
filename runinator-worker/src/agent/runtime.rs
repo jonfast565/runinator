@@ -26,146 +26,9 @@ use crate::agent::supervisor::{SupervisedLoop, run_supervised};
 use crate::worker::load_libraries;
 
 /// entry point for hosting an agent.
-pub struct AgentRuntime;
-
-impl AgentRuntime {
-    /// start the lifecycle and return immediately. must be called from within a tokio runtime
-    /// context.
-    ///
-    /// only configuration that cannot be retried fails here (an unusable service URL, an unreadable
-    /// plugin path). anything the agent could recover from — the service being down, the broker
-    /// being unreachable — is retried inside the lifecycle and reported through `observer`, so a
-    /// host never has to implement its own retry policy to be robust.
-    pub fn start(
-        config: AgentRuntimeConfig,
-        observer: Arc<dyn AgentObserver>,
-    ) -> Result<AgentHandle, SendableError> {
-        let api_client = AsyncApiClient::with_credentials(
-            StaticLocator::new(config.service_url.clone()),
-            config.api_key.clone(),
-        )
-        .map_err(|err| crate::errors::API_CLIENT.error(err))?;
-        let libraries = Arc::new(load_libraries(&config.dll_paths)?);
-        let result_outbox: Arc<dyn ResultOutbox> = Arc::new(
-            FileOutbox::open(&config.outbox_file)
-                .map_err(|err| crate::errors::API_CLIENT.error(err))?,
-        );
-
-        let report_context = Arc::new(AgentReportContext::new(
-            &config,
-            (config.providers)().len(),
-            Arc::clone(&result_outbox),
-        ));
-        let reporter = Arc::new(StatusReporter::new(
-            observer,
-            AgentStatus {
-                running: false,
-                replica_id: None,
-                connection: AgentConnection::Registering,
-                broker_connection: Some(config.broker_description.clone()),
-                metrics: Default::default(),
-                last_error: None,
-                last_error_at: None,
-            },
-        ));
-        let telemetry = config
-            .sample_telemetry
-            .then(|| Arc::new(TelemetryCollector::new()));
-        let shutdown = Shutdown::new();
-        let state = reporter.subscribe();
-
-        let task = tokio::spawn(run_lifecycle(AgentLifecycle {
-            config,
-            api_client,
-            libraries,
-            telemetry: telemetry.clone(),
-            report_context,
-            result_outbox,
-            reporter: Arc::clone(&reporter),
-            shutdown: shutdown.clone(),
-        }));
-
-        Ok(AgentHandle {
-            shutdown,
-            task,
-            state,
-            telemetry,
-        })
-    }
-}
 
 /// a running agent. dropping it detaches the lifecycle rather than stopping it; call
 /// [`AgentHandle::shutdown`] or [`AgentHandle::stop`] to actually stop.
-pub struct AgentHandle {
-    shutdown: Shutdown,
-    task: JoinHandle<Result<(), SendableError>>,
-    state: watch::Receiver<AgentStatus>,
-    telemetry: Option<Arc<TelemetryCollector>>,
-}
-
-impl AgentHandle {
-    /// request shutdown without waiting. safe to call more than once, and before the lifecycle has
-    /// reached any particular stage.
-    pub fn shutdown(&self) {
-        self.shutdown.trigger();
-    }
-
-    /// await the lifecycle's own exit. returns what it returned: an error only when the agent could
-    /// not be brought up at all.
-    pub async fn wait(&mut self) -> Result<(), SendableError> {
-        match (&mut self.task).await {
-            Ok(result) => result,
-            Err(err) if err.is_cancelled() => Ok(()),
-            Err(err) => Err(crate::errors::LOOP_JOIN.error(err)),
-        }
-    }
-
-    /// request shutdown and drain within `grace`, abandoning the task if it overruns. the worker
-    /// loop bounds its own in-flight work, so an overrun means something below it is wedged.
-    pub async fn stop(&mut self, grace: Duration) -> Result<(), SendableError> {
-        self.shutdown.trigger();
-        match tokio::time::timeout(grace, self.wait()).await {
-            Ok(result) => result,
-            Err(_) => {
-                self.task.abort();
-                Err(crate::errors::SHUTDOWN_TIMEOUT.error(format!("{}s", grace.as_secs())))
-            }
-        }
-    }
-
-    pub fn status(&self) -> AgentStatus {
-        self.state.borrow().clone()
-    }
-
-    pub fn replica_id(&self) -> Option<Uuid> {
-        self.state.borrow().replica_id
-    }
-
-    /// watch lifecycle transitions without implementing an observer.
-    pub fn watch(&self) -> watch::Receiver<AgentStatus> {
-        self.state.clone()
-    }
-
-    /// the host telemetry collector, when this agent samples it. exposed so a host can mirror
-    /// cpu/memory at its own cadence rather than the heartbeat's.
-    pub fn telemetry(&self) -> Option<Arc<TelemetryCollector>> {
-        self.telemetry.clone()
-    }
-
-    pub fn is_finished(&self) -> bool {
-        self.task.is_finished()
-    }
-}
-struct AgentLifecycle {
-    config: AgentRuntimeConfig,
-    api_client: AsyncApiClient<StaticLocator>,
-    libraries: Arc<std::collections::HashMap<String, runinator_plugin::plugin::Plugin>>,
-    telemetry: Option<Arc<TelemetryCollector>>,
-    report_context: Arc<AgentReportContext>,
-    result_outbox: Arc<dyn ResultOutbox>,
-    reporter: Arc<StatusReporter>,
-    shutdown: Shutdown,
-}
 
 async fn run_lifecycle(lifecycle: AgentLifecycle) -> Result<(), SendableError> {
     let AgentLifecycle {
@@ -393,3 +256,12 @@ fn settle(reporter: &StatusReporter, liveness_task: Option<JoinHandle<()>>) {
         }
     });
 }
+
+mod agent_runtime;
+pub use agent_runtime::AgentRuntime;
+
+mod agent_handle;
+pub use agent_handle::AgentHandle;
+
+mod agent_lifecycle;
+use agent_lifecycle::AgentLifecycle;

@@ -4,69 +4,8 @@ use super::*;
 use runinator_models::workflow_vm::WorkflowJournalEntry;
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Clone, Deserialize)]
-struct EvalSuite {
-    #[serde(default)]
-    workflow: Option<String>,
-    cases: Vec<EvalCase>,
-}
-
-#[derive(Debug, Clone, Deserialize)]
-struct EvalCase {
-    name: String,
-    #[serde(default)]
-    workflow: Option<String>,
-    #[serde(default)]
-    input: Value,
-    #[serde(default)]
-    expect: Option<EvalExpectation>,
-    #[serde(default)]
-    judge: Option<EvalJudge>,
-}
-
-#[derive(Debug, Clone, Deserialize)]
-struct EvalExpectation {
-    #[serde(default)]
-    pointer: String,
-    equals: Value,
-}
-
-#[derive(Debug, Clone, Deserialize)]
-struct EvalJudge {
-    workflow: String,
-    #[serde(default)]
-    input: Value,
-    #[serde(default = "default_judge_pointer")]
-    pass_pointer: String,
-}
-
 fn default_judge_pointer() -> String {
     "/pass".into()
-}
-
-#[derive(Debug, Clone, Serialize)]
-struct EvalCaseReport {
-    name: String,
-    workflow: String,
-    run_id: Uuid,
-    status: String,
-    passed: bool,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    failure: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    judge_run_id: Option<Uuid>,
-    prompt_assets: Value,
-}
-
-#[derive(Debug, Clone, Serialize)]
-struct EvalReport {
-    eval_id: Uuid,
-    pack: String,
-    total: usize,
-    passed: usize,
-    failed: usize,
-    agreement_rate: f64,
-    cases: Vec<EvalCaseReport>,
 }
 
 pub(super) async fn workflows_eval(
@@ -348,3 +287,21 @@ mod tests {
         assert_eq!(cases[0].1.name, "approve");
     }
 }
+
+mod eval_suite;
+use eval_suite::EvalSuite;
+
+mod eval_case;
+use eval_case::EvalCase;
+
+mod eval_expectation;
+use eval_expectation::EvalExpectation;
+
+mod eval_judge;
+use eval_judge::EvalJudge;
+
+mod eval_case_report;
+use eval_case_report::EvalCaseReport;
+
+mod eval_report;
+use eval_report::EvalReport;

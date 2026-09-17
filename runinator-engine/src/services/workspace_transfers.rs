@@ -12,98 +12,6 @@ use std::sync::{
 };
 use uuid::Uuid;
 
-pub(crate) struct WorkspaceTransferProgress {
-    pub(super) alive: Arc<AtomicBool>,
-    pub(super) bytes: Arc<AtomicU64>,
-    task: tokio::task::JoinHandle<()>,
-}
-impl Drop for WorkspaceTransferProgress {
-    fn drop(&mut self) {
-        self.task.abort();
-        self.alive.store(false, Ordering::Release);
-    }
-}
-impl WorkspaceTransferProgress {
-    fn start<T: DurableWorkspaceStore>(store: Arc<T>, job: WorkspaceTransfer) -> Self {
-        let alive = Arc::new(AtomicBool::new(true));
-        let bytes = Arc::new(AtomicU64::new(0));
-        let valid = alive.clone();
-        let count = bytes.clone();
-        let task = tokio::spawn(async move {
-            loop {
-                if !matches!(
-                    store
-                        .progress_workspace_transfer(job.clone(), count.load(Ordering::Acquire))
-                        .await,
-                    Ok(true)
-                ) {
-                    valid.store(false, Ordering::Release);
-                    break;
-                }
-                tokio::time::sleep(std::time::Duration::from_secs(2)).await;
-            }
-        });
-        Self { alive, bytes, task }
-    }
-
-    #[cfg(test)]
-    pub(super) fn testing() -> Self {
-        Self {
-            alive: Arc::new(AtomicBool::new(true)),
-            bytes: Arc::new(AtomicU64::new(0)),
-            task: tokio::spawn(std::future::pending()),
-        }
-    }
-}
-struct GuardedStore<S> {
-    inner: S,
-    alive: Arc<AtomicBool>,
-}
-impl<S: runinator_workspace::storage::store::ReadStore>
-    runinator_workspace::storage::store::ReadStore for GuardedStore<S>
-{
-    fn get(
-        &self,
-        id: runinator_workspace::storage::Id,
-    ) -> runinator_workspace::storage::Result<runinator_workspace::storage::store::Object> {
-        if !self.alive.load(Ordering::Acquire) {
-            return Err(runinator_workspace::storage::Error::Conflict);
-        }
-        self.inner.get(id)
-    }
-    fn info(
-        &self,
-        id: runinator_workspace::storage::Id,
-    ) -> runinator_workspace::storage::Result<runinator_workspace::storage::store::ObjectInfo> {
-        if !self.alive.load(Ordering::Acquire) {
-            return Err(runinator_workspace::storage::Error::Conflict);
-        }
-        self.inner.info(id)
-    }
-}
-struct Reader<R> {
-    inner: R,
-    alive: Arc<AtomicBool>,
-    bytes: Arc<AtomicU64>,
-}
-impl<R: tokio::io::AsyncRead + Unpin> tokio::io::AsyncRead for Reader<R> {
-    fn poll_read(
-        mut self: std::pin::Pin<&mut Self>,
-        cx: &mut std::task::Context<'_>,
-        buf: &mut tokio::io::ReadBuf<'_>,
-    ) -> std::task::Poll<std::io::Result<()>> {
-        if !self.alive.load(Ordering::Acquire) {
-            return std::task::Poll::Ready(Err(std::io::Error::other(
-                "transfer cancelled or lease lost",
-            )));
-        }
-        let before = buf.filled().len();
-        let result = std::pin::Pin::new(&mut self.inner).poll_read(cx, buf);
-        self.bytes
-            .fetch_add((buf.filled().len() - before) as u64, Ordering::Release);
-        result
-    }
-}
 fn budget(limits: WorkspaceLimits) -> Result<u64, SendableError> {
     limits
         .max_bytes
@@ -458,3 +366,12 @@ pub async fn run_workspace_transfers<T: DurableWorkspaceStore>(
         tokio::select! { _ = shutdown.notified() => return, _ = tokio::time::sleep(std::time::Duration::from_secs(5)) => {} }
     }
 }
+
+mod workspace_transfer_progress;
+pub(crate) use workspace_transfer_progress::WorkspaceTransferProgress;
+
+mod guarded_store;
+use guarded_store::GuardedStore;
+
+mod reader;
+use reader::Reader;

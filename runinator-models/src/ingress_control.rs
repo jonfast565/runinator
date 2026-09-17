@@ -34,15 +34,6 @@ impl ExternalIngressGateMode {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ExternalIngressGate {
-    pub target: IngressTarget,
-    pub owner_scope: ScopeRef,
-    pub mode: ExternalIngressGateMode,
-    pub updated_by: Option<Uuid>,
-    pub updated_at: DateTime<Utc>,
-}
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum IngressControlState {
@@ -52,25 +43,6 @@ pub enum IngressControlState {
     Applied,
     Dropped,
     Failed,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ExternalIngressRecord {
-    #[serde(default)]
-    pub adapter: Option<crate::adapter_control::AdapterOrigin>,
-    #[serde(default)]
-    pub caller_org_id: Option<Uuid>,
-    pub id: Uuid,
-    pub target: IngressTarget,
-    pub owner_scope: ScopeRef,
-    pub gate_mode: ExternalIngressGateMode,
-    pub event: IngressEvent,
-    pub state: IngressControlState,
-    pub queue_position: Option<i64>,
-    pub reviewed_by: Option<Uuid>,
-    pub last_error: Option<String>,
-    pub received_at: DateTime<Utc>,
-    pub resolved_at: Option<DateTime<Utc>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -101,81 +73,12 @@ impl BrokerIngressSessionMode {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct BrokerIngressSession {
-    pub scope: ScopeRef,
-    pub mode: BrokerIngressSessionMode,
-    pub updated_by: Option<Uuid>,
-    pub updated_at: DateTime<Utc>,
-    /// An inspector is a client-owned, renewable lease rather than a sticky server setting. This
-    /// lets the engine stop recording/holding ingress shortly after the inspecting page closes or
-    /// loses its connection.
-    pub expires_at: DateTime<Utc>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct BrokerIngressCaptureRequest {
-    pub scope: ScopeRef,
-    pub delivery_id: Uuid,
-    pub dedupe_key: String,
-    pub command_kind: String,
-    pub command: Value,
-    pub hold: bool,
-    pub received_at: DateTime<Utc>,
-    pub capacity: i64,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct BrokerIngressRecord {
-    pub id: Uuid,
-    pub scope: ScopeRef,
-    pub delivery_id: Uuid,
-    pub dedupe_key: String,
-    pub command_kind: String,
-    pub command: Value,
-    pub state: IngressControlState,
-    pub reviewed_by: Option<Uuid>,
-    pub last_error: Option<String>,
-    pub received_at: DateTime<Utc>,
-    pub resolved_at: Option<DateTime<Utc>>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "outcome", content = "record", rename_all = "snake_case")]
 pub enum BrokerIngressCapture {
     Observed(BrokerIngressRecord),
     Held(BrokerIngressRecord),
     Duplicate(BrokerIngressRecord),
     Full,
-}
-
-/// One engine-side observation of a message crossing a broker channel.
-///
-/// The trace deliberately records the broker envelope at the engine boundary. It is not a queue
-/// inspector: worker-local receives remain local, while every message that enters or leaves the
-/// durable engine is available to the workflow or pipeline run that owns it.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct BrokerMessageRecord {
-    #[serde(default)]
-    pub adapter_id: Option<Uuid>,
-    #[serde(default)]
-    pub poll_attempt_id: Option<Uuid>,
-    pub id: Uuid,
-    /// `effect`, `effect_result`, `wake`, `ingress`, `control`, or `agent`.
-    pub channel: String,
-    /// `published` when the engine wrote the message, `received` when it accepted a delivery.
-    pub direction: BrokerMessageDirection,
-    /// The typed broker payload carried on the channel, such as `effect_command`.
-    pub message_kind: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub workflow_run_id: Option<Uuid>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub delivery_id: Option<Uuid>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub dedupe_key: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub trace_id: Option<Uuid>,
-    pub payload: Value,
-    pub occurred_at: DateTime<Utc>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -185,22 +88,26 @@ pub enum BrokerMessageDirection {
     Received,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct IngressControlQuery {
-    pub scope: Option<ScopeRef>,
-    pub target_kind: Option<IngressTargetKind>,
-    pub target_id: Option<Uuid>,
-    pub state: Option<IngressControlState>,
-    pub limit: i64,
-}
+mod external_ingress_gate;
+pub use external_ingress_gate::ExternalIngressGate;
 
-#[derive(Debug, Clone)]
-pub struct ExternalIngressCaptureRequest {
-    pub target: IngressTarget,
-    pub owner_scope: ScopeRef,
-    pub gate_mode: ExternalIngressGateMode,
-    pub event: IngressEvent,
-    pub adapter: Option<crate::adapter_control::AdapterOrigin>,
-    pub now: DateTime<Utc>,
-    pub capacity: i64,
-}
+mod external_ingress_record;
+pub use external_ingress_record::ExternalIngressRecord;
+
+mod broker_ingress_session;
+pub use broker_ingress_session::BrokerIngressSession;
+
+mod broker_ingress_capture_request;
+pub use broker_ingress_capture_request::BrokerIngressCaptureRequest;
+
+mod broker_ingress_record;
+pub use broker_ingress_record::BrokerIngressRecord;
+
+mod broker_message_record;
+pub use broker_message_record::BrokerMessageRecord;
+
+mod ingress_control_query;
+pub use ingress_control_query::IngressControlQuery;
+
+mod external_ingress_capture_request;
+pub use external_ingress_capture_request::ExternalIngressCaptureRequest;

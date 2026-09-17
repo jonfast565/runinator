@@ -40,37 +40,6 @@ use runinator_ws_middleware::authz::{AuthorizationStore, AuthzChecker};
 /// Persistence the workflow-run HTTP surface coordinates. It excludes authoring, settings,
 /// notifications, functions, and replica management while keeping the cross-domain run commands
 /// atomic at the handler boundary.
-pub trait RunOperationsStore:
-    AuthorizationStore
-    + RuntimeStore
-    + WorkflowVmStore
-    + RunStore
-    + ScheduleStore
-    + FileStore
-    + IngressStore
-    + OrchestrationStore
-    + AiUsageStore
-{
-}
-
-impl<T> RunOperationsStore for T where
-    T: AuthorizationStore
-        + RuntimeStore
-        + WorkflowVmStore
-        + RunStore
-        + ScheduleStore
-        + FileStore
-        + IngressStore
-        + OrchestrationStore
-        + AiUsageStore
-{
-}
-
-#[derive(Debug, serde::Deserialize)]
-pub struct AiUsageQuery {
-    pub since: Option<chrono::DateTime<chrono::Utc>>,
-    pub until: Option<chrono::DateTime<chrono::Utc>>,
-}
 
 pub async fn get_run_ai_usage<T: RunOperationsStore>(
     Extension(db): Extension<Arc<T>>,
@@ -232,16 +201,7 @@ pub async fn ingress_workflow_run<T: RunOperationsStore>(
     })
     .await
 }
-pub(crate) struct WorkflowIngressContext<T> {
-    pub(crate) db: Arc<T>,
-    pub(crate) operations: Arc<RunOperations<T>>,
-    pub(crate) caller_org_id: Option<Uuid>,
-    pub(crate) actor_id: Option<Uuid>,
-    pub(crate) workflow_id: Uuid,
-    pub(crate) request: IngressEventRequest,
-    pub(crate) provenance: WorkflowRunProvenance,
-    pub(crate) bypass_gate: bool,
-}
+
 pub(crate) async fn process_workflow_ingress<T: RunOperationsStore>(
     context: WorkflowIngressContext<T>,
 ) -> (StatusCode, Json<ApiResponse>) {
@@ -740,11 +700,6 @@ async fn require_unmanaged_workflow_run<T: RunOperationsStore>(
         Ok(None) => Ok(()),
         Err(error) => Err(api_error(error.to_string())),
     }
-}
-
-#[derive(Default, serde::Deserialize)]
-pub struct ReplayPlanQuery {
-    pub from_step_id: Option<String>,
 }
 
 pub async fn get_replay_plan<T: RunOperationsStore>(
@@ -1580,3 +1535,15 @@ const INGRESS_LOOKUP_PARAMS: &[ParamDoc] = &[
         example: "release-42",
     },
 ];
+
+mod run_operations_store;
+pub use run_operations_store::RunOperationsStore;
+
+mod ai_usage_query;
+pub use ai_usage_query::AiUsageQuery;
+
+mod workflow_ingress_context;
+pub(crate) use workflow_ingress_context::WorkflowIngressContext;
+
+mod replay_plan_query;
+pub use replay_plan_query::ReplayPlanQuery;

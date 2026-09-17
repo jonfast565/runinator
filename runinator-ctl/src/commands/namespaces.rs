@@ -8,29 +8,6 @@ use runinator_ctl_core::cli::NamespaceCommands;
 
 const PLAN_VERSION: u32 = 1;
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-struct NamespaceMigrationPlan {
-    version: u32,
-    artifacts: Vec<NamespaceMigrationEntry>,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    diagnostics: Vec<String>,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    source_diffs: Vec<String>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-struct NamespaceMigrationEntry {
-    kind: ArtifactKind,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    setting_kind: Option<SettingKind>,
-    id: Uuid,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    namespace: Option<String>,
-    key: String,
-    display_name: String,
-    current_path: String,
-}
-
 pub(super) async fn namespaces(
     client: &Client,
     command: &NamespaceCommands,
@@ -353,3 +330,9 @@ fn qualified(namespace: Option<&str>, key: &str) -> String {
         None => key.to_string(),
     }
 }
+
+mod namespace_migration_plan;
+use namespace_migration_plan::NamespaceMigrationPlan;
+
+mod namespace_migration_entry;
+use namespace_migration_entry::NamespaceMigrationEntry;

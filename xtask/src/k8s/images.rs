@@ -10,13 +10,6 @@ use anyhow::{Result, bail};
 
 use crate::exec;
 
-struct ImageSpec {
-    name: &'static str,
-    dockerfile: &'static str,
-    target: Option<&'static str>,
-    context: &'static str,
-}
-
 const IMAGES: &[ImageSpec] = &[
     ImageSpec {
         name: "runinator-waker",
@@ -121,15 +114,6 @@ fn current_commit(workspace_root: &Path) -> String {
 
 /// builds (and optionally pushes) the selected images, returning a map of image name -> tagged
 /// reference for the ones that were built.
-pub struct ContainerImageBuild<'a> {
-    pub repository: Option<&'a str>,
-    pub tag: &'a str,
-    pub include_names: Option<&'a [&'a str]>,
-    pub exclude_names: Option<&'a [&'a str]>,
-    pub push_images: bool,
-    pub database_backend: &'a str,
-    pub broker_backend: &'a str,
-}
 
 pub fn build_container_images(
     workspace_root: &Path,
@@ -209,3 +193,9 @@ pub fn build_container_images(
 
     Ok(built)
 }
+
+mod image_spec;
+use image_spec::ImageSpec;
+
+mod container_image_build;
+pub use container_image_build::ContainerImageBuild;

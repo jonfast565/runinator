@@ -13,30 +13,6 @@ use super::kustomize;
 use super::yaml_docs;
 use crate::exec;
 
-pub struct DeployOptions<'a> {
-    pub workspace_root: &'a Path,
-    pub manifest_path: &'a Path,
-    pub kube_context: Option<&'a str>,
-    pub image_map: Option<HashMap<String, String>>,
-    pub delete: bool,
-    pub command_center_only: bool,
-    pub recreate_infra: bool,
-    pub expose_direct_ingress: bool,
-}
-
-pub struct GrafanaRedeployOptions<'a> {
-    pub workspace_root: &'a Path,
-    pub manifest_path: &'a Path,
-    pub kube_context: Option<&'a str>,
-}
-
-pub struct DatabaseRedeployOptions<'a> {
-    pub workspace_root: &'a Path,
-    pub manifest_path: &'a Path,
-    pub kube_context: Option<&'a str>,
-    pub from_scratch: bool,
-}
-
 const STALE_RESOURCES: &[&str] = &[
     "deployment/runinator-importer",
     "job/runinator-importer",
@@ -697,3 +673,12 @@ fn remove_superseded_workload_controllers(
         });
     }
 }
+
+mod deploy_options;
+pub use deploy_options::DeployOptions;
+
+mod grafana_redeploy_options;
+pub use grafana_redeploy_options::GrafanaRedeployOptions;
+
+mod database_redeploy_options;
+pub use database_redeploy_options::DatabaseRedeployOptions;

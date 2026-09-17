@@ -12,15 +12,6 @@ const HTTP_REJECTIONS: &str = "runinator_ws_request_rejections_total";
 const WS_CONNECTIONS: &str = "runinator_ws_websocket_connections";
 const WS_CONNECTIONS_TOTAL: &str = "runinator_ws_websocket_connections_total";
 
-struct WsMetrics {
-    requests: Counter<u64>,
-    duration_ms: Histogram<f64>,
-    in_flight: UpDownCounter<i64>,
-    rejections: Counter<u64>,
-    websocket_connections: UpDownCounter<i64>,
-    websocket_connections_total: Counter<u64>,
-}
-
 static METRICS: OnceLock<WsMetrics> = OnceLock::new();
 
 fn handles() -> &'static WsMetrics {
@@ -89,16 +80,6 @@ pub(crate) fn request_started() -> RequestGuard {
     RequestGuard
 }
 
-pub(crate) struct RequestGuard;
-
-impl Drop for RequestGuard {
-    fn drop(&mut self) {
-        runinator_tui::gauge_increment("web service", "HTTP in flight", -1);
-        metrics::gauge!(HTTP_IN_FLIGHT).decrement(1.0);
-        handles().in_flight.add(-1, &[]);
-    }
-}
-
 pub(crate) fn request_completed(
     method: &'static str,
     route: &str,
@@ -153,29 +134,6 @@ pub(crate) fn websocket_connected(kind: &'static str) -> WebSocketGuard {
     WebSocketGuard { kind }
 }
 
-pub(crate) struct WebSocketGuard {
-    kind: &'static str,
-}
-
-impl Drop for WebSocketGuard {
-    fn drop(&mut self) {
-        runinator_tui::gauge_increment("web service", "WebSockets", -1);
-        metrics::gauge!(WS_CONNECTIONS, "kind" => self.kind).decrement(1.0);
-        metrics::counter!(WS_CONNECTIONS_TOTAL, "kind" => self.kind, "outcome" => "closed")
-            .increment(1);
-        handles()
-            .websocket_connections
-            .add(-1, &[KeyValue::new("kind", self.kind)]);
-        handles().websocket_connections_total.add(
-            1,
-            &[
-                KeyValue::new("kind", self.kind),
-                KeyValue::new("outcome", "closed"),
-            ],
-        );
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -200,3 +158,12 @@ mod tests {
         assert_eq!(rejection_reason(&response), None);
     }
 }
+
+mod ws_metrics;
+use ws_metrics::WsMetrics;
+
+mod request_guard;
+pub(crate) use request_guard::RequestGuard;
+
+mod web_socket_guard;
+pub(crate) use web_socket_guard::WebSocketGuard;

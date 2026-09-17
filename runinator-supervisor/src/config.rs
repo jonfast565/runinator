@@ -8,95 +8,6 @@ use serde::{Deserialize, Serialize};
 
 use crate::types::DynError;
 
-#[derive(Debug, Deserialize)]
-pub struct SupervisorConfig {
-    #[serde(default = "default_state_dir")]
-    pub state_dir: String,
-    #[serde(default = "default_shutdown_timeout_secs")]
-    pub shutdown_timeout_secs: u64,
-    #[serde(default = "default_restart_delay_ms")]
-    pub restart_delay_ms: u64,
-    #[serde(default)]
-    pub log_retention: LogRetentionConfig,
-    #[serde(default)]
-    pub processes: Vec<ProcessConfig>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct LogRetentionConfig {
-    #[serde(default = "default_log_retention_max_age_days")]
-    pub max_age_days: u64,
-    #[serde(default = "default_log_retention_max_files")]
-    pub max_files: usize,
-    #[serde(default = "default_log_retention_max_bytes")]
-    pub max_bytes: u64,
-}
-
-impl Default for LogRetentionConfig {
-    fn default() -> Self {
-        Self {
-            max_age_days: default_log_retention_max_age_days(),
-            max_files: default_log_retention_max_files(),
-            max_bytes: default_log_retention_max_bytes(),
-        }
-    }
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ProcessConfig {
-    pub name: String,
-    pub command: String,
-    #[serde(default)]
-    pub args: Vec<String>,
-    pub cwd: Option<String>,
-    #[serde(default)]
-    pub env: BTreeMap<String, String>,
-    #[serde(default = "default_true")]
-    pub autostart: bool,
-    #[serde(default = "default_true")]
-    pub restart_on_failure: bool,
-    #[serde(default = "default_max_restarts_per_minute")]
-    pub max_restarts_per_minute: u32,
-    /// overrides `command` on windows; falls back to `command` when absent.
-    #[serde(default)]
-    pub command_windows: Option<String>,
-    /// overrides `args` on windows; falls back to `args` when absent.
-    #[serde(default)]
-    pub args_windows: Option<Vec<String>>,
-}
-
-impl ProcessConfig {
-    /// swaps in the windows-specific command/args override for the current platform, so
-    /// downstream code can keep reading `command`/`args` without caring about the host os.
-    pub fn resolve_for_platform(mut self) -> Self {
-        #[cfg(target_os = "windows")]
-        {
-            if let Some(command) = self.command_windows.take() {
-                self.command = command;
-            }
-            if let Some(args) = self.args_windows.take() {
-                self.args = args;
-            }
-        }
-        self.command_windows = None;
-        self.args_windows = None;
-        self
-    }
-}
-
-#[derive(Debug)]
-pub struct Paths {
-    pub config_path: PathBuf,
-    pub config_dir: PathBuf,
-    pub state_dir: PathBuf,
-    pub pid_file: PathBuf,
-    pub stop_file: PathBuf,
-    pub state_file: PathBuf,
-    pub control_dir: PathBuf,
-    pub logs_dir: PathBuf,
-    pub supervisor_log: PathBuf,
-}
-
 pub fn load_config(path: &Path) -> Result<(SupervisorConfig, Paths), DynError> {
     let cwd = env::current_dir()?;
     let config_path = if path.is_absolute() {
@@ -187,3 +98,15 @@ fn default_log_retention_max_bytes() -> u64 {
 fn default_max_restarts_per_minute() -> u32 {
     10
 }
+
+mod supervisor_config;
+pub use supervisor_config::SupervisorConfig;
+
+mod log_retention_config;
+pub use log_retention_config::LogRetentionConfig;
+
+mod process_config;
+pub use process_config::ProcessConfig;
+
+mod paths;
+pub use paths::Paths;

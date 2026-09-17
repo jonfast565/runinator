@@ -40,136 +40,6 @@ const ARTIFACT: &str = "application/vnd.runinator.workspace.v1";
 const CONFIG: &str = "application/vnd.runinator.workspace.config.v1+json";
 const PACK: &str = "application/vnd.runinator.workspace.pack.v1";
 
-struct Sha256Writer<W> {
-    inner: W,
-    hasher: Sha256,
-}
-
-impl<W> Sha256Writer<W> {
-    fn new(inner: W) -> Self {
-        Self {
-            inner,
-            hasher: Sha256::new(),
-        }
-    }
-
-    fn digest(self) -> Id {
-        Id(self.hasher.finalize().into())
-    }
-}
-
-impl<W: Write> Write for Sha256Writer<W> {
-    fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
-        let written = self.inner.write(bytes)?;
-        self.hasher.update(&bytes[..written]);
-        Ok(written)
-    }
-
-    fn flush(&mut self) -> std::io::Result<()> {
-        self.inner.flush()
-    }
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct Descriptor {
-    pub media_type: String,
-    pub digest: String,
-    pub size: u64,
-    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
-    pub annotations: BTreeMap<String, String>,
-}
-
-#[derive(Debug, Clone)]
-pub struct ImageOptions {
-    pub os: String,
-    pub architecture: String,
-    pub reference_name: String,
-    pub labels: BTreeMap<String, String>,
-}
-impl Default for ImageOptions {
-    fn default() -> Self {
-        Self {
-            os: "linux".into(),
-            architecture: "amd64".into(),
-            reference_name: "latest".into(),
-            labels: BTreeMap::new(),
-        }
-    }
-}
-
-/// Controls Merkle-aware history projection into conventional OCI layers.
-///
-/// `max_layers` bounds the exported OCI stack. If the native revision chain is
-/// longer, the oldest selected revision is emitted as a full checkpoint and
-/// only newer revisions become delta layers. A value of 1 is equivalent to the
-/// flattened `export_image()` representation.
-#[derive(Debug, Clone)]
-pub struct MerkleImageOptions {
-    pub image: ImageOptions,
-    pub max_layers: usize,
-    pub include_empty_layers: bool,
-}
-
-impl Default for MerkleImageOptions {
-    fn default() -> Self {
-        Self {
-            image: ImageOptions::default(),
-            max_layers: 16,
-            include_empty_layers: false,
-        }
-    }
-}
-
-#[derive(Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct ImageIndex {
-    schema_version: u32,
-    #[serde(default)]
-    media_type: String,
-    manifests: Vec<Descriptor>,
-}
-
-#[derive(Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct Manifest {
-    schema_version: u32,
-    media_type: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    artifact_type: Option<String>,
-    config: Descriptor,
-    layers: Vec<Descriptor>,
-}
-
-#[derive(Serialize, Deserialize)]
-struct RootFs {
-    #[serde(rename = "type")]
-    kind: String,
-    diff_ids: Vec<String>,
-}
-
-#[derive(Serialize, Deserialize, Default)]
-#[serde(rename_all = "PascalCase")]
-struct RuntimeConfig {
-    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
-    labels: BTreeMap<String, String>,
-}
-
-#[derive(Serialize, Deserialize)]
-struct OciImageConfig {
-    architecture: String,
-    os: String,
-    rootfs: RootFs,
-    config: RuntimeConfig,
-}
-
-#[derive(Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct ArtifactConfig {
-    format_version: u32,
-    revision: String,
-}
-
 fn descriptor(kind: &str, id: Id, size: u64) -> Descriptor {
     Descriptor {
         media_type: kind.into(),
@@ -432,12 +302,6 @@ fn append_snapshot_tree<W: Write>(
     Ok(())
 }
 
-#[derive(Clone)]
-struct RevisionState {
-    workspace: Workspace,
-    projection: PathProjection,
-}
-
 fn load_revision_state(snapshot: &Snapshot<'_>, id: Id) -> Result<RevisionState> {
     let revision: crate::model::Revision = load(snapshot, id, Kind::Revision)?;
     let workspace: Workspace = load(snapshot, revision.workspace, Kind::Workspace)?;
@@ -446,12 +310,6 @@ fn load_revision_state(snapshot: &Snapshot<'_>, id: Id) -> Result<RevisionState>
         workspace,
         projection,
     })
-}
-
-#[derive(Clone)]
-struct InventoryEntry {
-    inode_number: u64,
-    inode: Inode,
 }
 
 fn inode_object_id(
@@ -469,12 +327,6 @@ fn inode_object_id(
 
 fn path_depth(path: &str) -> usize {
     path.bytes().filter(|&b| b == b'/').count() + 1
-}
-
-#[derive(Default)]
-struct DeltaPlan {
-    whiteouts: Vec<String>,
-    emit: Vec<String>,
 }
 
 fn append_whiteout<W: Write>(builder: &mut tar::Builder<W>, deleted_path: &str) -> Result<()> {
@@ -1404,3 +1256,42 @@ pub fn import_image_edit<S: WriteStore>(
     }
     Ok(tx)
 }
+
+mod sha256_writer;
+use sha256_writer::Sha256Writer;
+
+mod descriptor;
+pub use descriptor::Descriptor;
+
+mod image_options;
+pub use image_options::ImageOptions;
+
+mod merkle_image_options;
+pub use merkle_image_options::MerkleImageOptions;
+
+mod image_index;
+use image_index::ImageIndex;
+
+mod manifest;
+use manifest::Manifest;
+
+mod root_fs;
+use root_fs::RootFs;
+
+mod runtime_config;
+use runtime_config::RuntimeConfig;
+
+mod oci_image_config;
+use oci_image_config::OciImageConfig;
+
+mod artifact_config;
+use artifact_config::ArtifactConfig;
+
+mod revision_state;
+use revision_state::RevisionState;
+
+mod inventory_entry;
+use inventory_entry::InventoryEntry;
+
+mod delta_plan;
+use delta_plan::DeltaPlan;

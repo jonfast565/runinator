@@ -44,32 +44,6 @@ use runinator_ws_middleware::authz::{AuthorizationStore, AuthzChecker};
 use serde::Deserialize;
 use uuid::Uuid;
 
-#[derive(Debug, Default, Deserialize)]
-pub struct OrchestrationQuery {
-    pub status: Option<String>,
-    pub pipeline_id: Option<Uuid>,
-    pub adapter_id: Option<Uuid>,
-    pub scope: Option<String>,
-    pub scope_prefix: Option<String>,
-    pub correlation_key: Option<String>,
-    pub limit: Option<i64>,
-}
-
-#[derive(Debug, Deserialize)]
-pub struct CorrelationAliasRequest {
-    pub source: String,
-    pub scope: String,
-    pub correlation_key: String,
-}
-
-impl Validate for CorrelationAliasRequest {
-    fn validate(&self) -> Result<(), ValidationError> {
-        identifier("source", &self.source)?;
-        identifier("scope", &self.scope)?;
-        required_text("correlation_key", &self.correlation_key, SHORT_TEXT_MAX)
-    }
-}
-
 async fn authorized_binding<T: AuthorizationStore + OrchestrationStore>(
     operations: &OrchestrationOperations<T>,
     db: &T,
@@ -1046,3 +1020,9 @@ pub const DOCS: &[EndpointDoc] = &[
         Example::OrchestrationBinding,
     ),
 ];
+
+mod orchestration_query;
+pub use orchestration_query::OrchestrationQuery;
+
+mod correlation_alias_request;
+pub use correlation_alias_request::CorrelationAliasRequest;

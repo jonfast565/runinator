@@ -12,68 +12,6 @@ use crate::validation::{
     required_text,
 };
 
-/// A portable calendar schedule. Consumers decide whether an occurrence fires work (duration zero)
-/// or opens a window (positive duration); recurrence only answers *when*.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct ScheduleSpec {
-    pub recurrence: ScheduleRecurrence,
-    #[serde(default = "default_schedule_timezone")]
-    pub timezone: String,
-    #[serde(default)]
-    pub duration_seconds: i64,
-}
-
-impl ScheduleSpec {
-    pub fn once(starts_at: DateTime<Utc>, ends_at: DateTime<Utc>) -> Self {
-        Self {
-            recurrence: ScheduleRecurrence::Once { at: starts_at },
-            timezone: default_schedule_timezone(),
-            duration_seconds: (ends_at - starts_at).num_seconds(),
-        }
-    }
-}
-
-impl Validate for ScheduleSpec {
-    fn validate(&self) -> Result<(), ValidationError> {
-        required_text("timezone", &self.timezone, SHORT_TEXT_MAX)?;
-        if self.duration_seconds < 0 {
-            return Err(ValidationError::new(
-                "duration_seconds",
-                "must not be negative",
-            ));
-        }
-        match &self.recurrence {
-            ScheduleRecurrence::Cron { expression } => {
-                required_text("recurrence.expression", expression, SHORT_TEXT_MAX)?;
-            }
-            ScheduleRecurrence::Weekdays {
-                days,
-                hour,
-                minute,
-                second,
-            } => {
-                if days.is_empty() {
-                    return Err(ValidationError::new(
-                        "recurrence.days",
-                        "select at least one weekday",
-                    ));
-                }
-                if *hour > 23 || *minute > 59 || *second > 59 {
-                    return Err(ValidationError::new(
-                        "recurrence.time",
-                        "must be a valid wall-clock time",
-                    ));
-                }
-            }
-            ScheduleRecurrence::Rrule { rule, .. } => {
-                required_text("recurrence.rule", rule, LONG_TEXT_MAX)?;
-            }
-            ScheduleRecurrence::Once { .. } => {}
-        }
-        Ok(())
-    }
-}
-
 fn default_schedule_timezone() -> String {
     "UTC".to_string()
 }
@@ -128,31 +66,6 @@ impl ScheduleWeekday {
     ];
 }
 
-/// A revocable, purpose-specific calendar subscription. The secret is returned only at creation;
-/// persistence keeps its SHA-256 hash so a database read cannot reveal a live feed URL.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct CalendarSubscription {
-    pub id: Uuid,
-    pub principal_id: Uuid,
-    pub scope: ScopeRef,
-    pub created_at: DateTime<Utc>,
-}
-
-#[derive(Debug, Clone)]
-pub struct NewCalendarSubscriptionRecord {
-    pub id: Uuid,
-    pub principal_id: Uuid,
-    pub scope: ScopeRef,
-    pub token_hash: String,
-    pub created_at: DateTime<Utc>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct CalendarSubscriptionSecret {
-    pub subscription: CalendarSubscription,
-    pub token: String,
-}
-
 /// what the trigger loop does when a workflow is already at its concurrency limit.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
@@ -191,47 +104,6 @@ impl ConcurrencyPolicy {
             "cancel_previous" => Some(ConcurrencyPolicy::CancelPrevious),
             _ => None,
         }
-    }
-}
-
-/// a workflow's concurrency limit, read from `definition.metadata.concurrency`. absent metadata
-/// means [`WorkflowConcurrency::unlimited`], which is the pre-policy behavior.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub struct WorkflowConcurrency {
-    /// the number of non-terminal runs allowed at once. `0` means unlimited.
-    #[serde(default)]
-    pub max_concurrent_runs: i64,
-    #[serde(default)]
-    pub on_conflict: ConcurrencyPolicy,
-}
-
-impl Default for WorkflowConcurrency {
-    fn default() -> Self {
-        Self::unlimited()
-    }
-}
-
-impl WorkflowConcurrency {
-    pub const fn unlimited() -> Self {
-        Self {
-            max_concurrent_runs: 0,
-            on_conflict: ConcurrencyPolicy::Allow,
-        }
-    }
-
-    /// true when this policy can ever decline a firing. an unlimited or `allow` policy never does,
-    /// so the trigger loop can skip counting active runs entirely.
-    pub fn is_enforced(&self) -> bool {
-        self.max_concurrent_runs > 0 && self.on_conflict != ConcurrencyPolicy::Allow
-    }
-
-    /// read the policy out of a workflow graph's `metadata` object. an unparseable or missing
-    /// `concurrency` entry falls back to unlimited rather than failing the firing.
-    pub fn from_metadata(metadata: &Value) -> Self {
-        metadata
-            .get("concurrency")
-            .and_then(|value| serde_json::from_value(value.clone().into()).ok())
-            .unwrap_or_else(Self::unlimited)
     }
 }
 
@@ -277,122 +149,6 @@ pub const DEFAULT_CATCHUP_GRACE_SECONDS: i64 = 60;
 /// was down for a week cannot flood the run table and the wake queue in a single pass.
 pub const DEFAULT_CATCHUP_MAX_SLOTS: i64 = 25;
 
-/// a trigger's catch-up policy, read from its `configuration.catchup`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub struct TriggerCatchup {
-    #[serde(default)]
-    pub policy: CatchupPolicy,
-    /// lateness a `skip` policy tolerates. unused by the other policies.
-    #[serde(default)]
-    pub grace_seconds: Option<i64>,
-    /// per-tick replay cap for `fire_all`. unused by the other policies.
-    #[serde(default)]
-    pub max_slots: Option<i64>,
-}
-
-impl Default for TriggerCatchup {
-    fn default() -> Self {
-        Self {
-            policy: CatchupPolicy::FireOnce,
-            grace_seconds: None,
-            max_slots: None,
-        }
-    }
-}
-
-impl TriggerCatchup {
-    pub fn grace(&self) -> i64 {
-        self.grace_seconds
-            .filter(|seconds| *seconds > 0)
-            .unwrap_or(DEFAULT_CATCHUP_GRACE_SECONDS)
-    }
-
-    pub fn max_slots(&self) -> i64 {
-        self.max_slots
-            .filter(|slots| *slots > 0)
-            .unwrap_or(DEFAULT_CATCHUP_MAX_SLOTS)
-    }
-
-    /// read the policy out of a trigger's `configuration` object. a `catchup` entry may be either
-    /// the bare policy string (`"fire_all"`) or the full object.
-    pub fn from_configuration(configuration: &Value) -> Self {
-        let Some(catchup) = configuration.get("catchup") else {
-            return Self::default();
-        };
-        if let Some(raw) = catchup.as_str() {
-            return Self {
-                policy: CatchupPolicy::from_str_opt(raw).unwrap_or_default(),
-                ..Self::default()
-            };
-        }
-
-        serde_json::from_value(catchup.clone().into()).unwrap_or_default()
-    }
-}
-
-/// a scheduled suspension of trigger firing. a window with no `workflow_id` freezes every workflow
-/// in its org; one with no `org_id` freezes the whole platform.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct FreezeWindow {
-    pub id: Uuid,
-    #[serde(default)]
-    pub org_id: Option<Uuid>,
-    #[serde(default)]
-    pub workflow_id: Option<Uuid>,
-    pub name: String,
-    #[serde(default)]
-    pub reason: Option<String>,
-    pub starts_at: DateTime<Utc>,
-    pub ends_at: DateTime<Utc>,
-    /// Recurring definition. Absent rows are legacy one-shot windows represented by the concrete
-    /// `starts_at`/`ends_at` pair above.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub schedule: Option<ScheduleSpec>,
-    pub enabled: bool,
-    pub created_at: DateTime<Utc>,
-    pub updated_at: DateTime<Utc>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct NewFreezeWindow {
-    #[serde(default)]
-    pub org_id: Option<Uuid>,
-    #[serde(default)]
-    pub workflow_id: Option<Uuid>,
-    pub name: String,
-    #[serde(default)]
-    pub reason: Option<String>,
-    pub starts_at: DateTime<Utc>,
-    pub ends_at: DateTime<Utc>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub schedule: Option<ScheduleSpec>,
-    #[serde(default = "default_enabled")]
-    pub enabled: bool,
-}
-
-impl Validate for NewFreezeWindow {
-    fn validate(&self) -> Result<(), ValidationError> {
-        required_text("name", &self.name, SHORT_TEXT_MAX)?;
-        optional_text("reason", self.reason.as_deref(), LONG_TEXT_MAX)?;
-        if self.ends_at <= self.starts_at {
-            return Err(ValidationError::new(
-                "ends_at",
-                "must be later than starts_at",
-            ));
-        }
-        if let Some(schedule) = &self.schedule {
-            schedule.validate()?;
-            if schedule.duration_seconds <= 0 {
-                return Err(ValidationError::new(
-                    "schedule.duration_seconds",
-                    "a freeze window needs a positive duration",
-                ));
-            }
-        }
-        Ok(())
-    }
-}
-
 fn default_enabled() -> bool {
     true
 }
@@ -423,74 +179,7 @@ impl FiringOutcome {
     }
 }
 
-/// the result of one trigger-loop claim pass. runs were created; `canceled_run_ids` were set
-/// terminal by a `cancel_previous` policy and still need their workers told; the counters are
-/// observability for slots that deliberately produced nothing.
-#[derive(Debug, Clone)]
-pub struct TriggerFiringBatch<R> {
-    pub runs: Vec<R>,
-    pub canceled_run_ids: Vec<Uuid>,
-    pub concurrency_skipped: u64,
-    pub concurrency_deferred: u64,
-    pub catchup_skipped: u64,
-    pub schedule_excluded: u64,
-}
-
 // hand-written so an empty batch does not require the run type to be `Default`.
-impl<R> Default for TriggerFiringBatch<R> {
-    fn default() -> Self {
-        Self {
-            runs: Vec::new(),
-            canceled_run_ids: Vec::new(),
-            concurrency_skipped: 0,
-            concurrency_deferred: 0,
-            catchup_skipped: 0,
-            schedule_excluded: 0,
-        }
-    }
-}
-
-impl<R> TriggerFiringBatch<R> {
-    pub fn is_empty(&self) -> bool {
-        self.runs.is_empty()
-    }
-
-    pub fn len(&self) -> usize {
-        self.runs.len()
-    }
-
-    /// true when the pass declined at least one slot, so the caller knows there is something worth
-    /// logging even though no runs were created.
-    pub fn declined_any(&self) -> bool {
-        self.concurrency_skipped > 0
-            || self.concurrency_deferred > 0
-            || self.catchup_skipped > 0
-            || self.schedule_excluded > 0
-    }
-}
-
-/// the time range a manual backfill replays. inclusive of `to`, exclusive of `from`, matching the
-/// cron iterator's own half-open stepping.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct BackfillRequest {
-    pub from: DateTime<Utc>,
-    pub to: DateTime<Utc>,
-    /// cap on the number of slots replayed. defaults to [`DEFAULT_BACKFILL_LIMIT`].
-    #[serde(default)]
-    pub limit: Option<i64>,
-    /// when true, report the slots that would fire without creating any runs.
-    #[serde(default)]
-    pub dry_run: bool,
-}
-
-impl Validate for BackfillRequest {
-    fn validate(&self) -> Result<(), ValidationError> {
-        if self.to <= self.from {
-            return Err(ValidationError::new("to", "must be later than from"));
-        }
-        positive_limit("limit", self.limit, MAX_BACKFILL_LIMIT)
-    }
-}
 
 /// per-request cap on backfilled slots. a year of a minutely cron is half a million runs, so the
 /// endpoint refuses to be the thing that fills the run table by accident.
@@ -499,21 +188,39 @@ pub const DEFAULT_BACKFILL_LIMIT: i64 = 100;
 /// the maximum a caller may raise [`BackfillRequest::limit`] to.
 pub const MAX_BACKFILL_LIMIT: i64 = 1000;
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct BackfillResponse {
-    pub trigger_id: Uuid,
-    pub workflow_id: Uuid,
-    /// slots inside the range that already had a firing recorded, so they were left alone.
-    pub already_fired: i64,
-    /// slots that produced a run, or would have on a dry run.
-    pub fired: i64,
-    /// true when the range held more slots than `limit` allowed.
-    pub truncated: bool,
-    pub dry_run: bool,
-    pub run_ids: Vec<Uuid>,
-    pub slots: Vec<DateTime<Utc>>,
-}
-
 #[cfg(test)]
 #[path = "schedules_tests.rs"]
 mod tests;
+
+mod schedule_spec;
+pub use schedule_spec::ScheduleSpec;
+
+mod calendar_subscription;
+pub use calendar_subscription::CalendarSubscription;
+
+mod new_calendar_subscription_record;
+pub use new_calendar_subscription_record::NewCalendarSubscriptionRecord;
+
+mod calendar_subscription_secret;
+pub use calendar_subscription_secret::CalendarSubscriptionSecret;
+
+mod workflow_concurrency;
+pub use workflow_concurrency::WorkflowConcurrency;
+
+mod trigger_catchup;
+pub use trigger_catchup::TriggerCatchup;
+
+mod freeze_window;
+pub use freeze_window::FreezeWindow;
+
+mod new_freeze_window;
+pub use new_freeze_window::NewFreezeWindow;
+
+mod trigger_firing_batch;
+pub use trigger_firing_batch::TriggerFiringBatch;
+
+mod backfill_request;
+pub use backfill_request::BackfillRequest;
+
+mod backfill_response;
+pub use backfill_response::BackfillResponse;

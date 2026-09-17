@@ -10,125 +10,6 @@ use crate::{
 };
 use serde::{Deserialize, Serialize};
 
-#[derive(Clone, Serialize, Deserialize)]
-struct Frame {
-    name: String,
-    left: Option<Id>,
-    right: Option<Id>,
-    emitted: bool,
-    after: Option<Vec<u8>>,
-}
-
-#[derive(Clone)]
-pub struct Cursor {
-    left: Id,
-    right: Id,
-    frames: Vec<Frame>,
-    results_after: Option<Vec<u8>>,
-    done: bool,
-}
-
-#[derive(Serialize, Deserialize)]
-struct CompactCursor {
-    left: String,
-    right: String,
-    path: Option<String>,
-    emitted: bool,
-    after: Option<String>,
-    results_after: Option<String>,
-    done: bool,
-}
-impl Serialize for Cursor {
-    fn serialize<S: serde::Serializer>(
-        &self,
-        serializer: S,
-    ) -> std::result::Result<S::Ok, S::Error> {
-        use serde::ser::Error;
-        let after = self
-            .frames
-            .last()
-            .and_then(|frame| frame.after.clone())
-            .map(String::from_utf8)
-            .transpose()
-            .map_err(S::Error::custom)?;
-        let results_after = self
-            .results_after
-            .clone()
-            .map(String::from_utf8)
-            .transpose()
-            .map_err(S::Error::custom)?;
-        CompactCursor {
-            left: self.left.to_string(),
-            right: self.right.to_string(),
-            path: (!self.frames.is_empty()).then(|| {
-                self.frames
-                    .iter()
-                    .skip(1)
-                    .map(|frame| frame.name.as_str())
-                    .collect::<Vec<_>>()
-                    .join("/")
-            }),
-            emitted: self.frames.last().is_some_and(|frame| frame.emitted),
-            after,
-            results_after,
-            done: self.done,
-        }
-        .serialize(serializer)
-    }
-}
-impl<'de> Deserialize<'de> for Cursor {
-    fn deserialize<D: serde::Deserializer<'de>>(
-        deserializer: D,
-    ) -> std::result::Result<Self, D::Error> {
-        use serde::de::Error;
-        let wire = CompactCursor::deserialize(deserializer)?;
-        let mut frames = Vec::new();
-        if let Some(path) = wire.path {
-            if path.len() > 4096 {
-                return Err(D::Error::custom("diff path too long"));
-            }
-            let mut names = vec![String::new()];
-            if !path.is_empty() {
-                names.extend(path.split('/').map(str::to_owned));
-            }
-            for (index, name) in names.iter().enumerate() {
-                frames.push(Frame {
-                    name: name.clone(),
-                    left: None,
-                    right: None,
-                    emitted: if index + 1 == names.len() {
-                        wire.emitted
-                    } else {
-                        true
-                    },
-                    after: names
-                        .get(index + 1)
-                        .map(|name| name.as_bytes().to_vec())
-                        .or_else(|| wire.after.as_ref().map(|name| name.as_bytes().to_vec())),
-                });
-            }
-        }
-        Ok(Self {
-            left: wire.left.parse().map_err(D::Error::custom)?,
-            right: wire.right.parse().map_err(D::Error::custom)?,
-            frames,
-            results_after: wire.results_after.map(String::into_bytes),
-            done: wire.done,
-        })
-    }
-}
-
-pub struct Change {
-    pub path: String,
-    pub left: Option<Id>,
-    pub right: Option<Id>,
-    pub result: bool,
-}
-pub struct Page {
-    pub changes: Vec<Change>,
-    pub cursor: Option<Cursor>,
-}
-
 fn node<S: ReadStore>(view: &View<S>, id: Option<Id>) -> Result<Option<PathNode>> {
     id.map(|id| load(&view.store, id, Kind::PathNode))
         .transpose()
@@ -318,3 +199,18 @@ pub fn page<L: ReadStore, R: ReadStore>(
         cursor: (!cursor.done).then_some(cursor),
     })
 }
+
+mod frame;
+use frame::Frame;
+
+mod cursor;
+pub use cursor::Cursor;
+
+mod compact_cursor;
+use compact_cursor::CompactCursor;
+
+mod change;
+pub use change::Change;
+
+mod page;
+pub use page::Page;

@@ -6,87 +6,50 @@ use crate::{
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-#[derive(Debug, Serialize, Deserialize)]
-pub struct ReceiveRequest {
-    pub consumer: String,
-    /// when present, the server routes via the targeting-aware `receive_for` path. absent on
-    /// pre-targeting clients, which keep the plain general-pool `receive` behavior.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub profile: Option<ConsumerProfile>,
-}
+mod receive_request;
+pub use receive_request::ReceiveRequest;
 
-#[derive(Debug, Serialize, Deserialize)]
-pub struct PublishControlRequest {
-    pub command: ControlCommand,
-}
+mod publish_control_request;
+pub use publish_control_request::PublishControlRequest;
 
-#[derive(Debug, Serialize, Deserialize)]
-pub struct ReceiveControlResponse {
-    pub delivery: ControlDelivery,
-}
+mod receive_control_response;
+pub use receive_control_response::ReceiveControlResponse;
 
-#[derive(Debug, Serialize, Deserialize)]
-pub struct PublishAgentRequest {
-    pub command: AgentCommand,
-}
+mod publish_agent_request;
+pub use publish_agent_request::PublishAgentRequest;
 
-#[derive(Debug, Serialize, Deserialize)]
-pub struct ReceiveAgentResponse {
-    pub delivery: AgentDelivery,
-}
+mod receive_agent_response;
+pub use receive_agent_response::ReceiveAgentResponse;
 
-#[derive(Debug, Serialize, Deserialize)]
-pub struct PublishEffectRequest {
-    pub message: EffectMessage,
-}
+mod publish_effect_request;
+pub use publish_effect_request::PublishEffectRequest;
 
-#[derive(Debug, Serialize, Deserialize)]
-pub struct ReceiveEffectResponse {
-    pub delivery: EffectDelivery,
-}
+mod receive_effect_response;
+pub use receive_effect_response::ReceiveEffectResponse;
 
-#[derive(Debug, Serialize, Deserialize)]
-pub struct PublishEffectResultRequest {
-    pub message: EffectResultMessage,
-}
+mod publish_effect_result_request;
+pub use publish_effect_result_request::PublishEffectResultRequest;
 
-#[derive(Debug, Serialize, Deserialize)]
-pub struct ReceiveEffectResultResponse {
-    pub delivery: EffectResultDelivery,
-}
+mod receive_effect_result_response;
+pub use receive_effect_result_response::ReceiveEffectResultResponse;
 
-#[derive(Debug, Serialize, Deserialize)]
-pub struct PublishWakeRequest {
-    pub message: WakeMessage,
-}
+mod publish_wake_request;
+pub use publish_wake_request::PublishWakeRequest;
 
-#[derive(Debug, Serialize, Deserialize)]
-pub struct ReceiveWakeResponse {
-    pub delivery: WakeDelivery,
-}
+mod receive_wake_response;
+pub use receive_wake_response::ReceiveWakeResponse;
 
-#[derive(Debug, Serialize, Deserialize)]
-pub struct PublishIngressRequest {
-    pub message: IngressMessage,
-}
+mod publish_ingress_request;
+pub use publish_ingress_request::PublishIngressRequest;
 
-#[derive(Debug, Serialize, Deserialize)]
-pub struct ReceiveIngressResponse {
-    pub delivery: IngressDelivery,
-}
+mod receive_ingress_response;
+pub use receive_ingress_response::ReceiveIngressResponse;
 
-#[derive(Debug, Serialize, Deserialize)]
-pub struct PublishEventRequest {
-    pub message: EventMessage,
-}
+mod publish_event_request;
+pub use publish_event_request::PublishEventRequest;
 
-#[derive(Debug, Serialize, Deserialize)]
-pub struct ReceiveEventResponse {
-    pub delivery: EventDelivery,
-}
+mod receive_event_response;
+pub use receive_event_response::ReceiveEventResponse;
 
-#[derive(Debug, Serialize, Deserialize)]
-pub struct AckRequest {
-    pub consumer: String,
-    pub delivery_id: Uuid,
-}
+mod ack_request;
+pub use ack_request::AckRequest;

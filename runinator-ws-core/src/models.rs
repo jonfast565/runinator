@@ -47,68 +47,6 @@ use runinator_models::validation::{
     optional_text, positive_limit, required_text,
 };
 
-#[derive(Debug, Serialize, ToSchema)]
-pub struct ApiError {
-    pub message: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub path: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub expected: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub actual: Option<String>,
-}
-
-impl ApiError {
-    pub fn new(message: impl Into<String>) -> Self {
-        Self {
-            message: message.into(),
-            path: None,
-            expected: None,
-            actual: None,
-        }
-    }
-}
-
-#[derive(Debug, Serialize, ToSchema)]
-pub struct AuthConfigResponseSchema {
-    pub enabled: bool,
-}
-
-#[derive(Debug, Serialize, ToSchema)]
-pub struct LoginRequestSchema {
-    pub username: String,
-    pub password: String,
-}
-
-#[derive(Debug, Serialize, ToSchema)]
-pub struct UserSchema {
-    pub id: Option<Uuid>,
-    pub username: String,
-    pub email: Option<String>,
-    pub disabled: bool,
-    pub created_at: DateTime<Utc>,
-    pub updated_at: DateTime<Utc>,
-}
-
-#[derive(Debug, Serialize, ToSchema)]
-pub struct LoginResponseSchema {
-    pub access_token: String,
-    pub refresh_token: String,
-    pub expires_in: i64,
-    pub user: UserSchema,
-}
-
-#[derive(Debug, Serialize, ToSchema)]
-pub struct RefreshRequestSchema {
-    pub refresh_token: String,
-}
-
-#[derive(Debug, Serialize, ToSchema)]
-pub struct TaskResponseSchema {
-    pub success: bool,
-    pub message: String,
-}
-
 #[derive(Serialize)]
 #[serde(untagged)]
 pub enum ApiResponse {
@@ -222,205 +160,6 @@ pub enum ApiResponse {
     ConsoleCell(ConsoleCell),
 }
 
-#[derive(Debug, Deserialize)]
-pub struct CreateAgentDirectiveRequest {
-    pub kind: AgentDirectiveKind,
-    /// relative deadline for delivery and execution; defaults to five minutes.
-    #[serde(default)]
-    pub expires_in_seconds: Option<u64>,
-}
-
-#[derive(Debug, Default, Deserialize)]
-pub struct AgentDirectiveQuery {
-    pub limit: Option<i64>,
-}
-
-#[derive(Debug, Deserialize)]
-pub struct WorkflowRunRequest {
-    #[serde(default)]
-    pub parameters: Value,
-    #[serde(default)]
-    pub debug: bool,
-    #[serde(default)]
-    pub name: Option<String>,
-    /// File ids referenced by typed input parameters. Staged inputs are claimed for this run and
-    /// library revisions are validated immediately before the VM is nudged.
-    #[serde(default)]
-    pub file_ids: Vec<Uuid>,
-}
-
-#[derive(Debug, Deserialize)]
-pub struct WorkflowTriggerRunRequest {
-    #[serde(default)]
-    pub parameters: Value,
-    #[serde(default)]
-    pub debug: bool,
-}
-
-#[derive(Debug, Default, Deserialize)]
-pub struct PipelineRunRequest {
-    #[serde(default)]
-    pub parameters: Value,
-    /// Run an immutable historical pipeline definition instead of the current head.
-    #[serde(default)]
-    pub revision: Option<i64>,
-    /// Start with this member as the sole frontier instead of the graph's entry members.
-    #[serde(default)]
-    pub start_member: Option<String>,
-}
-
-#[derive(Debug, Deserialize)]
-pub struct OrchestrationIntentRequest {
-    pub intent: String,
-    #[serde(default)]
-    pub payload: Value,
-    pub reason: String,
-    pub idempotency_key: String,
-}
-
-#[derive(Debug, Deserialize)]
-pub struct OrchestrationRequeueRequest {
-    pub reason: String,
-    pub idempotency_key: String,
-}
-
-#[derive(Debug, Deserialize)]
-pub struct AdapterApplyRequest {
-    pub name: String,
-    pub kind: String,
-    pub kind_version: String,
-    #[serde(default)]
-    pub transport: runinator_models::orchestration::AdapterTransport,
-    #[serde(default)]
-    pub configuration: Value,
-    #[serde(default)]
-    pub authentication: runinator_models::orchestration::AdapterAuthentication,
-    /// Deprecated compatibility field. New clients send `authentication`.
-    #[serde(default)]
-    pub secret_bindings: BTreeMap<String, Uuid>,
-    #[serde(default)]
-    pub identity_configuration: Value,
-    #[serde(default)]
-    pub expected_revision: Option<i64>,
-}
-
-#[derive(Debug, Deserialize)]
-pub struct AdapterEnableRequest {
-    pub enabled: bool,
-}
-
-#[derive(Debug, Deserialize)]
-pub struct AdapterTestRequest {
-    #[serde(default)]
-    pub headers: BTreeMap<String, String>,
-    #[serde(default)]
-    pub body_base64: String,
-    #[serde(default)]
-    pub configuration: Option<Value>,
-    #[serde(default)]
-    pub authentication: Option<runinator_models::orchestration::AdapterAuthentication>,
-    /// Deprecated compatibility field. New clients send `authentication`.
-    #[serde(default)]
-    pub secret_bindings: Option<BTreeMap<String, Uuid>>,
-}
-
-#[derive(Debug, Deserialize)]
-pub struct AdapterDraftTestRequest {
-    pub draft: AdapterApplyRequest,
-    #[serde(default)]
-    pub headers: BTreeMap<String, String>,
-    #[serde(default)]
-    pub body_base64: String,
-}
-
-#[derive(Debug, Deserialize)]
-pub struct ExternalOperationResolutionRequest {
-    pub resolution: String,
-    pub reason: String,
-    #[serde(default)]
-    pub receipt: Value,
-}
-
-/// Opaque provider-neutral event submitted to a workflow or pipeline ingress policy.
-#[derive(Debug, Deserialize)]
-pub struct IngressEventRequest {
-    pub source: String,
-    pub event_id: String,
-    pub event_type: String,
-    pub correlation_key: String,
-    #[serde(default)]
-    pub payload: Value,
-    #[serde(default)]
-    pub provenance: Value,
-    #[serde(default)]
-    pub occurred_at: Option<chrono::DateTime<chrono::Utc>>,
-}
-
-#[derive(Debug, Deserialize)]
-pub struct IngressAdmissionQuery {
-    pub scope: String,
-    pub correlation_key: String,
-}
-
-#[derive(Debug, Serialize, ToSchema)]
-pub struct IngressResponse {
-    pub admission_id: Uuid,
-    pub generation: i64,
-    pub disposition: String,
-    pub duplicate: bool,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub queue_position: Option<i64>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub workflow_run_id: Option<Uuid>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub pipeline_run_id: Option<Uuid>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub orchestration_binding_id: Option<Uuid>,
-    pub message: String,
-}
-
-#[derive(Debug, Clone, Default, Deserialize, ToSchema)]
-pub struct ManagedRunOverrideRequest {
-    /// Required when a platform administrator deliberately bypasses orchestration ownership.
-    #[serde(default)]
-    pub reason: Option<String>,
-    /// Client-generated key used to prevent a retried override request from applying twice.
-    #[serde(default)]
-    pub idempotency_key: Option<String>,
-}
-
-#[derive(Debug, Default, Deserialize)]
-pub struct PipelineMemberRetryRequest {
-    #[serde(default)]
-    pub parameters: Value,
-    #[serde(default)]
-    pub override_reason: Option<String>,
-    #[serde(default)]
-    pub idempotency_key: Option<String>,
-}
-
-#[derive(Debug, Deserialize)]
-pub struct SettingMoveRequest {
-    pub kind: SettingKind,
-    pub scope: String,
-    pub name: String,
-}
-
-/// resolve a pipeline run's pending inquiry (a member with the `Inquire` failure mode paused it).
-/// mirrors [`ApprovalResolutionRequest`]'s shape; `decision` plays the approve/reject role.
-#[derive(Debug, Deserialize)]
-pub struct PipelineRunResolutionRequest {
-    pub decision: PipelineRunInquiryDecision,
-    #[serde(default)]
-    pub resolved_by: Option<String>,
-    #[serde(default)]
-    pub message: Option<String>,
-    #[serde(default)]
-    pub override_reason: Option<String>,
-    #[serde(default)]
-    pub idempotency_key: Option<String>,
-}
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum PipelineRunInquiryDecision {
@@ -428,585 +167,155 @@ pub enum PipelineRunInquiryDecision {
     Abort,
 }
 
-#[derive(Debug, Deserialize)]
-pub struct WorkflowRunStatusQuery {
-    pub status: Option<WorkflowStatus>,
-    pub workflow_id: Option<Uuid>,
-    pub name: Option<String>,
-    pub open: Option<bool>,
-    /// caps the unfiltered recent-runs list; clamped server-side. absent uses the default cap.
-    pub limit: Option<i64>,
-}
+mod api_error;
+pub use api_error::ApiError;
 
-#[derive(Debug, Deserialize)]
-pub struct WorkflowRunStatusRequest {
-    pub status: WorkflowStatus,
-    #[serde(default)]
-    pub active_node_id: Option<String>,
-    #[serde(default)]
-    pub message: Option<String>,
-}
+mod auth_config_response_schema;
+pub use auth_config_response_schema::AuthConfigResponseSchema;
 
-#[derive(Debug, Deserialize)]
-pub struct SchedulerRunClaimRequest {
-    pub scheduler_id: String,
-    pub lease_until: DateTime<Utc>,
-    #[serde(default)]
-    pub statuses: Vec<WorkflowStatus>,
-    #[serde(default)]
-    pub limit: Option<i64>,
-}
+mod login_request_schema;
+pub use login_request_schema::LoginRequestSchema;
 
-#[derive(Debug, Deserialize)]
-pub struct SchedulerRunClaimRenewRequest {
-    pub scheduler_id: String,
-    pub lease_until: DateTime<Utc>,
-}
+mod user_schema;
+pub use user_schema::UserSchema;
 
-#[derive(Debug, Deserialize)]
-pub struct SchedulerRunClaimReleaseRequest {
-    pub scheduler_id: String,
-}
+mod login_response_schema;
+pub use login_response_schema::LoginResponseSchema;
 
-#[derive(Debug, Deserialize, ToSchema)]
-pub struct WorkflowRunRenameRequest {
-    #[serde(default)]
-    pub name: Option<String>,
-}
+mod refresh_request_schema;
+pub use refresh_request_schema::RefreshRequestSchema;
 
-#[derive(Debug, Deserialize)]
-pub struct SignalDeliveryRequest {
-    pub name: String,
-    #[serde(default)]
-    pub payload: Value,
-}
+mod task_response_schema;
+pub use task_response_schema::TaskResponseSchema;
 
-/// an interrupt asked for from outside the run. `source` defaults to `external`, which is the one
-/// a caller normally has any business raising; the field exists so an operator can also drive the
-/// other sources by hand. `continuation_id` names one thread of control in a fanned-out run, and
-/// is omitted to let whichever real thread drives next take it.
-#[derive(Debug, Deserialize)]
-pub struct InterruptRequest {
-    #[serde(default)]
-    pub source: Option<String>,
-    #[serde(default)]
-    pub payload: Value,
-    /// The thread to interrupt.
-    #[serde(default)]
-    pub continuation_id: Option<Uuid>,
-}
+mod create_agent_directive_request;
+pub use create_agent_directive_request::CreateAgentDirectiveRequest;
 
-/// an event delivered to a parked `event_source` node. `type` selects which subscriptions match;
-/// the rest of the body is the payload the node's filter and body see.
-#[derive(Debug, Deserialize)]
-pub struct EventDeliveryRequest {
-    #[serde(rename = "type", default)]
-    pub event_type: Option<String>,
-    #[serde(default)]
-    pub data: Value,
-}
+mod agent_directive_query;
+pub use agent_directive_query::AgentDirectiveQuery;
 
-/// inbound webhook that routes a signal to a parked node by business correlation key (e.g. a ticket
-/// key or PR number) rather than a run id, so external systems need not track run ids.
-#[derive(Debug, Deserialize)]
-pub struct WebhookSignalRequest {
-    pub name: String,
-    pub correlation_key: String,
-    #[serde(default)]
-    pub payload: Value,
-}
+mod workflow_run_request;
+pub use workflow_run_request::WorkflowRunRequest;
 
-#[derive(Debug, Default, Deserialize, ToSchema)]
-pub struct WorkflowRunReplayRequest {
-    #[serde(default)]
-    pub plan_fingerprint: Option<String>,
-    #[serde(default)]
-    pub acknowledge_review: bool,
-    #[serde(default)]
-    pub from_step_id: Option<String>,
-    #[serde(default)]
-    pub override_reason: Option<String>,
-    #[serde(default)]
-    pub idempotency_key: Option<String>,
-}
+mod workflow_trigger_run_request;
+pub use workflow_trigger_run_request::WorkflowTriggerRunRequest;
 
-#[derive(Debug, Serialize)]
-pub struct WorkflowRunResponse {
-    pub run: WorkflowRun,
-    pub nodes: Vec<WorkflowNodeRun>,
-    pub execution_state: runinator_models::workflow_state::WorkflowExecutionState,
-}
+mod pipeline_run_request;
+pub use pipeline_run_request::PipelineRunRequest;
 
-impl WorkflowRunResponse {
-    pub fn new(run: WorkflowRun, nodes: Vec<WorkflowNodeRun>) -> Self {
-        let execution_state = run.execution_state.clone();
-        Self {
-            run,
-            nodes,
-            execution_state,
-        }
-    }
-}
+mod orchestration_intent_request;
+pub use orchestration_intent_request::OrchestrationIntentRequest;
 
-#[derive(Debug, Deserialize)]
-pub struct CatalogQuery {
-    pub item_type: Option<String>,
-    pub uri: Option<String>,
-}
+mod orchestration_requeue_request;
+pub use orchestration_requeue_request::OrchestrationRequeueRequest;
 
-#[derive(Debug, Deserialize)]
-pub struct AutomationRecordQuery {
-    pub workflow_run_id: Option<Uuid>,
-    pub external_item_id: Option<Uuid>,
-}
+mod adapter_apply_request;
+pub use adapter_apply_request::AdapterApplyRequest;
 
-#[derive(Debug, Deserialize)]
-pub struct ApprovalResolutionRequest {
-    #[serde(default)]
-    pub resolved_by: Option<String>,
-    #[serde(default)]
-    pub message: Option<String>,
-    #[serde(default)]
-    pub output_json: Option<Value>,
-}
+mod adapter_enable_request;
+pub use adapter_enable_request::AdapterEnableRequest;
 
-#[derive(Debug, Deserialize)]
-pub struct GateQuery {
-    #[serde(default)]
-    pub workflow_run_id: Option<Uuid>,
-    #[serde(default)]
-    pub status: Option<String>,
-}
+mod adapter_test_request;
+pub use adapter_test_request::AdapterTestRequest;
 
-#[derive(Debug, Deserialize)]
-pub struct DeadLetterQuery {
-    #[serde(default)]
-    pub channel: Option<String>,
-    #[serde(default)]
-    pub limit: Option<i64>,
-}
+mod adapter_draft_test_request;
+pub use adapter_draft_test_request::AdapterDraftTestRequest;
 
-#[derive(Debug, Deserialize)]
-pub struct BrokerMessageQuery {
-    pub adapter_id: Option<Uuid>,
-    #[serde(default)]
-    pub workflow_run_id: Option<Uuid>,
-    #[serde(default)]
-    pub pipeline_run_id: Option<Uuid>,
-    #[serde(default)]
-    pub channel: Option<String>,
-    #[serde(default)]
-    pub limit: Option<i64>,
-}
+mod external_operation_resolution_request;
+pub use external_operation_resolution_request::ExternalOperationResolutionRequest;
 
-#[derive(Debug, Deserialize)]
-pub struct AuditLogQuery {
-    #[serde(default)]
-    pub actor_id: Option<Uuid>,
-    #[serde(default)]
-    pub action: Option<String>,
-    #[serde(default)]
-    pub limit: Option<i64>,
-}
+mod ingress_event_request;
+pub use ingress_event_request::IngressEventRequest;
 
-#[derive(Debug, Deserialize, ToSchema)]
-pub struct GateResolutionRequest {
-    #[serde(default)]
-    pub resolved_by: Option<String>,
-    #[serde(default)]
-    pub reason: Option<String>,
-}
+mod ingress_admission_query;
+pub use ingress_admission_query::IngressAdmissionQuery;
 
-#[derive(Debug, Deserialize)]
-pub struct IdempotencyRequest {
-    pub consumer_run_id: Uuid,
-    pub scope: String,
-    pub key: String,
-    #[serde(default)]
-    pub result: Value,
-}
+mod ingress_response;
+pub use ingress_response::IngressResponse;
 
-#[derive(Debug, Deserialize)]
-pub struct CredentialQuery {
-    pub scope: Option<String>,
-    pub name: Option<String>,
-    #[serde(default)]
-    pub kind: SettingKind,
-}
+mod managed_run_override_request;
+pub use managed_run_override_request::ManagedRunOverrideRequest;
 
-#[derive(Debug, Deserialize)]
-pub struct ReplicaQuery {
-    pub replica_type: Option<runinator_models::replicas::ReplicaKind>,
-    pub status: Option<ReplicaStatus>,
-}
+mod pipeline_member_retry_request;
+pub use pipeline_member_retry_request::PipelineMemberRetryRequest;
 
-#[derive(Debug, Deserialize)]
-pub struct ReplicaSampleQuery {
-    /// look-back window in seconds; defaults to the last hour when absent.
-    pub since_seconds: Option<i64>,
-}
+mod setting_move_request;
+pub use setting_move_request::SettingMoveRequest;
 
-#[derive(Debug, Deserialize)]
-pub struct CredentialPutRequest {
-    pub scope: String,
-    pub name: String,
-    pub value: Value,
-    // declared json-schema, required once per config slot; ignored for secrets.
-    #[serde(default)]
-    pub schema: Option<Value>,
-    #[serde(default)]
-    pub kind: SettingKind,
-    /// optional RFC 3339 expiry for secrets; rejected for config values.
-    #[serde(default)]
-    pub expires_at: Option<chrono::DateTime<chrono::Utc>>,
-}
+mod pipeline_run_resolution_request;
+pub use pipeline_run_resolution_request::PipelineRunResolutionRequest;
 
-impl Validate for CreateAgentDirectiveRequest {
-    fn validate(&self) -> Result<(), ValidationError> {
-        if let Some(seconds) = self.expires_in_seconds
-            && !(1..=86_400).contains(&seconds)
-        {
-            return Err(ValidationError::new(
-                "expires_in_seconds",
-                "must be between 1 and 86400",
-            ));
-        }
-        Ok(())
-    }
-}
+mod workflow_run_status_query;
+pub use workflow_run_status_query::WorkflowRunStatusQuery;
 
-impl Validate for WorkflowRunRequest {
-    fn validate(&self) -> Result<(), ValidationError> {
-        optional_text("name", self.name.as_deref(), SHORT_TEXT_MAX)?;
-        if self.file_ids.len() > 128 {
-            return Err(ValidationError::new(
-                "file_ids",
-                "must contain at most 128 files",
-            ));
-        }
-        Ok(())
-    }
-}
+mod workflow_run_status_request;
+pub use workflow_run_status_request::WorkflowRunStatusRequest;
 
-impl Validate for WorkflowTriggerRunRequest {
-    fn validate(&self) -> Result<(), ValidationError> {
-        Ok(())
-    }
-}
+mod scheduler_run_claim_request;
+pub use scheduler_run_claim_request::SchedulerRunClaimRequest;
 
-impl Validate for PipelineRunRequest {
-    fn validate(&self) -> Result<(), ValidationError> {
-        if self.revision.is_some_and(|revision| revision <= 0) {
-            return Err(ValidationError::new(
-                "revision",
-                "must be greater than zero",
-            ));
-        }
-        if let Some(member) = self.start_member.as_deref() {
-            identifier("start_member", member)?;
-        }
-        Ok(())
-    }
-}
+mod scheduler_run_claim_renew_request;
+pub use scheduler_run_claim_renew_request::SchedulerRunClaimRenewRequest;
 
-impl Validate for OrchestrationIntentRequest {
-    fn validate(&self) -> Result<(), ValidationError> {
-        identifier("intent", &self.intent)?;
-        required_text("reason", &self.reason, LONG_TEXT_MAX)?;
-        required_text("idempotency_key", &self.idempotency_key, SHORT_TEXT_MAX)
-    }
-}
+mod scheduler_run_claim_release_request;
+pub use scheduler_run_claim_release_request::SchedulerRunClaimReleaseRequest;
 
-impl Validate for OrchestrationRequeueRequest {
-    fn validate(&self) -> Result<(), ValidationError> {
-        required_text("reason", &self.reason, LONG_TEXT_MAX)?;
-        required_text("idempotency_key", &self.idempotency_key, SHORT_TEXT_MAX)
-    }
-}
+mod workflow_run_rename_request;
+pub use workflow_run_rename_request::WorkflowRunRenameRequest;
 
-impl Validate for AdapterApplyRequest {
-    fn validate(&self) -> Result<(), ValidationError> {
-        required_text("name", &self.name, SHORT_TEXT_MAX)?;
-        identifier("kind", &self.kind)?;
-        identifier("kind_version", &self.kind_version)?;
-        if self.expected_revision.is_some_and(|revision| revision < 0) {
-            return Err(ValidationError::new(
-                "expected_revision",
-                "must not be negative",
-            ));
-        }
-        if self.secret_bindings.len() > 128 {
-            return Err(ValidationError::new(
-                "secret_bindings",
-                "must contain at most 128 entries",
-            ));
-        }
-        for key in self.secret_bindings.keys() {
-            identifier(&format!("secret_bindings.{key}"), key)?;
-        }
-        match &self.authentication {
-            runinator_models::orchestration::AdapterAuthentication::Secrets { secret_bindings } => {
-                if secret_bindings.len() > 128 {
-                    return Err(ValidationError::new(
-                        "authentication.secret_bindings",
-                        "must contain at most 128 entries",
-                    ));
-                }
-                for key in secret_bindings.keys() {
-                    identifier(&format!("authentication.secret_bindings.{key}"), key)?;
-                }
-            }
-            runinator_models::orchestration::AdapterAuthentication::ExecutionProfile { .. } => {}
-        }
-        Ok(())
-    }
-}
+mod signal_delivery_request;
+pub use signal_delivery_request::SignalDeliveryRequest;
 
-impl Validate for AdapterEnableRequest {
-    fn validate(&self) -> Result<(), ValidationError> {
-        Ok(())
-    }
-}
+mod interrupt_request;
+pub use interrupt_request::InterruptRequest;
 
-impl Validate for AdapterTestRequest {
-    fn validate(&self) -> Result<(), ValidationError> {
-        if self.headers.len() > 128 {
-            return Err(ValidationError::new(
-                "headers",
-                "must contain at most 128 headers",
-            ));
-        }
-        for (name, value) in &self.headers {
-            identifier(&format!("headers.{name}"), name)?;
-            if value.contains(['\r', '\n']) {
-                return Err(ValidationError::new(
-                    format!("headers.{name}"),
-                    "must not contain line breaks",
-                ));
-            }
-            bounded_text(&format!("headers.{name}"), value, 8 * 1024)?;
-        }
-        if self
-            .secret_bindings
-            .as_ref()
-            .is_some_and(|bindings| bindings.len() > 128)
-        {
-            return Err(ValidationError::new(
-                "secret_bindings",
-                "must contain at most 128 entries",
-            ));
-        }
-        bounded_text("body_base64", &self.body_base64, 16 * 1024 * 1024)
-    }
-}
+mod event_delivery_request;
+pub use event_delivery_request::EventDeliveryRequest;
 
-impl Validate for AdapterDraftTestRequest {
-    fn validate(&self) -> Result<(), ValidationError> {
-        self.draft.validate()?;
-        if self.headers.len() > 128 {
-            return Err(ValidationError::new(
-                "headers",
-                "must contain at most 128 headers",
-            ));
-        }
-        for (name, value) in &self.headers {
-            identifier(&format!("headers.{name}"), name)?;
-            if value.contains(['\r', '\n']) {
-                return Err(ValidationError::new(
-                    format!("headers.{name}"),
-                    "must not contain line breaks",
-                ));
-            }
-            bounded_text(&format!("headers.{name}"), value, 8 * 1024)?;
-        }
-        bounded_text("body_base64", &self.body_base64, 2 * 1024 * 1024)
-    }
-}
+mod webhook_signal_request;
+pub use webhook_signal_request::WebhookSignalRequest;
 
-impl Validate for ExternalOperationResolutionRequest {
-    fn validate(&self) -> Result<(), ValidationError> {
-        if !matches!(self.resolution.as_str(), "succeeded" | "failed" | "retry") {
-            return Err(ValidationError::new(
-                "resolution",
-                "must be one of succeeded, failed, or retry",
-            ));
-        }
-        required_text("reason", &self.reason, LONG_TEXT_MAX)
-    }
-}
+mod workflow_run_replay_request;
+pub use workflow_run_replay_request::WorkflowRunReplayRequest;
 
-impl Validate for IngressEventRequest {
-    fn validate(&self) -> Result<(), ValidationError> {
-        identifier("source", &self.source)?;
-        required_text("event_id", &self.event_id, SHORT_TEXT_MAX)?;
-        identifier("event_type", &self.event_type)?;
-        required_text("correlation_key", &self.correlation_key, SHORT_TEXT_MAX)
-    }
-}
+mod workflow_run_response;
+pub use workflow_run_response::WorkflowRunResponse;
 
-impl Validate for ManagedRunOverrideRequest {
-    fn validate(&self) -> Result<(), ValidationError> {
-        optional_text("reason", self.reason.as_deref(), LONG_TEXT_MAX)?;
-        optional_text(
-            "idempotency_key",
-            self.idempotency_key.as_deref(),
-            SHORT_TEXT_MAX,
-        )
-    }
-}
+mod catalog_query;
+pub use catalog_query::CatalogQuery;
 
-impl Validate for PipelineMemberRetryRequest {
-    fn validate(&self) -> Result<(), ValidationError> {
-        optional_text(
-            "override_reason",
-            self.override_reason.as_deref(),
-            LONG_TEXT_MAX,
-        )?;
-        optional_text(
-            "idempotency_key",
-            self.idempotency_key.as_deref(),
-            SHORT_TEXT_MAX,
-        )
-    }
-}
+mod automation_record_query;
+pub use automation_record_query::AutomationRecordQuery;
 
-impl Validate for SettingMoveRequest {
-    fn validate(&self) -> Result<(), ValidationError> {
-        identifier("scope", &self.scope)?;
-        identifier("name", &self.name)
-    }
-}
+mod approval_resolution_request;
+pub use approval_resolution_request::ApprovalResolutionRequest;
 
-impl Validate for PipelineRunResolutionRequest {
-    fn validate(&self) -> Result<(), ValidationError> {
-        optional_text("resolved_by", self.resolved_by.as_deref(), SHORT_TEXT_MAX)?;
-        optional_text("message", self.message.as_deref(), LONG_TEXT_MAX)?;
-        optional_text(
-            "override_reason",
-            self.override_reason.as_deref(),
-            LONG_TEXT_MAX,
-        )?;
-        optional_text(
-            "idempotency_key",
-            self.idempotency_key.as_deref(),
-            SHORT_TEXT_MAX,
-        )
-    }
-}
+mod gate_query;
+pub use gate_query::GateQuery;
 
-impl Validate for WorkflowRunStatusRequest {
-    fn validate(&self) -> Result<(), ValidationError> {
-        optional_text(
-            "active_node_id",
-            self.active_node_id.as_deref(),
-            SHORT_TEXT_MAX,
-        )?;
-        optional_text("message", self.message.as_deref(), LONG_TEXT_MAX)
-    }
-}
+mod dead_letter_query;
+pub use dead_letter_query::DeadLetterQuery;
 
-impl Validate for SchedulerRunClaimRequest {
-    fn validate(&self) -> Result<(), ValidationError> {
-        identifier("scheduler_id", &self.scheduler_id)?;
-        positive_limit("limit", self.limit, 1000)
-    }
-}
+mod broker_message_query;
+pub use broker_message_query::BrokerMessageQuery;
 
-impl Validate for SchedulerRunClaimRenewRequest {
-    fn validate(&self) -> Result<(), ValidationError> {
-        identifier("scheduler_id", &self.scheduler_id)
-    }
-}
+mod audit_log_query;
+pub use audit_log_query::AuditLogQuery;
 
-impl Validate for SchedulerRunClaimReleaseRequest {
-    fn validate(&self) -> Result<(), ValidationError> {
-        identifier("scheduler_id", &self.scheduler_id)
-    }
-}
+mod gate_resolution_request;
+pub use gate_resolution_request::GateResolutionRequest;
 
-impl Validate for WorkflowRunRenameRequest {
-    fn validate(&self) -> Result<(), ValidationError> {
-        optional_text("name", self.name.as_deref(), SHORT_TEXT_MAX)
-    }
-}
+mod idempotency_request;
+pub use idempotency_request::IdempotencyRequest;
 
-impl Validate for SignalDeliveryRequest {
-    fn validate(&self) -> Result<(), ValidationError> {
-        identifier("name", &self.name)
-    }
-}
+mod credential_query;
+pub use credential_query::CredentialQuery;
 
-impl Validate for InterruptRequest {
-    fn validate(&self) -> Result<(), ValidationError> {
-        optional_text("source", self.source.as_deref(), SHORT_TEXT_MAX)
-    }
-}
+mod replica_query;
+pub use replica_query::ReplicaQuery;
 
-impl Validate for EventDeliveryRequest {
-    fn validate(&self) -> Result<(), ValidationError> {
-        optional_text("type", self.event_type.as_deref(), SHORT_TEXT_MAX)
-    }
-}
+mod replica_sample_query;
+pub use replica_sample_query::ReplicaSampleQuery;
 
-impl Validate for WebhookSignalRequest {
-    fn validate(&self) -> Result<(), ValidationError> {
-        identifier("name", &self.name)?;
-        required_text("correlation_key", &self.correlation_key, SHORT_TEXT_MAX)
-    }
-}
-
-impl Validate for WorkflowRunReplayRequest {
-    fn validate(&self) -> Result<(), ValidationError> {
-        optional_text("from_step_id", self.from_step_id.as_deref(), SHORT_TEXT_MAX)?;
-        optional_text(
-            "plan_fingerprint",
-            self.plan_fingerprint.as_deref(),
-            SHORT_TEXT_MAX,
-        )?;
-        optional_text(
-            "override_reason",
-            self.override_reason.as_deref(),
-            LONG_TEXT_MAX,
-        )?;
-        optional_text(
-            "idempotency_key",
-            self.idempotency_key.as_deref(),
-            SHORT_TEXT_MAX,
-        )
-    }
-}
-
-impl Validate for ApprovalResolutionRequest {
-    fn validate(&self) -> Result<(), ValidationError> {
-        optional_text("resolved_by", self.resolved_by.as_deref(), SHORT_TEXT_MAX)?;
-        optional_text("message", self.message.as_deref(), LONG_TEXT_MAX)
-    }
-}
-
-impl Validate for GateResolutionRequest {
-    fn validate(&self) -> Result<(), ValidationError> {
-        optional_text("resolved_by", self.resolved_by.as_deref(), SHORT_TEXT_MAX)?;
-        optional_text("reason", self.reason.as_deref(), LONG_TEXT_MAX)
-    }
-}
-
-impl Validate for IdempotencyRequest {
-    fn validate(&self) -> Result<(), ValidationError> {
-        identifier("scope", &self.scope)?;
-        required_text("key", &self.key, SHORT_TEXT_MAX)
-    }
-}
-
-impl Validate for CredentialPutRequest {
-    fn validate(&self) -> Result<(), ValidationError> {
-        identifier("scope", &self.scope)?;
-        identifier("name", &self.name)?;
-        if self.kind == SettingKind::Config && self.expires_at.is_some() {
-            return Err(ValidationError::new(
-                "expires_at",
-                "is only valid for secrets",
-            ));
-        }
-        Ok(())
-    }
-}
+mod credential_put_request;
+pub use credential_put_request::CredentialPutRequest;

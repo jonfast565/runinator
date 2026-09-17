@@ -33,41 +33,11 @@ impl SettingKind {
     }
 }
 
-/// a stored setting's identity, without its value. returned by the list endpoint.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct SettingSummary {
-    pub id: Uuid,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub org_id: Option<Uuid>,
-    pub scope: String,
-    pub name: String,
-    #[serde(default)]
-    pub kind: SettingKind,
-    /// expiry declared for a secret, if any. config entries never carry expiry metadata.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub expires_at: Option<DateTime<Utc>>,
-}
+mod setting_summary;
+pub use setting_summary::SettingSummary;
 
-/// a stored setting's full persisted form: identity, the value bytes as held at rest (ciphertext
-/// when the store encrypts), and the unix-seconds modification time used for import
-/// reconciliation. this is a persistence record, not a wire type.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct SettingRecord {
-    /// Durable logical identity. Scope/name are the human-facing alias and may move without
-    /// changing a persisted consumer reference.
-    pub id: Uuid,
-    pub org_id: Option<Uuid>,
-    pub kind: SettingKind,
-    pub scope: String,
-    pub name: String,
-    pub value: Vec<u8>,
-    pub updated_at: i64,
-}
+mod setting_record;
+pub use setting_record::SettingRecord;
 
-/// A workflow's durable dependency on a config or secret value. The UUID is authoritative while
-/// the authored scope/key remains available for decompilation and run-input aliasing.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct SettingBinding {
-    pub kind: SettingKind,
-    pub reference: ArtifactRef,
-}
+mod setting_binding;
+pub use setting_binding::SettingBinding;

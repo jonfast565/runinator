@@ -37,11 +37,6 @@ use uuid::Uuid;
 
 // the persisted form of a config entry: the json value plus the schema it was validated against,
 // so the schema is pinned per (scope, name) and later value-only updates reuse it.
-#[derive(Debug, Serialize, Deserialize)]
-struct StoredConfig {
-    value: Value,
-    schema: Value,
-}
 
 /// decode a stored config payload back to its json value (back-compat: a bare value or string).
 pub fn decode_config_value(bytes: &[u8]) -> Value {
@@ -157,13 +152,6 @@ fn value_type(value: &Value) -> &'static str {
 // only the web service and engine hold the keys.
 fn settings_cipher() -> SecretCipher {
     SecretCipher::from_env()
-}
-
-/// A setting bundle failed either validation (safe to report as a bad request) or persistence.
-#[derive(Debug)]
-pub struct SettingBundleImportError {
-    pub bad_request: bool,
-    pub message: String,
 }
 
 /// Import settings through the supplied store, preserving the reconciliation semantics used by
@@ -531,55 +519,6 @@ pub async fn save_rate_card<T: SettingStore>(db: &T, card: &RateCard) -> Result<
     .await
 }
 
-/// Cheap, cloneable snapshot shared by all loops in an engine replica.
-#[derive(Clone)]
-pub struct ServerSettingsHandle {
-    current: Arc<RwLock<ServerSettings>>,
-    configured: Arc<AtomicBool>,
-}
-
-impl ServerSettingsHandle {
-    pub async fn load<T: RuntimeStore + SettingStore>(db: &T) -> Result<Self, SendableError> {
-        let persisted = load_persisted_server_settings(db).await?;
-        let configured = persisted.is_some();
-        let current = match persisted {
-            Some(settings) => settings,
-            None => load_server_settings(db).await?,
-        };
-        Ok(Self {
-            current: Arc::new(RwLock::new(current)),
-            configured: Arc::new(AtomicBool::new(configured)),
-        })
-    }
-
-    pub fn current(&self) -> ServerSettings {
-        self.current
-            .read()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
-            .clone()
-    }
-
-    /// Whether an administrator has saved the unified policy at least once.
-    pub fn configured(&self) -> bool {
-        self.configured.load(Ordering::SeqCst)
-    }
-
-    async fn refresh<T: RuntimeStore + SettingStore>(&self, db: &T) -> Result<(), SendableError> {
-        let persisted = load_persisted_server_settings(db).await?;
-        let configured = persisted.is_some();
-        let next = match persisted {
-            Some(settings) => settings,
-            None => load_server_settings(db).await?,
-        };
-        *self
-            .current
-            .write()
-            .unwrap_or_else(|poisoned| poisoned.into_inner()) = next;
-        self.configured.store(configured, Ordering::SeqCst);
-        Ok(())
-    }
-}
-
 /// Refresh the shared snapshot so UI changes take effect without restarting server or worker
 /// replicas. The refresh interval itself is read from the current snapshot.
 pub async fn run_server_settings_refresher<T: RuntimeStore + SettingStore>(
@@ -608,3 +547,12 @@ pub async fn run_server_settings_refresher<T: RuntimeStore + SettingStore>(
 #[cfg(test)]
 #[path = "settings_tests.rs"]
 mod tests;
+
+mod stored_config;
+use stored_config::StoredConfig;
+
+mod setting_bundle_import_error;
+pub use setting_bundle_import_error::SettingBundleImportError;
+
+mod server_settings_handle;
+pub use server_settings_handle::ServerSettingsHandle;

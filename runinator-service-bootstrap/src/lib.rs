@@ -13,141 +13,9 @@ use runinator_platform::startup::ProcessResources;
 pub use runinator_broker::{BrokerBuildError, BrokerClientConfig, BrokerConsumerProfile};
 pub use runinator_db_cli;
 
-/// Request the process's object store and optionally reconcile its buckets on startup.
-#[derive(Debug, Clone, Copy)]
-pub struct BlobRequest {
-    pub ensure_buckets: bool,
-}
-
-/// Explicit database selection parsed by a service's existing CLI.
-#[derive(Debug, Clone)]
-pub struct DatabaseRequest {
-    pub backend: DatabaseBackend,
-    pub sqlite_path: Option<PathBuf>,
-    pub database_url: Option<String>,
-}
-
-/// Resolved database input suitable for concrete, macro-based database dispatch.
-#[derive(Debug, Clone)]
-pub struct DatabaseResource {
-    backend: DatabaseBackend,
-    sqlite_connection: String,
-    url: String,
-}
-
-impl DatabaseResource {
-    pub fn backend(&self) -> DatabaseBackend {
-        self.backend
-    }
-
-    pub fn sqlite_connection(&self) -> &str {
-        &self.sqlite_connection
-    }
-
-    pub fn url(&self) -> &str {
-        &self.url
-    }
-}
-
 /// A completed set of the infrastructure resources requested by a service.
-pub struct ServerResources {
-    process: ProcessResources,
-    broker: Option<Arc<dyn Broker>>,
-    blobs: Option<Arc<dyn BlobStore>>,
-    database: Option<DatabaseResource>,
-}
-
-impl ServerResources {
-    pub fn builder(name: impl Into<String>) -> ServerResourcesBuilder {
-        ServerResourcesBuilder::new(name)
-    }
-
-    pub fn process(&self) -> &ProcessResources {
-        &self.process
-    }
-
-    pub fn broker(&self) -> Option<&Arc<dyn Broker>> {
-        self.broker.as_ref()
-    }
-
-    pub fn blobs(&self) -> Option<&Arc<dyn BlobStore>> {
-        self.blobs.as_ref()
-    }
-
-    pub fn database(&self) -> Option<&DatabaseResource> {
-        self.database.as_ref()
-    }
-}
 
 /// Selects exactly the shared resources a server needs before creating them.
-pub struct ServerResourcesBuilder {
-    name: String,
-    broker: Option<(BrokerClientConfig, BrokerConsumerProfile)>,
-    blobs: Option<BlobRequest>,
-    database: Option<DatabaseRequest>,
-}
-
-impl ServerResourcesBuilder {
-    fn new(name: impl Into<String>) -> Self {
-        Self {
-            name: name.into(),
-            broker: None,
-            blobs: None,
-            database: None,
-        }
-    }
-
-    pub fn broker(mut self, config: BrokerClientConfig, profile: BrokerConsumerProfile) -> Self {
-        self.broker = Some((config, profile));
-        self
-    }
-
-    pub fn blobs(mut self, request: BlobRequest) -> Self {
-        self.blobs = Some(request);
-        self
-    }
-
-    pub fn database(mut self, request: DatabaseRequest) -> Self {
-        self.database = Some(request);
-        self
-    }
-
-    pub async fn build(self) -> Result<ServerResources, ServerBootstrapError> {
-        let process = ProcessResources::start(&self.name).map_err(ServerBootstrapError::Process)?;
-        let broker = match self.broker {
-            Some((config, profile)) => Some(
-                build_broker_client(&config, profile)
-                    .await
-                    .map_err(ServerBootstrapError::Broker)?,
-            ),
-            None => None,
-        };
-        let blobs = match self.blobs {
-            Some(request) => {
-                let store = runinator_blob::from_env()
-                    .await
-                    .map_err(ServerBootstrapError::Blob)?;
-                if request.ensure_buckets {
-                    runinator_blob::ensure_buckets(&store)
-                        .await
-                        .map_err(ServerBootstrapError::Blob)?;
-                }
-                Some(store)
-            }
-            None => None,
-        };
-        let database = match self.database {
-            Some(request) => Some(resolve_database(request).await?),
-            None => None,
-        };
-        Ok(ServerResources {
-            process,
-            broker,
-            blobs,
-            database,
-        })
-    }
-}
 
 async fn resolve_database(
     request: DatabaseRequest,
@@ -269,3 +137,18 @@ mod tests {
         assert!(resources.database().is_none());
     }
 }
+
+mod blob_request;
+pub use blob_request::BlobRequest;
+
+mod database_request;
+pub use database_request::DatabaseRequest;
+
+mod database_resource;
+pub use database_resource::DatabaseResource;
+
+mod server_resources;
+pub use server_resources::ServerResources;
+
+mod server_resources_builder;
+pub use server_resources_builder::ServerResourcesBuilder;

@@ -18,72 +18,8 @@ use crate::resource_telemetry::{TelemetryCollector, host_metadata};
 // the tracer name used for the per-binary tracing-opentelemetry bridge.
 const TRACER_NAME: &str = "runinator";
 
-/// holds the otel providers so signals keep flowing for the process lifetime and are flushed on
-/// shutdown. the bridged tracing layers (returned separately) borrow nothing from this guard, but
-/// dropping it shuts the providers down, so keep it alive in `main` until exit.
-#[derive(Default)]
-pub struct TelemetryGuard {
-    tracer_provider: Option<SdkTracerProvider>,
-    meter_provider: Option<SdkMeterProvider>,
-    logger_provider: Option<SdkLoggerProvider>,
-    // Retaining the asynchronous instrument keeps its callback registered for the provider's
-    // lifetime. It deliberately lives in the guard beside that provider.
-    uptime: Option<ObservableGauge<u64>>,
-    resource_host_cpu: Option<ObservableGauge<f64>>,
-    resource_host_memory: Option<ObservableGauge<u64>>,
-    resource_process_cpu: Option<ObservableGauge<f64>>,
-    resource_process_memory: Option<ObservableGauge<u64>>,
-    resource_f64_gauges: Vec<ObservableGauge<f64>>,
-    resource_u64_gauges: Vec<ObservableGauge<u64>>,
-}
-
-impl TelemetryGuard {
-    /// a guard owning no providers; returned when otel is disabled or already initialized.
-    pub fn disabled() -> Self {
-        Self::default()
-    }
-
-    /// true when at least one signal provider was installed.
-    pub fn is_enabled(&self) -> bool {
-        self.tracer_provider.is_some()
-            || self.meter_provider.is_some()
-            || self.logger_provider.is_some()
-    }
-
-    /// flush and shut the providers down. idempotent; called automatically on drop.
-    pub fn shutdown(&mut self) {
-        if let Some(provider) = self.tracer_provider.take() {
-            let _ = provider.shutdown();
-        }
-        self.uptime.take();
-        self.resource_host_cpu.take();
-        self.resource_host_memory.take();
-        self.resource_process_cpu.take();
-        self.resource_process_memory.take();
-        self.resource_f64_gauges.clear();
-        self.resource_u64_gauges.clear();
-        if let Some(provider) = self.meter_provider.take() {
-            let _ = provider.shutdown();
-        }
-        if let Some(provider) = self.logger_provider.take() {
-            let _ = provider.shutdown();
-        }
-    }
-}
-
-impl Drop for TelemetryGuard {
-    fn drop(&mut self) {
-        self.shutdown();
-    }
-}
-
 /// the tracing layers bridged to otel, paired with the guard that keeps the providers alive. the
 /// caller composes the layers into the global subscriber and retains the guard.
-pub struct TelemetryLayers {
-    pub guard: TelemetryGuard,
-    pub tracer: Option<SdkTracer>,
-    pub logger_provider: Option<SdkLoggerProvider>,
-}
 
 /// install the global w3c trace-context propagator and, when otel is configured, build the otlp
 /// trace/metric/log providers for `service_name`. returns the bridged trace/log layers for the
@@ -708,26 +644,6 @@ fn to_sendable<E: std::error::Error + Send + Sync + 'static>(err: E) -> Sendable
 /// so any broker backend serializes it without special handling; empty when otel is off.
 pub type TraceContext = HashMap<String, String>;
 
-struct MapInjector<'a>(&'a mut TraceContext);
-
-impl Injector for MapInjector<'_> {
-    fn set(&mut self, key: &str, value: String) {
-        self.0.insert(key.to_string(), value);
-    }
-}
-
-struct MapExtractor<'a>(&'a TraceContext);
-
-impl Extractor for MapExtractor<'_> {
-    fn get(&self, key: &str) -> Option<&str> {
-        self.0.get(key).map(String::as_str)
-    }
-
-    fn keys(&self) -> Vec<&str> {
-        self.0.keys().map(String::as_str).collect()
-    }
-}
-
 /// capture the active span's trace context into a carrier for embedding in a broker message. empty
 /// when otel is disabled or no span is active, so producers can always call it unconditionally.
 pub fn current_trace_context() -> TraceContext {
@@ -780,3 +696,15 @@ pub fn inject_into_headers(headers: &mut http::HeaderMap) {
         propagator.inject_context(&context, &mut HeaderInjector(headers));
     });
 }
+
+mod telemetry_guard;
+pub use telemetry_guard::TelemetryGuard;
+
+mod telemetry_layers;
+pub use telemetry_layers::TelemetryLayers;
+
+mod map_injector;
+use map_injector::MapInjector;
+
+mod map_extractor;
+use map_extractor::MapExtractor;

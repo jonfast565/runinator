@@ -50,59 +50,6 @@ async fn audit_change<T: AuthorizationStore>(
     .await;
 }
 
-#[derive(Debug, Deserialize)]
-pub struct SetRoleRequest {
-    pub role: Role,
-}
-
-#[derive(Debug, Deserialize)]
-pub struct TransferOwnerRequest {
-    pub owner: ScopeRef,
-}
-
-#[derive(Debug, Deserialize)]
-pub struct CreateServiceAccountRequest {
-    pub name: String,
-}
-
-#[derive(Debug, Deserialize)]
-pub struct UpdateServiceAccountRequest {
-    pub disabled: bool,
-}
-
-impl Validate for SetRoleRequest {
-    fn validate(&self) -> Result<(), ValidationError> {
-        Ok(())
-    }
-}
-
-impl Validate for TransferOwnerRequest {
-    fn validate(&self) -> Result<(), ValidationError> {
-        Ok(())
-    }
-}
-
-impl Validate for CreateServiceAccountRequest {
-    fn validate(&self) -> Result<(), ValidationError> {
-        required_text("name", &self.name, SHORT_TEXT_MAX)
-    }
-}
-
-impl Validate for UpdateServiceAccountRequest {
-    fn validate(&self) -> Result<(), ValidationError> {
-        Ok(())
-    }
-}
-
-#[derive(Serialize)]
-struct AuthzCatalog {
-    actions: &'static [Action],
-    platform_roles: [PlatformRole; 4],
-    organization_roles: [OrgRole; 4],
-    team_roles: [TeamRole; 4],
-    resource_types: [ResourceType; 10],
-}
-
 fn ok<T: Serialize>(value: &T) -> Reply {
     match serde_json::to_value(value) {
         Ok(value) => (
@@ -957,3 +904,18 @@ pub const DOCS: &[EndpointDoc] = &[
         Example::None,
     ),
 ];
+
+mod set_role_request;
+pub use set_role_request::SetRoleRequest;
+
+mod transfer_owner_request;
+pub use transfer_owner_request::TransferOwnerRequest;
+
+mod create_service_account_request;
+pub use create_service_account_request::CreateServiceAccountRequest;
+
+mod update_service_account_request;
+pub use update_service_account_request::UpdateServiceAccountRequest;
+
+mod authz_catalog;
+use authz_catalog::AuthzCatalog;

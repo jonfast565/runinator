@@ -10,12 +10,6 @@ use super::cache::MetadataCache;
 use super::format;
 use super::paths::BucketPaths;
 
-#[derive(Default)]
-pub(super) struct ListingStats {
-    pub(super) visited_entries: u64,
-    pub(super) metadata_reads: u64,
-}
-
 pub(super) fn page(
     bucket: &str,
     paths: &BucketPaths,
@@ -46,17 +40,6 @@ pub(super) fn page(
         next_continuation_token: state.truncated.then_some(state.last_seen).flatten(),
     };
     Ok((response, state.stats))
-}
-
-struct PageState<'a> {
-    bucket: &'a str,
-    request: &'a ListRequest,
-    cache: &'a MetadataCache,
-    objects: Vec<ObjectSummary>,
-    common_prefixes: BTreeSet<String>,
-    last_seen: Option<String>,
-    truncated: bool,
-    stats: ListingStats,
 }
 
 fn visit_directory(
@@ -253,3 +236,9 @@ pub(super) fn has_objects(paths: &BucketPaths) -> Result<bool, BlobError> {
     }
     any(&paths.objects_root())
 }
+
+mod listing_stats;
+pub(super) use listing_stats::ListingStats;
+
+mod page_state;
+use page_state::PageState;

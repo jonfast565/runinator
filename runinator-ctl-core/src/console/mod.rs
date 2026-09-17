@@ -11,89 +11,6 @@ use crate::cli::Commands;
 
 pub use catalog::{CommandEntry, MetaCommand};
 
-#[derive(Debug, Parser)]
-#[command(
-    name = "runinatorctl",
-    no_binary_name = true,
-    disable_help_subcommand = true,
-    about = "Every runinatorctl command, prefixed with `:` inside the console"
-)]
-pub struct ReplCommand {
-    /// Print this command's output as json.
-    #[arg(long, global = true)]
-    pub json: bool,
-    #[command(subcommand)]
-    pub command: Commands,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Token {
-    pub text: String,
-    pub raw: String,
-}
-
-#[derive(Debug, Default, Clone, PartialEq, Eq, Serialize)]
-pub struct Arguments {
-    pub args: Vec<String>,
-    pub raw_args: Vec<String>,
-    pub flags: BTreeMap<String, Vec<String>>,
-    pub switches: Vec<String>,
-}
-
-impl Arguments {
-    pub fn raw_after(&self, word: &str) -> Option<String> {
-        let at = self.args.iter().position(|value| value == word)?;
-        Some(self.raw_args[at + 1..].join(" "))
-    }
-
-    pub fn arg(&self, index: usize) -> Option<&str> {
-        self.args.get(index).map(String::as_str)
-    }
-
-    pub fn required(&self, index: usize, name: &str) -> Result<&str, String> {
-        self.arg(index)
-            .filter(|value| !value.is_empty())
-            .ok_or_else(|| format!("{name} is required"))
-    }
-
-    pub fn flag(&self, name: &str) -> Option<&str> {
-        self.flags
-            .get(name)
-            .and_then(|values| values.last())
-            .map(String::as_str)
-    }
-
-    pub fn flag_list(&self, name: &str) -> &[String] {
-        self.flags.get(name).map(Vec::as_slice).unwrap_or_default()
-    }
-
-    pub fn is_set(&self, name: &str) -> bool {
-        self.switches.iter().any(|candidate| candidate == name) || self.flags.contains_key(name)
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
-pub struct Completion {
-    pub start: usize,
-    pub options: Vec<String>,
-    pub hint: Option<String>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
-pub struct ArgumentSpec {
-    pub label: String,
-    pub help: String,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
-pub struct CommandSpec {
-    pub path: Vec<String>,
-    pub usage: String,
-    pub summary: String,
-    pub console_local: bool,
-    pub arguments: Vec<ArgumentSpec>,
-}
-
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum ParsedLine {
@@ -530,3 +447,21 @@ mod tests {
         );
     }
 }
+
+mod repl_command;
+pub use repl_command::ReplCommand;
+
+mod token;
+pub use token::Token;
+
+mod arguments;
+pub use arguments::Arguments;
+
+mod completion;
+pub use completion::Completion;
+
+mod argument_spec;
+pub use argument_spec::ArgumentSpec;
+
+mod command_spec;
+pub use command_spec::CommandSpec;

@@ -6,13 +6,6 @@ use std::thread::{self, JoinHandle};
 
 use crate::runner::{LineSink, Stream};
 
-/// what one drained stream produced.
-#[derive(Debug, Default)]
-pub struct Drained {
-    pub text: String,
-    pub truncated: bool,
-}
-
 /// spawn a thread that reads `reader` to end-of-stream, keeping at most `max_bytes` and handing
 /// every line to `sink` as it arrives.
 ///
@@ -55,25 +48,8 @@ where
     })
 }
 
-/// a [`LineSink`] that records what it saw, for tests and for callers that want the lines twice.
-#[derive(Default)]
-pub struct RecordingSink {
-    lines: Mutex<Vec<(Stream, String)>>,
-}
+mod drained;
+pub use drained::Drained;
 
-impl RecordingSink {
-    pub fn lines(&self) -> Vec<(Stream, String)> {
-        self.lines
-            .lock()
-            .map(|lines| lines.clone())
-            .unwrap_or_default()
-    }
-}
-
-impl LineSink for RecordingSink {
-    fn line(&self, stream: Stream, text: &str) {
-        if let Ok(mut lines) = self.lines.lock() {
-            lines.push((stream, text.to_string()));
-        }
-    }
-}
+mod recording_sink;
+pub use recording_sink::RecordingSink;

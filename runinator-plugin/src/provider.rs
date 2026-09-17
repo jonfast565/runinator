@@ -11,25 +11,8 @@ use runinator_models::{
 
 use crate::cancel::CancellationToken;
 
-pub trait ProviderEventSink: Send + Sync {
-    fn emit(&self, event: ProviderExecutionEvent);
+mod provider_event_sink;
+pub use provider_event_sink::ProviderEventSink;
 
-    /// Transfer this effect's terminal-control receiver to a provider that owns an interactive
-    /// session. The default preserves compatibility for sinks outside the worker runtime.
-    fn take_terminal_control(&self) -> Option<Receiver<ProviderTerminalControl>> {
-        None
-    }
-}
-
-pub trait Provider: Send + Sync {
-    fn name(&self) -> String;
-
-    fn metadata(&self) -> ProviderMetadata;
-
-    fn execute_service(
-        &self,
-        request: ProviderExecutionRequest,
-        sink: Option<Arc<dyn ProviderEventSink>>,
-        token: CancellationToken,
-    ) -> Result<TaskExecutionResult, SendableError>;
-}
+mod provider;
+pub use provider::Provider;

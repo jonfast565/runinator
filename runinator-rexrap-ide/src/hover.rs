@@ -18,28 +18,6 @@ use crate::completion::{
 use crate::cursor::{Cursor, clamp_to_char_boundary};
 use crate::documentation::{keyword_documentation, type_documentation, type_syntax};
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct RexRapHoverRequest {
-    pub source: String,
-    pub cursor_byte: usize,
-    #[serde(default)]
-    pub providers: Vec<ProviderMetadata>,
-    #[serde(default)]
-    pub settings: Vec<SettingSummary>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-pub struct RexRapHoverResponse {
-    pub range_start_byte: usize,
-    pub range_end_byte: usize,
-    pub title: String,
-    pub kind: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub detail: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub documentation: Option<String>,
-}
-
 /// resolve editor hover information at a byte cursor using provider metadata and local type context.
 pub fn hover_source(request: RexRapHoverRequest) -> Option<RexRapHoverResponse> {
     let source = request.source;
@@ -694,27 +672,6 @@ fn call_name_before(source: &str, open: usize) -> Option<(&str, &str)> {
     ))
 }
 
-#[derive(Debug, Clone, Copy)]
-pub(crate) struct WordAt<'a> {
-    pub(crate) text: &'a str,
-    pub(crate) start: usize,
-    pub(crate) end: usize,
-}
-
-#[derive(Debug)]
-pub(crate) struct HoverPath<'a> {
-    pub(crate) parts: Vec<&'a str>,
-    pub(crate) ranges: Vec<(usize, usize)>,
-}
-
-impl HoverPath<'_> {
-    fn segment_index_at(&self, offset: usize) -> Option<usize> {
-        self.ranges
-            .iter()
-            .position(|(start, end)| *start <= offset && offset <= *end)
-    }
-}
-
 fn identifier_start_before(source: &str, end: usize, allow_hyphen: bool) -> Option<usize> {
     if end == 0 {
         return None;
@@ -734,3 +691,15 @@ fn identifier_start_before(source: &str, end: usize, allow_hyphen: bool) -> Opti
 fn plural(count: usize) -> &'static str {
     if count == 1 { "" } else { "s" }
 }
+
+mod rex_rap_hover_request;
+pub use rex_rap_hover_request::RexRapHoverRequest;
+
+mod rex_rap_hover_response;
+pub use rex_rap_hover_response::RexRapHoverResponse;
+
+mod word_at;
+pub(crate) use word_at::WordAt;
+
+mod hover_path;
+pub(crate) use hover_path::HoverPath;

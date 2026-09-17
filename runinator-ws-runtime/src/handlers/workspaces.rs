@@ -20,35 +20,10 @@ use serde::Deserialize;
 use std::sync::Arc;
 use uuid::Uuid;
 
-#[derive(Deserialize)]
-pub struct Page {
-    #[serde(default = "page_size")]
-    limit: i64,
-    #[serde(default)]
-    offset: i64,
-}
 fn page_size() -> i64 {
     50
 }
-#[derive(Deserialize)]
-pub struct Create {
-    key: String,
-}
-impl runinator_models::validation::Validate for Create {
-    fn validate(&self) -> Result<(), runinator_models::validation::ValidationError> {
-        runinator_models::validation::required_text("key", &self.key, 200)
-    }
-}
-#[derive(Deserialize)]
-pub struct FileQuery {
-    path: Option<String>,
-    offset: Option<u64>,
-    length: Option<usize>,
-}
-#[derive(Deserialize)]
-pub struct WorkerQuery {
-    replica_id: Uuid,
-}
+
 pub(super) fn failed(error: impl std::fmt::Display) -> Response {
     let message = error.to_string();
     let status = if message.contains("WORKSPACE007") {
@@ -337,14 +312,6 @@ pub async fn upload_pack<T: DatabaseImpl>(
     }
 }
 
-#[derive(Deserialize)]
-pub struct DirectoryQuery {
-    #[serde(default)]
-    path: String,
-    cursor: Option<String>,
-    limit: Option<usize>,
-}
-
 pub async fn directory<T: DatabaseImpl>(
     Extension(db): Extension<Arc<T>>,
     Extension(service): Extension<Arc<WorkspaceService<T>>>,
@@ -455,13 +422,6 @@ pub async fn seal<T: DatabaseImpl>(
     }
 }
 
-#[derive(Deserialize)]
-pub struct ResultQuery {
-    name: String,
-    #[serde(default)]
-    preview: bool,
-}
-
 pub async fn results<T: DatabaseImpl>(
     Extension(db): Extension<Arc<T>>,
     Extension(service): Extension<Arc<WorkspaceService<T>>>,
@@ -552,11 +512,6 @@ pub async fn ticket_content<T: DatabaseImpl>(
     }
 }
 
-#[derive(Deserialize)]
-pub struct DiffQuery {
-    before: i64,
-    cursor: Option<String>,
-}
 pub async fn diff<T: DatabaseImpl>(
     Extension(db): Extension<Arc<T>>,
     Extension(service): Extension<Arc<WorkspaceService<T>>>,
@@ -927,3 +882,24 @@ pub const DOCS: &[EndpointDoc] = &[
         Example::TaskResponse
     ),
 ];
+
+mod page;
+pub use page::Page;
+
+mod create;
+pub use create::Create;
+
+mod file_query;
+pub use file_query::FileQuery;
+
+mod worker_query;
+pub use worker_query::WorkerQuery;
+
+mod directory_query;
+pub use directory_query::DirectoryQuery;
+
+mod result_query;
+pub use result_query::ResultQuery;
+
+mod diff_query;
+pub use diff_query::DiffQuery;

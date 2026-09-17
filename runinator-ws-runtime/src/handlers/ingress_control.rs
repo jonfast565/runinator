@@ -33,60 +33,6 @@ use uuid::Uuid;
 
 use super::runs::RunOperationsStore;
 
-pub trait IngressControlStore: RunOperationsStore + DeliveryStore + DefinitionStore {}
-
-impl<T> IngressControlStore for T where T: RunOperationsStore + DeliveryStore + DefinitionStore {}
-
-#[derive(Debug, Deserialize)]
-pub struct GateRequest {
-    mode: ExternalIngressGateMode,
-}
-
-#[derive(Debug, Deserialize)]
-pub struct SessionRequest {
-    scope: ScopeRef,
-    mode: BrokerIngressSessionMode,
-}
-
-#[derive(Debug, Deserialize)]
-pub struct SessionHeartbeatRequest {
-    scope: ScopeRef,
-}
-
-impl Validate for GateRequest {
-    fn validate(&self) -> Result<(), ValidationError> {
-        Ok(())
-    }
-}
-
-impl Validate for SessionRequest {
-    fn validate(&self) -> Result<(), ValidationError> {
-        Ok(())
-    }
-}
-
-impl Validate for SessionHeartbeatRequest {
-    fn validate(&self) -> Result<(), ValidationError> {
-        Ok(())
-    }
-}
-
-#[derive(Debug, Deserialize)]
-pub struct ControlQuery {
-    scope_kind: Option<ScopeKind>,
-    scope_id: Option<Uuid>,
-    target_kind: Option<IngressTargetKind>,
-    target_id: Option<Uuid>,
-    state: Option<IngressControlState>,
-    limit: Option<i64>,
-}
-
-#[derive(Debug, Deserialize)]
-pub struct ScopeQuery {
-    scope_kind: ScopeKind,
-    scope_id: Option<Uuid>,
-}
-
 fn target(kind: &str, id: Uuid) -> Result<IngressTarget, String> {
     let kind = match kind {
         "workflow" => IngressTargetKind::Workflow,
@@ -724,3 +670,21 @@ pub fn routes<T: IngressControlStore>(pool: Arc<T>) -> axum::Router {
         .route("/ingress_control/broker/{id}/drop", post(drop_broker::<T>))
         .layer(Extension(pool))
 }
+
+mod ingress_control_store;
+pub use ingress_control_store::IngressControlStore;
+
+mod gate_request;
+pub use gate_request::GateRequest;
+
+mod session_request;
+pub use session_request::SessionRequest;
+
+mod session_heartbeat_request;
+pub use session_heartbeat_request::SessionHeartbeatRequest;
+
+mod control_query;
+pub use control_query::ControlQuery;
+
+mod scope_query;
+pub use scope_query::ScopeQuery;

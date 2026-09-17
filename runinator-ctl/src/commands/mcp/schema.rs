@@ -90,33 +90,6 @@ impl Scalar {
     }
 }
 
-/// one argument of one command, in the two shapes it has to be known in: a json property and a
-/// command-line word.
-#[derive(Debug, Clone)]
-pub(crate) struct ToolArgument {
-    /// the json property name, which is clap's argument id.
-    pub key: String,
-    pub form: Form,
-    pub kind: Kind,
-    /// what one value of it is, for the json type.
-    pub scalar: Scalar,
-    pub required: bool,
-    pub description: String,
-    /// the closed set of values, when clap knows one.
-    pub values: Vec<String>,
-    pub default: Option<String>,
-}
-
-/// one `runinatorctl` command, as a tool.
-#[derive(Debug, Clone)]
-pub(crate) struct CommandTool {
-    /// the words that select the command, e.g. `["workflows", "apply"]`.
-    pub path: Vec<String>,
-    pub name: String,
-    pub description: String,
-    pub arguments: Vec<ToolArgument>,
-}
-
 /// every command that can be called over MCP, as a tool.
 ///
 /// built once: the clap tree is walked for each command's arguments, which is not free, and
@@ -533,3 +506,9 @@ fn scalar(value: &Value, key: &str) -> Result<String, String> {
 #[cfg(test)]
 #[path = "schema_tests.rs"]
 mod tests;
+
+mod tool_argument;
+pub(crate) use tool_argument::ToolArgument;
+
+mod command_tool;
+pub(crate) use command_tool::CommandTool;

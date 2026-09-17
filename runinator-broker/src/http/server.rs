@@ -21,18 +21,6 @@ use serde::Serialize;
 use std::{net::SocketAddr, sync::Arc};
 use tokio::net::TcpListener;
 
-struct AppState<B> {
-    broker: Arc<B>,
-}
-
-impl<B> Clone for AppState<B> {
-    fn clone(&self) -> Self {
-        Self {
-            broker: Arc::clone(&self.broker),
-        }
-    }
-}
-
 /// run an http broker, applying the bearer-token gate configured via env (open when none is set).
 pub async fn run_server<B>(addr: SocketAddr, broker: B) -> Result<(), std::io::Error>
 where
@@ -618,29 +606,11 @@ where
     (status, axum::Json(payload)).into_response()
 }
 
-#[derive(Serialize)]
-struct HealthResponse {
-    status: &'static str,
-}
+mod app_state;
+use app_state::AppState;
 
-#[derive(Serialize)]
-struct ErrorResponse {
-    code: &'static str,
-    message: String,
-}
+mod health_response;
+use health_response::HealthResponse;
 
-impl ErrorResponse {
-    fn new(code: &'static str, message: impl Into<String>) -> Self {
-        Self {
-            code,
-            message: message.into(),
-        }
-    }
-
-    fn duplicate(key: String) -> Self {
-        Self::new("duplicate", key)
-    }
-    fn unknown_delivery(id: uuid::Uuid) -> Self {
-        Self::new("unknown_delivery", id.to_string())
-    }
-}
+mod error_response;
+use error_response::ErrorResponse;

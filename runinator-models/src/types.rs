@@ -5,142 +5,6 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 use crate::value::{Map, Value};
 
-#[derive(Debug, Clone, PartialEq)]
-pub struct RuninatorField {
-    pub ty: RuninatorType,
-    pub required: bool,
-    /// an optional default value for the field. for workflow input fields this may be a lowered
-    /// expression (`{"$ref":...}`, `{"$concat":...}`, a `secret://` string, or a literal) that is
-    /// evaluated against the run context when the field is omitted.
-    pub default: Option<Value>,
-}
-
-impl RuninatorField {
-    pub fn required(ty: RuninatorType) -> Self {
-        Self {
-            ty,
-            required: true,
-            default: None,
-        }
-    }
-
-    pub fn optional(ty: RuninatorType) -> Self {
-        Self {
-            ty,
-            required: false,
-            default: None,
-        }
-    }
-
-    /// attach a default value; a defaulted field is treated as optional since the default fills it.
-    pub fn with_default(mut self, default: Value) -> Self {
-        self.default = Some(default);
-        self.required = false;
-        self
-    }
-
-    fn from_native_value(value: Value) -> Result<Self, String> {
-        let Some(object) = value.as_object() else {
-            return Ok(Self::required(RuninatorType::from_native_value(value)?));
-        };
-        if object.contains_key("ty") {
-            let ty = object
-                .get("ty")
-                .cloned()
-                .map(RuninatorType::from_native_value)
-                .transpose()?
-                .ok_or_else(|| "field ty is required".to_string())?;
-            let required = match object.get("required") {
-                Some(Value::Bool(required)) => *required,
-                Some(_) => return Err("field required must be a boolean".into()),
-                None => true,
-            };
-            let default = object.get("default").cloned();
-            return Ok(Self {
-                ty,
-                required,
-                default,
-            });
-        }
-        if matches!(object.get("required"), Some(Value::Bool(_))) {
-            return Err("field required requires field ty".into());
-        }
-        Ok(Self::required(RuninatorType::from_native_value(value)?))
-    }
-
-    fn to_native_value(&self) -> Value {
-        let mut object = Map::from_iter([
-            ("ty".into(), self.ty.to_native_value()),
-            ("required".into(), Value::Bool(self.required)),
-        ]);
-        if let Some(default) = &self.default {
-            object.insert("default".into(), default.clone());
-        }
-        Value::Object(object)
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct TypeViolation {
-    pub path: String,
-    pub expected: String,
-    pub actual: String,
-}
-
-impl TypeViolation {
-    fn new(path: &[String], expected: impl Into<String>, actual: impl Into<String>) -> Self {
-        Self {
-            path: format_path(path),
-            expected: expected.into(),
-            actual: actual.into(),
-        }
-    }
-
-    pub fn at(path: &[String], expected: impl Into<String>, actual: impl Into<String>) -> Self {
-        Self::new(path, expected, actual)
-    }
-
-    pub fn message_with_label(&self, label: &str) -> String {
-        let label = Self::label_with_path(label, &self.path);
-        if self.actual == "missing" {
-            return format!("{label} is missing required field");
-        }
-        if self.actual == "unexpected" {
-            return format!("{label} is not allowed");
-        }
-        format!("{label} expected {}, got {}", self.expected, self.actual)
-    }
-
-    pub fn label_with_path(label: &str, path: &str) -> String {
-        let path = path.trim_start_matches('$');
-        if path.is_empty() {
-            return label.to_string();
-        }
-        if let Some(prefix) = label.strip_suffix('\'') {
-            return format!("{prefix}{path}'");
-        }
-        format!("{label}{path}")
-    }
-}
-
-impl std::fmt::Display for TypeViolation {
-    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        if self.actual == "missing" {
-            return write!(formatter, "{} is missing required field", self.path);
-        }
-        if self.actual == "unexpected" {
-            return write!(formatter, "{} is not allowed", self.path);
-        }
-        write!(
-            formatter,
-            "{} expected {}, got {}",
-            self.path, self.expected, self.actual
-        )
-    }
-}
-
-impl std::error::Error for TypeViolation {}
-
 /// Native Runinator value type metadata.
 #[derive(Debug, Clone, PartialEq, Default)]
 pub enum RuninatorType {
@@ -1417,3 +1281,9 @@ fn range_bounds_within(
     }
     true
 }
+
+mod runinator_field;
+pub use runinator_field::RuninatorField;
+
+mod type_violation;
+pub use type_violation::TypeViolation;

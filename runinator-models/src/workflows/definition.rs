@@ -1,101 +1,5 @@
 use super::*;
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(remote = "Self")]
-pub struct WorkflowDefinition {
-    pub id: Option<Uuid>,
-    pub name: String,
-    /// Stable authoring key for this logical workflow. Display-name edits and namespace moves do
-    /// not change it. Older definitions omit it and temporarily fall back to `name` until the
-    /// namespace migration writes an explicit key.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub key: Option<String>,
-    /// the namespace that qualifies this workflow's identity, from a `namespace <path>` header.
-    /// `None` for an unqualified workflow. a subflow target `"<namespace>.<name>"` resolves against
-    /// the qualified identity `namespace + "." + name`.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub namespace: Option<String>,
-    /// the organization (tenant) that owns this workflow. `None` means platform-global / unassigned,
-    /// which keeps pre-tenancy workflows working unchanged.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub org_id: Option<Uuid>,
-    #[serde(default)]
-    pub version: SemVer,
-    #[serde(default)]
-    pub enabled: bool,
-    #[serde(default)]
-    #[serde(deserialize_with = "deserialize_workflow_type")]
-    pub input_type: RuninatorType,
-    /// Published return contract; omitted declarations remain unknown (`Any`).
-    #[serde(default)]
-    pub output_type: RuninatorType,
-    #[serde(default)]
-    pub definition: WorkflowGraph,
-    #[serde(default)]
-    pub created_at: Option<DateTime<Utc>>,
-    #[serde(default)]
-    pub updated_at: Option<DateTime<Utc>>,
-}
-
-impl Serialize for WorkflowDefinition {
-    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        Self::serialize(self, serializer)
-    }
-}
-
-impl<'de> Deserialize<'de> for WorkflowDefinition {
-    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        let value = serde_json::Value::deserialize(deserializer)?;
-        Self::deserialize(crate::workflow_contracts::with_legacy_output_type(value))
-            .map_err(serde::de::Error::custom)
-    }
-}
-
-impl WorkflowDefinition {
-    /// The durable key used when source does not carry the UUID directly.
-    pub fn artifact_key(&self) -> &str {
-        self.key.as_deref().unwrap_or(&self.name)
-    }
-
-    /// The current human-facing path. This is an alias for the UUID, not the artifact identity.
-    pub fn artifact_path(&self) -> crate::artifacts::ArtifactPath {
-        crate::artifacts::ArtifactPath::new(self.namespace.clone(), self.artifact_key().to_string())
-    }
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq)]
-pub struct WorkflowGraph {
-    #[serde(default)]
-    pub start: Option<String>,
-    #[serde(default)]
-    pub nodes: Vec<WorkflowNode>,
-    #[serde(default, rename = "$defs")]
-    pub defs: Map,
-    #[serde(default)]
-    pub metadata: Value,
-    #[serde(flatten)]
-    pub extra: Map,
-}
-
-impl WorkflowGraph {
-    pub fn as_value(&self) -> Value {
-        serde_json::to_value(self)
-            .map(Value::from)
-            .unwrap_or_else(|_| Value::Object(Map::new()))
-    }
-
-    pub fn from_value(value: Value) -> Result<Self, String> {
-        match serde_json::from_value(value.clone().into()) {
-            Ok(graph) => Ok(graph),
-            Err(_) => {
-                let mut expanded = value;
-                expand_local_defs_refs(&mut expanded, &mut Vec::new())?;
-                serde_json::from_value(expanded.into()).map_err(|err| err.to_string())
-            }
-        }
-    }
-}
-
 fn expand_local_defs_refs(value: &mut Value, stack: &mut Vec<String>) -> Result<(), String> {
     let defs = value
         .get("$defs")
@@ -169,12 +73,6 @@ fn merge_overlay(target: &mut Value, overlay: Value) {
     }
 }
 
-impl fmt::Display for WorkflowGraph {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        self.as_value().fmt(formatter)
-    }
-}
-
 fn deserialize_workflow_type<'de, D>(deserializer: D) -> Result<RuninatorType, D::Error>
 where
     D: Deserializer<'de>,
@@ -184,56 +82,20 @@ where
         .or_else(|_| Ok(RuninatorType::from_json_schema(&value)))
 }
 
-/// request body for duplicating a workflow into a new version sharing the same name.
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
-pub struct WorkflowDuplicateRequest {
-    #[serde(default)]
-    pub bump: SemVerBump,
-}
-
-/// request body for a server-side dry-run (branch preview). The `workflow` is walked with the
-/// reducer's evaluators against live config, publishing no actions; `inputs` seed the run and an
-/// optional `replay_run` replays that run's recorded node outputs so the walk follows real branches.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct WorkflowSimulateRequest {
-    pub workflow: WorkflowDefinition,
-    #[serde(default)]
-    pub inputs: Value,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub replay_run: Option<Uuid>,
-}
-
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
-pub struct WorkflowBundle {
-    #[serde(default)]
-    pub workflows: Vec<WorkflowDefinition>,
-    #[serde(default)]
-    pub triggers: Vec<WorkflowTrigger>,
-}
-
-impl crate::validation::Validate for WorkflowDefinition {
-    fn validate(&self) -> Result<(), crate::validation::ValidationError> {
-        use crate::validation::{
-            SHORT_TEXT_MAX, identifier, optional_text, required_text, serialized,
-        };
-
-        required_text("name", &self.name, SHORT_TEXT_MAX)?;
-        if let Some(key) = self.key.as_deref() {
-            identifier("key", key)?;
-        }
-        optional_text("namespace", self.namespace.as_deref(), SHORT_TEXT_MAX)?;
-        serialized("workflow", self)?;
-        Ok(())
-    }
-}
-
-impl crate::validation::Validate for WorkflowSimulateRequest {
-    fn validate(&self) -> Result<(), crate::validation::ValidationError> {
-        crate::validation::Validate::validate(&self.workflow)?;
-        crate::validation::dynamic_value("inputs", &self.inputs)?;
-        Ok(())
-    }
-}
-
 // note: raw json workflow bundles use an explicit client method because the server requires
 // a risk-acknowledgment header before accepting them.
+
+mod workflow_definition;
+pub use workflow_definition::WorkflowDefinition;
+
+mod workflow_graph;
+pub use workflow_graph::WorkflowGraph;
+
+mod workflow_duplicate_request;
+pub use workflow_duplicate_request::WorkflowDuplicateRequest;
+
+mod workflow_simulate_request;
+pub use workflow_simulate_request::WorkflowSimulateRequest;
+
+mod workflow_bundle;
+pub use workflow_bundle::WorkflowBundle;

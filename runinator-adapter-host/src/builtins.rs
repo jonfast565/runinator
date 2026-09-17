@@ -3,16 +3,6 @@ use super::*;
 use std::{future::Future, pin::Pin, sync::OnceLock};
 
 type PollFuture = Pin<Box<dyn Future<Output = AdapterPollResponse> + Send>>;
-pub(super) trait BuiltinAdapter: Send + Sync {
-    fn metadata(&self) -> AdapterKindMetadata;
-    fn validate(&self, request: AdapterValidationRequest) -> AdapterValidationResponse {
-        validate_configuration(&self.metadata(), request)
-    }
-    fn handle(&self, request: AdapterRequest, body_limit: usize) -> AdapterResponse;
-    fn poll(&self, request: AdapterPollRequest) -> PollFuture {
-        Box::pin(async move { unsupported_poll(request) })
-    }
-}
 
 fn validate_configuration(
     metadata: &AdapterKindMetadata,
@@ -110,48 +100,7 @@ fn validate_configuration(
     }
     AdapterValidationResponse { issues }
 }
-struct GenericWebhook;
-struct Github;
-struct Jira;
-struct SlackIngress;
-impl BuiltinAdapter for GenericWebhook {
-    fn metadata(&self) -> AdapterKindMetadata {
-        generic_metadata()
-    }
-    fn handle(&self, request: AdapterRequest, body_limit: usize) -> AdapterResponse {
-        handle_generic(request, body_limit)
-    }
-}
-impl BuiltinAdapter for Github {
-    fn metadata(&self) -> AdapterKindMetadata {
-        github_metadata()
-    }
-    fn handle(&self, request: AdapterRequest, body_limit: usize) -> AdapterResponse {
-        handle_github(request, body_limit)
-    }
-    fn poll(&self, request: AdapterPollRequest) -> PollFuture {
-        Box::pin(poll_github(request))
-    }
-}
-impl BuiltinAdapter for Jira {
-    fn metadata(&self) -> AdapterKindMetadata {
-        jira_metadata()
-    }
-    fn handle(&self, request: AdapterRequest, body_limit: usize) -> AdapterResponse {
-        handle_jira(request, body_limit)
-    }
-    fn poll(&self, request: AdapterPollRequest) -> PollFuture {
-        Box::pin(poll_jira(request))
-    }
-}
-impl BuiltinAdapter for SlackIngress {
-    fn metadata(&self) -> AdapterKindMetadata {
-        slack_ingress_metadata()
-    }
-    fn handle(&self, request: AdapterRequest, body_limit: usize) -> AdapterResponse {
-        handle_slack_ingress(request, body_limit)
-    }
-}
+
 pub(super) fn registry() -> &'static BTreeMap<String, Box<dyn BuiltinAdapter>> {
     static REGISTRY: OnceLock<BTreeMap<String, Box<dyn BuiltinAdapter>>> = OnceLock::new();
     REGISTRY.get_or_init(|| {
@@ -179,3 +128,18 @@ pub(super) fn unsupported_poll(request: AdapterPollRequest) -> AdapterPollRespon
 #[cfg(test)]
 #[path = "builtins_tests.rs"]
 mod tests;
+
+mod builtin_adapter;
+pub(super) use builtin_adapter::BuiltinAdapter;
+
+mod generic_webhook;
+use generic_webhook::GenericWebhook;
+
+mod github;
+use github::Github;
+
+mod jira;
+use jira::Jira;
+
+mod slack_ingress;
+use slack_ingress::SlackIngress;

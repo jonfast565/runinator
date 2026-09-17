@@ -56,41 +56,6 @@ pub(crate) type Screen = File;
 pub(crate) type Shared = Arc<Mutex<Transcript>>;
 
 /// what the console holds while its output is being captured; dropping it puts the streams back.
-pub(crate) struct Capture {
-    inner: Option<platform::Redirect>,
-}
-
-impl Capture {
-    /// redirect stdout and stderr into a fresh transcript.
-    ///
-    /// returns the log, and the terminal to draw on.
-    pub(crate) fn install(limit: usize) -> Result<(Self, Screen, Shared)> {
-        let (redirect, screen, transcript) = platform::install(limit)?;
-        Ok((
-            Self {
-                inner: Some(redirect),
-            },
-            screen,
-            transcript,
-        ))
-    }
-
-    /// put the streams back and finish reading whatever was still in flight.
-    ///
-    /// separate from `Drop` because the console replays the transcript to the real terminal
-    /// afterwards, and that has to happen with stdout pointing at the terminal again.
-    pub(crate) fn restore(&mut self) {
-        if let Some(redirect) = self.inner.take() {
-            redirect.restore();
-        }
-    }
-}
-
-impl Drop for Capture {
-    fn drop(&mut self) {
-        self.restore();
-    }
-}
 
 /// read the pipe until it closes, appending to the transcript as output arrives.
 ///
@@ -151,20 +116,6 @@ fn pump(mut source: File, sink: Shared) {
 }
 
 /// start the reader thread over a pipe's read end.
-pub(super) struct Reader {
-    handle: JoinHandle<()>,
-    done: Receiver<()>,
-}
-
-impl Reader {
-    pub(super) fn finish(self) {
-        if self.done.recv_timeout(Duration::from_millis(250)).is_ok() {
-            let _ = self.handle.join();
-        }
-        // An inherited child writer may outlive the prompt. Detaching the drain prevents exit from
-        // hanging and keeps the read end open until that writer closes naturally.
-    }
-}
 
 fn spawn_reader(source: File, limit: usize) -> Result<(Reader, Shared)> {
     let transcript: Shared = Arc::new(Mutex::new(Transcript::with_limit(limit)));
@@ -182,3 +133,9 @@ fn spawn_reader(source: File, limit: usize) -> Result<(Reader, Shared)> {
 #[cfg(test)]
 #[path = "capture_tests.rs"]
 mod tests;
+
+mod capture;
+pub(crate) use capture::Capture;
+
+mod reader;
+pub(super) use reader::Reader;

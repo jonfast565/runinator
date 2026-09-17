@@ -39,30 +39,8 @@ use crate::{
 
 const RECEIVE_RETRY_BACKOFF: Duration = Duration::from_secs(1);
 
-/// One provider effect tracked so a targeted or run-wide control cancellation can stop it.
-#[derive(Clone)]
-pub(crate) struct InFlightAction {
-    pub(crate) workflow_run_id: Uuid,
-    pub(crate) token: CancellationToken,
-    pub(crate) canceled_by_control: Arc<AtomicBool>,
-    pub(crate) terminal: Sender<ProviderTerminalControl>,
-}
-
 /// Everything the VM provider-effect loop needs. The standalone worker and desktop agent share
 /// this runtime so provider behavior cannot drift between them.
-pub struct WorkerRuntime {
-    pub broker: Arc<dyn Broker>,
-    pub profile: ConsumerProfile,
-    pub libraries: Arc<HashMap<String, Plugin>>,
-    pub api_client: AsyncApiClient<StaticLocator>,
-    pub providers: ProviderFactory,
-    pub max_concurrent_actions: usize,
-    pub shutdown_grace: Duration,
-    pub shutdown: Arc<Notify>,
-    pub events: Arc<dyn WorkerEventSink>,
-    pub result_outbox: Arc<dyn ResultOutbox>,
-    pub directive_handler: Arc<dyn DirectiveHandler>,
-}
 
 /// Load plugin libraries from the supplied search paths, skipping paths which do not exist.
 pub fn load_libraries(paths: &[String]) -> Result<HashMap<String, Plugin>, SendableError> {
@@ -295,3 +273,9 @@ async fn handle_control_delivery(
         .await
         .map_err(|error| broker_error("ack_control", error))
 }
+
+mod in_flight_action;
+pub(crate) use in_flight_action::InFlightAction;
+
+mod worker_runtime;
+pub use worker_runtime::WorkerRuntime;

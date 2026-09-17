@@ -54,50 +54,6 @@ pub type NameFn = unsafe extern "C" fn() -> *const std::ffi::c_char;
 pub type FileOperationFn =
     unsafe extern "C" fn(*const std::ffi::c_char, *const std::ffi::c_char) -> i32;
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct AdapterRequest {
-    #[serde(default)]
-    pub method: String,
-    #[serde(default)]
-    pub headers: BTreeMap<String, String>,
-    /// RFC 4648 base64 request bytes.
-    pub body_base64: String,
-    #[serde(default)]
-    pub configuration: Value,
-    #[serde(default)]
-    pub secrets: Value,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct AdapterResponse {
-    pub verified: bool,
-    #[serde(default)]
-    pub events: Vec<NormalizedAdapterEvent>,
-    #[serde(default)]
-    pub errors: Vec<String>,
-    /// optional adapter-defined JSON response returned immediately after verification. this keeps
-    /// webhook handshakes inside the adapter instead of teaching the HTTP handler vendor rules.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub immediate_response: Option<AdapterImmediateResponse>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct AdapterImmediateResponse {
-    pub status: u16,
-    #[serde(default)]
-    pub body: Value,
-}
-
-/// A draft configuration submitted before an adapter definition is persisted.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct AdapterValidationRequest {
-    pub transport: AdapterTransport,
-    #[serde(default)]
-    pub configuration: Value,
-    #[serde(default)]
-    pub authentication: AdapterAuthentication,
-}
-
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum AdapterValidationSeverity {
@@ -105,70 +61,29 @@ pub enum AdapterValidationSeverity {
     Warning,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-pub struct AdapterValidationIssue {
-    pub path: String,
-    pub code: String,
-    pub message: String,
-    pub severity: AdapterValidationSeverity,
-}
+mod adapter_request;
+pub use adapter_request::AdapterRequest;
 
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
-pub struct AdapterValidationResponse {
-    #[serde(default)]
-    pub issues: Vec<AdapterValidationIssue>,
-}
+mod adapter_response;
+pub use adapter_response::AdapterResponse;
 
-impl AdapterValidationResponse {
-    pub fn is_valid(&self) -> bool {
-        !self
-            .issues
-            .iter()
-            .any(|issue| issue.severity == AdapterValidationSeverity::Error)
-    }
-}
+mod adapter_immediate_response;
+pub use adapter_immediate_response::AdapterImmediateResponse;
 
-/// A pull request made by the durable adapter scheduler. `checkpoint` is opaque to Runinator and
-/// belongs to the adapter kind; implementations must return a replacement only after they have
-/// completely enumerated the associated event batch.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct AdapterPollRequest {
-    #[serde(default)]
-    pub configuration: Value,
-    #[serde(default)]
-    pub secrets: Value,
-    #[serde(default)]
-    pub checkpoint: Value,
-    /// A first poll establishes a high-water mark without replaying history.
-    #[serde(default)]
-    pub initialize: bool,
-}
+mod adapter_validation_request;
+pub use adapter_validation_request::AdapterValidationRequest;
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct AdapterPollResponse {
-    #[serde(default)]
-    pub events: Vec<NormalizedAdapterEvent>,
-    #[serde(default)]
-    pub checkpoint: Value,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub retry_after_seconds: Option<u64>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub error: Option<String>,
-}
+mod adapter_validation_issue;
+pub use adapter_validation_issue::AdapterValidationIssue;
 
-impl AdapterResponse {
-    pub fn rejected(error: impl Into<String>) -> Self {
-        Self {
-            verified: false,
-            events: Vec::new(),
-            errors: vec![error.into()],
-            immediate_response: None,
-        }
-    }
-}
+mod adapter_validation_response;
+pub use adapter_validation_response::AdapterValidationResponse;
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct AdapterMetadataEnvelope {
-    pub abi_version: u32,
-    pub metadata: AdapterKindMetadata,
-}
+mod adapter_poll_request;
+pub use adapter_poll_request::AdapterPollRequest;
+
+mod adapter_poll_response;
+pub use adapter_poll_response::AdapterPollResponse;
+
+mod adapter_metadata_envelope;
+pub use adapter_metadata_envelope::AdapterMetadataEnvelope;

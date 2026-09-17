@@ -26,143 +26,65 @@ impl BranchPolicy {
     }
 }
 
-#[derive(Debug, Clone, PartialEq)]
-pub struct SwitchCase {
-    pub target: WorkflowNodeRef,
-    pub condition: WorkflowCondition,
-}
-
-#[derive(Debug, Clone, PartialEq)]
-pub struct SwitchParameters {
-    pub value: WorkflowExpression,
-    pub cases: Vec<SwitchCase>,
-    pub default: Option<WorkflowNodeRef>,
-}
-
-/// a literal light switch: `value` truthiness routes to `on`, otherwise `off`.
-#[derive(Debug, Clone, PartialEq)]
-pub struct ToggleParameters {
-    pub value: WorkflowExpression,
-    pub on: WorkflowNodeRef,
-    pub off: WorkflowNodeRef,
-}
-
-/// a weighted, hash-bucketed router: `hash(key) % total_weight` selects a bucket. sticky per key.
-#[derive(Debug, Clone, PartialEq)]
-pub struct PercentageParameters {
-    pub key: WorkflowExpression,
-    pub buckets: Vec<PercentageBucket>,
-    pub default: Option<WorkflowNodeRef>,
-}
-
-#[derive(Debug, Clone, PartialEq)]
-pub struct PercentageBucket {
-    pub weight: i64,
-    pub target: WorkflowNodeRef,
-}
-
-#[derive(Debug, Clone, PartialEq)]
-pub struct ParallelParameters {
-    pub branches: Vec<WorkflowNodeRef>,
-}
-
-#[derive(Debug, Clone, PartialEq)]
-pub struct JoinParameters {
-    pub wait_for: Vec<WorkflowNodeRef>,
-    pub mode: BranchPolicy,
-}
-
-#[derive(Debug, Clone, PartialEq)]
-pub struct TryParameters {
-    pub body: WorkflowNodeRef,
-    pub catch: Option<WorkflowNodeRef>,
-    pub finally: Option<WorkflowNodeRef>,
-}
-
-#[derive(Debug, Clone, PartialEq)]
-pub struct MapParameters {
-    pub items: WorkflowExpression,
-    pub target: WorkflowNodeRef,
-    pub concurrency: Option<i64>,
-}
-
-#[derive(Debug, Clone, PartialEq)]
-pub struct RaceParameters {
-    pub branches: Vec<WorkflowNodeRef>,
-    pub winner: BranchPolicy,
-}
-
-#[derive(Debug, Clone, PartialEq)]
-pub struct OutputParameters {
-    pub event_type: Option<String>,
-    pub data: WorkflowExpression,
-    /// artifact declarations: name/source pairs promoted to run-level by this output node.
-    pub items: Vec<ArtifactItem>,
-}
-
-/// an `invocation` node's compiled program plus how long one call of it may take.
-///
-/// the module is held decoded rather than as raw json: parsing it here is what makes an
-/// undecodable module a *validation* error, caught when the definition is saved, instead of a
-/// runtime failure on the first run that reaches the node.
-#[derive(Debug, Clone, PartialEq)]
-pub struct InvocationParameters {
-    pub module: InvocationModule,
-    /// the per-call deadline the node's policy supplies, which a `with { }` postfix may override.
-    pub timeout_seconds: Option<i64>,
-}
-
-#[derive(Debug, Clone, PartialEq)]
-pub struct ArtifactItem {
-    pub name: String,
-    /// value-ref that resolves to an artifact descriptor (or array of them) at runtime.
-    pub source: WorkflowExpression,
-}
-
-#[derive(Debug, Clone, PartialEq)]
-pub struct InputParameters {
-    pub prompt: Option<String>,
-}
-
-#[derive(Debug, Clone, PartialEq)]
-pub struct WaitParameters {
-    pub seconds: i64,
-    pub until_status: Option<String>,
-    pub initial_status: String,
-}
-
-#[derive(Debug, Clone, PartialEq)]
-pub struct ApprovalParameters {
-    pub approval_type: String,
-    pub prompt: String,
-    pub metadata: Value,
-}
-
-#[derive(Debug, Clone, PartialEq)]
-pub struct SignalParameters {
-    pub name: String,
-    /// unresolved correlation-key expression (often a ref); the reducer resolves it at park time.
-    pub correlation_key: WorkflowExpression,
-}
-
-#[derive(Debug, Clone, PartialEq)]
-pub struct GateParameters {
-    pub kind: GateKind,
-    pub condition: WorkflowCondition,
-    pub poll_interval_seconds: i64,
-    pub deadline_seconds: Option<i64>,
-    pub timeout_policy: GateTimeoutPolicy,
-    pub label: Option<String>,
-    pub metadata: Value,
-}
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum GateTimeoutPolicy {
     Fail,
     Continue,
 }
 
-#[derive(Debug, Clone, PartialEq)]
-pub struct LoopParameters {
-    pub items: Vec<Value>,
-}
+mod switch_case;
+pub use switch_case::SwitchCase;
+
+mod switch_parameters;
+pub use switch_parameters::SwitchParameters;
+
+mod toggle_parameters;
+pub use toggle_parameters::ToggleParameters;
+
+mod percentage_parameters;
+pub use percentage_parameters::PercentageParameters;
+
+mod percentage_bucket;
+pub use percentage_bucket::PercentageBucket;
+
+mod parallel_parameters;
+pub use parallel_parameters::ParallelParameters;
+
+mod join_parameters;
+pub use join_parameters::JoinParameters;
+
+mod try_parameters;
+pub use try_parameters::TryParameters;
+
+mod map_parameters;
+pub use map_parameters::MapParameters;
+
+mod race_parameters;
+pub use race_parameters::RaceParameters;
+
+mod output_parameters;
+pub use output_parameters::OutputParameters;
+
+mod invocation_parameters;
+pub use invocation_parameters::InvocationParameters;
+
+mod artifact_item;
+pub use artifact_item::ArtifactItem;
+
+mod input_parameters;
+pub use input_parameters::InputParameters;
+
+mod wait_parameters;
+pub use wait_parameters::WaitParameters;
+
+mod approval_parameters;
+pub use approval_parameters::ApprovalParameters;
+
+mod signal_parameters;
+pub use signal_parameters::SignalParameters;
+
+mod gate_parameters;
+pub use gate_parameters::GateParameters;
+
+mod loop_parameters;
+pub use loop_parameters::LoopParameters;

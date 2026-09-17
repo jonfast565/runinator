@@ -44,119 +44,6 @@ impl TryFrom<&str> for RunStatus {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct TaskExecutionResult {
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub message: Option<String>,
-    pub output_json: Option<Value>,
-    #[serde(default)]
-    pub chunks: Vec<NewRunChunk>,
-    #[serde(default)]
-    pub artifacts: Vec<NewRunArtifact>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct NewRunChunk {
-    pub stream: String,
-    pub content: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct NewRunArtifact {
-    pub name: String,
-    pub mime_type: String,
-    pub size_bytes: i64,
-    pub uri: String,
-    #[serde(default)]
-    pub metadata: Value,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ProviderExecutionRequest {
-    pub run_id: Option<Uuid>,
-    pub action_name: String,
-    pub action_function: String,
-    #[serde(default)]
-    pub parameters: Value,
-    pub timeout_secs: i64,
-    pub artifact_dir: String,
-    pub events_jsonl_path: String,
-    /// the node's resolved `.idempotent(key: ...)` value, when it declared one. providers with native
-    /// idempotency (stripe-style request keys) should pass it to the upstream API so a redelivery the
-    /// platform cannot absorb still lands once. `None` for non-idempotent actions.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub idempotency_key: Option<String>,
-    /// Worker-resolved path for a currently fenced workspace-affined effect. The engine validates
-    /// the opaque affinity before dispatch and the worker guarantees this path remains beneath its
-    /// configured workspace root. Providers never receive orchestration ownership details.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub workspace_path: Option<String>,
-    /// Worker-local, effect-private credential layout. Server-side storage details never cross the
-    /// provider boundary.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub execution_profile: Option<crate::execution_profiles::MaterializedExecutionProfile>,
-    /// Plaintext credential destinations materialized by the worker immediately before provider
-    /// invocation. This context is never part of the durable effect or broker payload.
-    #[serde(
-        default,
-        skip_serializing_if = "MaterializedCredentialInjections::is_empty"
-    )]
-    pub credential_injections: MaterializedCredentialInjections,
-}
-
-#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
-pub struct MaterializedCredentialInjections {
-    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
-    pub environment: BTreeMap<String, String>,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub arguments: Vec<String>,
-    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
-    pub headers: BTreeMap<String, String>,
-}
-
-impl MaterializedCredentialInjections {
-    pub fn is_empty(&self) -> bool {
-        self.environment.is_empty() && self.arguments.is_empty() && self.headers.is_empty()
-    }
-}
-
-impl ProviderExecutionRequest {
-    /// path the host touches to request cooperative cancellation across the plugin ffi boundary.
-    /// derived as a sibling of `events_jsonl_path` (the per-run work dir) so abi-2 plugins can locate
-    /// it without a new wire field; `None` when no events path is set (unit tests bypassing a worker).
-    pub fn cancel_signal_path(&self) -> Option<std::path::PathBuf> {
-        if self.events_jsonl_path.is_empty() {
-            return None;
-        }
-        std::path::Path::new(&self.events_jsonl_path)
-            .parent()
-            .map(|parent| parent.join("cancel.signal"))
-    }
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
-pub struct ProviderExecutionResponse {
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub message: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub output_json: Option<Value>,
-    #[serde(default)]
-    pub chunks: Vec<NewRunChunk>,
-    #[serde(default)]
-    pub artifacts: Vec<NewRunArtifact>,
-}
-
-impl From<ProviderExecutionResponse> for TaskExecutionResult {
-    fn from(response: ProviderExecutionResponse) -> Self {
-        Self {
-            message: response.message,
-            output_json: response.output_json,
-            chunks: response.chunks,
-            artifacts: response.artifacts,
-        }
-    }
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum ProviderExecutionEvent {
     Chunk {
@@ -190,17 +77,6 @@ pub enum ProviderExecutionEvent {
     TerminalInteraction {
         interaction: TerminalInteraction,
     },
-}
-
-/// A program-authored lifecycle boundary embedded in a PTY stream. The input bytes themselves
-/// remain ephemeral; this small record is safe to retain with the effect's durable output.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct TerminalInteraction {
-    pub sequence: u64,
-    pub request_id: String,
-    pub state: TerminalInteractionState,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub prompt: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -243,34 +119,23 @@ impl crate::validation::Validate for ProviderTerminalControl {
     }
 }
 
-impl From<ProviderExecutionEvent> for Option<NewRunChunk> {
-    fn from(event: ProviderExecutionEvent) -> Self {
-        match event {
-            ProviderExecutionEvent::Chunk { stream, content } => {
-                Some(NewRunChunk { stream, content })
-            }
-            _ => None,
-        }
-    }
-}
+mod task_execution_result;
+pub use task_execution_result::TaskExecutionResult;
 
-impl From<ProviderExecutionEvent> for Option<NewRunArtifact> {
-    fn from(event: ProviderExecutionEvent) -> Self {
-        match event {
-            ProviderExecutionEvent::Artifact {
-                name,
-                mime_type,
-                size_bytes,
-                uri,
-                metadata,
-            } => Some(NewRunArtifact {
-                name,
-                mime_type,
-                size_bytes,
-                uri,
-                metadata,
-            }),
-            _ => None,
-        }
-    }
-}
+mod new_run_chunk;
+pub use new_run_chunk::NewRunChunk;
+
+mod new_run_artifact;
+pub use new_run_artifact::NewRunArtifact;
+
+mod provider_execution_request;
+pub use provider_execution_request::ProviderExecutionRequest;
+
+mod materialized_credential_injections;
+pub use materialized_credential_injections::MaterializedCredentialInjections;
+
+mod provider_execution_response;
+pub use provider_execution_response::ProviderExecutionResponse;
+
+mod terminal_interaction;
+pub use terminal_interaction::TerminalInteraction;

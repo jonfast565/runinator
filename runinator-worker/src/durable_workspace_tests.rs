@@ -83,39 +83,6 @@ async fn restore_does_not_retry_a_genuinely_stale_checkout() {
     assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 1);
 }
 
-struct CheckoutSource {
-    checkout: uuid::Uuid,
-    replica: uuid::Uuid,
-    calls: std::sync::atomic::AtomicUsize,
-}
-#[async_trait::async_trait]
-impl WorkspaceCheckoutClient for CheckoutSource {
-    async fn download_workspace_checkout(
-        &self,
-        checkout: uuid::Uuid,
-        replica: uuid::Uuid,
-        timeout: std::time::Duration,
-    ) -> runinator_api::Result<Vec<u8>> {
-        assert_eq!((checkout, replica), (self.checkout, self.replica));
-        assert!(!timeout.is_zero());
-        if self.calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst) == 0 {
-            return Err(workspace_http_error(
-                "replica has not claimed this active attempt",
-            ));
-        }
-        Ok(vec![7, 8])
-    }
-    async fn seal_workspace(
-        &self,
-        _: uuid::Uuid,
-        _: uuid::Uuid,
-        _: String,
-        _: std::time::Duration,
-    ) -> runinator_api::Result<WorkspaceReceipt> {
-        panic!("restore must not seal a checkout")
-    }
-}
-
 #[tokio::test]
 async fn injected_checkout_transport_preserves_claim_retry_and_scope() {
     let source = CheckoutSource {
@@ -133,84 +100,6 @@ async fn injected_checkout_transport_preserves_claim_retry_and_scope() {
     .unwrap();
     assert_eq!(bytes, vec![7, 8]);
     assert_eq!(source.calls.load(std::sync::atomic::Ordering::SeqCst), 2);
-}
-
-#[derive(Clone)]
-struct WorkspaceApi {
-    checkout: WorkspaceCheckout,
-    archive: Arc<Vec<u8>>,
-    objects: Arc<HashMap<String, Vec<u8>>>,
-    downloads: Arc<std::sync::atomic::AtomicUsize>,
-    reads: Arc<std::sync::Mutex<Vec<String>>>,
-    uploads: Arc<std::sync::Mutex<Vec<Vec<u8>>>>,
-}
-
-#[async_trait::async_trait]
-impl WorkspaceCheckoutClient for WorkspaceApi {
-    async fn download_workspace_checkout(
-        &self,
-        checkout: uuid::Uuid,
-        _: uuid::Uuid,
-        _: std::time::Duration,
-    ) -> runinator_api::Result<Vec<u8>> {
-        assert_eq!(checkout, self.checkout.id);
-        self.downloads
-            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-        Ok(self.archive.as_ref().clone())
-    }
-
-    async fn seal_workspace(
-        &self,
-        checkout: uuid::Uuid,
-        _: uuid::Uuid,
-        revision_id: String,
-        _: std::time::Duration,
-    ) -> runinator_api::Result<WorkspaceReceipt> {
-        assert_eq!(checkout, self.checkout.id);
-        Ok(WorkspaceReceipt {
-            id: uuid::Uuid::new_v4(),
-            checkout: self.checkout.clone(),
-            snapshot: WorkspaceSnapshot {
-                workspace_id: self.checkout.workspace_id,
-                version: self.checkout.base_version + 1,
-                parent_version: self.checkout.base_version,
-                origin: WorkspaceOrigin::Workflow {
-                    workflow_run_id: self.checkout.workflow_run_id,
-                    effect_id: self.checkout.effect_id,
-                    attempt: self.checkout.attempt,
-                },
-                revision_id,
-                usage: WorkspaceUsage::default(),
-                limits: self.checkout.limits,
-                created_at: chrono::Utc::now(),
-            },
-        })
-    }
-}
-
-#[async_trait::async_trait]
-impl WorkspaceObjectTransport for WorkspaceApi {
-    async fn workspace_object(
-        &self,
-        checkout: uuid::Uuid,
-        _: uuid::Uuid,
-        id: &str,
-    ) -> runinator_api::Result<Option<Vec<u8>>> {
-        assert_eq!(checkout, self.checkout.id);
-        self.reads.lock().unwrap().push(id.into());
-        Ok(self.objects.get(id).cloned())
-    }
-
-    async fn upload_workspace_pack(
-        &self,
-        checkout: uuid::Uuid,
-        _: uuid::Uuid,
-        bytes: Vec<u8>,
-    ) -> runinator_api::Result<()> {
-        assert_eq!(checkout, self.checkout.id);
-        self.uploads.lock().unwrap().push(bytes);
-        Ok(())
-    }
 }
 
 fn workspace_fixture(files: usize) -> Result<(WorkspaceApi, WorkspaceExecution), SendableError> {
@@ -408,3 +297,11 @@ async fn ordinary_checkpoint_restores_one_archive_and_never_uses_object_http()
     assert!(!api.uploads.lock().unwrap().is_empty());
     Ok(())
 }
+
+#[path = "durable_workspace_tests/checkout_source.rs"]
+mod checkout_source;
+use checkout_source::CheckoutSource;
+
+#[path = "durable_workspace_tests/workspace_api.rs"]
+mod workspace_api;
+use workspace_api::WorkspaceApi;

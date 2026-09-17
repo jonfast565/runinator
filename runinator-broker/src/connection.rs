@@ -45,93 +45,6 @@ impl BrokerConnectionMode {
     }
 }
 
-/// A strategy for creating a broker client.
-///
-/// Implementations only decide *how a process reaches* the broker.  Once connected, callers use
-/// the ordinary backend-neutral [`Broker`] API and do not need to know whether a message travelled
-/// directly to Kafka/RabbitMQ/TCP or through a WebSocket relay.
-#[async_trait]
-pub trait BrokerConnection: Send + Sync {
-    /// Resolve this topology to the concrete broker-client settings it will use.
-    fn client_config(&self) -> Result<BrokerClientConfig, BrokerBuildError>;
-
-    /// Human-readable path for status output and replica metadata.
-    fn description(&self) -> Result<String, BrokerBuildError>;
-
-    /// Build an instrumented broker for the requested channel profile.
-    async fn connect(
-        &self,
-        profile: BrokerConsumerProfile,
-    ) -> Result<Arc<dyn Broker>, BrokerBuildError> {
-        let config = self.client_config()?;
-        build_broker_client(&config, profile).await
-    }
-}
-
-/// A direct connection to one of the concrete broker backends.
-#[derive(Debug, Clone)]
-pub struct DirectBrokerConnection {
-    config: BrokerClientConfig,
-}
-
-impl DirectBrokerConnection {
-    pub fn new(config: BrokerClientConfig) -> Self {
-        Self { config }
-    }
-}
-
-#[async_trait]
-impl BrokerConnection for DirectBrokerConnection {
-    fn client_config(&self) -> Result<BrokerClientConfig, BrokerBuildError> {
-        Ok(self.config.clone())
-    }
-
-    fn description(&self) -> Result<String, BrokerBuildError> {
-        Ok(format!(
-            "direct {} @ {}",
-            self.config.backend, self.config.endpoint
-        ))
-    }
-}
-
-/// A connection which reaches the same broker through an authenticated `runinator-ws` relay.
-#[derive(Debug, Clone)]
-pub struct WebSocketRelayConnection {
-    config: BrokerClientConfig,
-    service_url: String,
-    relay_path: String,
-}
-
-impl WebSocketRelayConnection {
-    /// `config.relay_credential` is forwarded as the relay's bearer credential.
-    pub fn new(
-        config: BrokerClientConfig,
-        service_url: impl Into<String>,
-        relay_path: impl Into<String>,
-    ) -> Self {
-        Self {
-            config,
-            service_url: service_url.into(),
-            relay_path: relay_path.into(),
-        }
-    }
-}
-
-#[async_trait]
-impl BrokerConnection for WebSocketRelayConnection {
-    fn client_config(&self) -> Result<BrokerClientConfig, BrokerBuildError> {
-        let endpoint = derive_websocket_relay_url(&self.service_url, &self.relay_path)?;
-        let mut config = self.config.clone();
-        config.backend = "ws".to_string();
-        config.endpoint = endpoint;
-        Ok(config)
-    }
-
-    fn description(&self) -> Result<String, BrokerBuildError> {
-        Ok(format!("relay via {}", self.client_config()?.endpoint))
-    }
-}
-
 /// Pick a concrete connection strategy from normal process configuration.
 ///
 /// `service_url` is ignored for a direct connection, so an application may retain an API URL that
@@ -273,3 +186,12 @@ mod tests {
         assert_eq!(BrokerConnectionMode::parse("other"), None);
     }
 }
+
+mod broker_connection;
+pub use broker_connection::BrokerConnection;
+
+mod direct_broker_connection;
+pub use direct_broker_connection::DirectBrokerConnection;
+
+mod web_socket_relay_connection;
+pub use web_socket_relay_connection::WebSocketRelayConnection;

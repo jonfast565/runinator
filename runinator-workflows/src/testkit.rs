@@ -10,87 +10,6 @@ use crate::simulate::{
 
 /// the test implementation of `SimulationEnv`: config and task/park outcomes come from a fixed spec,
 /// with a default success outcome for any node the spec does not name.
-pub struct MockEnv {
-    config: Value,
-    outcomes: HashMap<String, NodeOutcome>,
-    default_outcome: NodeOutcome,
-}
-
-impl MockEnv {
-    /// build a mock env from a `config.*` tree and per-node outcomes keyed by node id.
-    pub fn new(config: Value, outcomes: HashMap<String, NodeOutcome>) -> Self {
-        Self {
-            config,
-            outcomes,
-            default_outcome: NodeOutcome::succeeded(Value::Null),
-        }
-    }
-
-    /// override the outcome used for a node the spec does not explicitly mock.
-    pub fn with_default(mut self, outcome: NodeOutcome) -> Self {
-        self.default_outcome = outcome;
-        self
-    }
-
-    fn outcome_for(&self, node_id: &str) -> NodeOutcome {
-        self.outcomes
-            .get(node_id)
-            .cloned()
-            .unwrap_or_else(|| self.default_outcome.clone())
-    }
-}
-
-impl SimulationEnv for MockEnv {
-    fn config_tree(&mut self) -> Value {
-        self.config.clone()
-    }
-
-    fn evaluate_action(&mut self, request: &NodeEvalRequest<'_>) -> NodeOutcome {
-        self.outcome_for(&request.node.id)
-    }
-
-    fn resolve_park(&mut self, request: &NodeEvalRequest<'_>) -> NodeOutcome {
-        self.outcome_for(&request.node.id)
-    }
-}
-
-/// a `.rexrapt` test suite: a set of cases run against one compiled workflow (or, for multi-workflow
-/// packs, the workflow each case names).
-#[derive(Debug, Clone, Deserialize)]
-pub struct WorkflowTestSuite {
-    /// default workflow name for cases that do not name their own; optional for single-workflow packs.
-    #[serde(default)]
-    pub workflow: Option<String>,
-    pub tests: Vec<WorkflowTestCase>,
-}
-
-/// one case: inputs, config fixtures, mocked node outcomes, and expectations to assert.
-#[derive(Debug, Clone, Deserialize)]
-pub struct WorkflowTestCase {
-    pub name: String,
-    /// the workflow this case targets, overriding the suite default.
-    #[serde(default)]
-    pub workflow: Option<String>,
-    #[serde(default)]
-    pub input: Value,
-    /// the `config.*` tree exposed to expressions, shaped `{ scope: { name: value } }`.
-    #[serde(default)]
-    pub config: Value,
-    /// mocked task/park outcomes keyed by node id.
-    #[serde(default)]
-    pub mocks: HashMap<String, MockSpec>,
-    #[serde(default)]
-    pub expect: Expectations,
-}
-
-/// a mocked node outcome in a test spec.
-#[derive(Debug, Clone, Deserialize)]
-pub struct MockSpec {
-    #[serde(default)]
-    pub output: Value,
-    #[serde(default = "default_mock_status")]
-    pub status: WorkflowStatus,
-}
 
 fn default_mock_status() -> WorkflowStatus {
     WorkflowStatus::Succeeded
@@ -103,42 +22,6 @@ impl From<&MockSpec> for NodeOutcome {
             output: spec.output.clone(),
         }
     }
-}
-
-/// what a case asserts about the resulting simulation.
-#[derive(Debug, Clone, Default, Deserialize)]
-pub struct Expectations {
-    /// the terminal run status.
-    #[serde(default)]
-    pub status: Option<WorkflowStatus>,
-    /// nodes that must be visited.
-    #[serde(default)]
-    pub reached: Vec<String>,
-    /// nodes that must not be visited.
-    #[serde(default)]
-    pub not_reached: Vec<String>,
-    /// per-router-node expected next target: `{ "gate": "on" }`.
-    #[serde(default)]
-    pub branches: HashMap<String, String>,
-    /// exact match on the run's final output.
-    #[serde(default)]
-    pub output: Option<Value>,
-    /// subset match: every key/value here must be present in the final output object.
-    #[serde(default)]
-    pub output_contains: Option<Value>,
-    /// whether the walk is expected to get stuck (an unsupported/blocked node with no edge).
-    #[serde(default)]
-    pub error: Option<bool>,
-}
-
-/// the outcome of running one case.
-#[derive(Debug, Clone)]
-pub struct TestCaseResult {
-    pub name: String,
-    pub passed: bool,
-    /// human-readable assertion failures; empty when the case passed.
-    pub failures: Vec<String>,
-    pub run: SimulationRun,
 }
 
 /// run one case against a compiled workflow: simulate with a `MockEnv`, then check expectations.
@@ -271,3 +154,21 @@ fn output_subset_mismatch(subset: &Value, actual: &Value) -> Option<String> {
 
 #[cfg(test)]
 mod tests;
+
+mod mock_env;
+pub use mock_env::MockEnv;
+
+mod workflow_test_suite;
+pub use workflow_test_suite::WorkflowTestSuite;
+
+mod workflow_test_case;
+pub use workflow_test_case::WorkflowTestCase;
+
+mod mock_spec;
+pub use mock_spec::MockSpec;
+
+mod expectations;
+pub use expectations::Expectations;
+
+mod test_case_result;
+pub use test_case_result::TestCaseResult;

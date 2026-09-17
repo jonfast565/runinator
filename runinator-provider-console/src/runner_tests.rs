@@ -21,21 +21,6 @@ fn interactive_gate_reads_env_flag() {
     assert!(!allow_interactive(None));
 }
 
-struct TerminalSink {
-    events: Mutex<Vec<ProviderExecutionEvent>>,
-    controls: Mutex<Option<Receiver<ProviderTerminalControl>>>,
-}
-
-impl ProviderEventSink for TerminalSink {
-    fn emit(&self, event: ProviderExecutionEvent) {
-        self.events.lock().unwrap().push(event);
-    }
-
-    fn take_terminal_control(&self) -> Option<Receiver<ProviderTerminalControl>> {
-        self.controls.lock().unwrap().take()
-    }
-}
-
 #[cfg(unix)]
 #[test]
 fn interactive_commands_receive_input_and_stream_terminal_bytes() {
@@ -176,15 +161,6 @@ fn working_dir_reads_env_path() {
     assert_eq!(working_dir(None), None);
 }
 
-#[derive(Default)]
-struct RecordingSink(Mutex<Vec<ProviderExecutionEvent>>);
-
-impl ProviderEventSink for RecordingSink {
-    fn emit(&self, event: ProviderExecutionEvent) {
-        self.0.lock().unwrap().push(event);
-    }
-}
-
 #[cfg(unix)]
 #[test]
 fn noninteractive_commands_stream_stdout_and_stderr() {
@@ -224,3 +200,11 @@ fn noninteractive_commands_stream_stdout_and_stderr() {
             if stream == "stderr" && content == "warning"
     )));
 }
+
+#[path = "runner_tests/terminal_sink.rs"]
+mod terminal_sink;
+use terminal_sink::TerminalSink;
+
+#[path = "runner_tests/recording_sink.rs"]
+mod recording_sink;
+use recording_sink::RecordingSink;

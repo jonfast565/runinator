@@ -38,48 +38,12 @@ const DEFAULT_RETRY_SECONDS: i64 = 60;
 const MIN_INTERVAL_SECONDS: i64 = 30;
 const MAX_INTERVAL_SECONDS: i64 = 3_600;
 
-struct PollFailure {
-    message: String,
-    retry_after_seconds: i64,
-}
-
-impl From<String> for PollFailure {
-    fn from(message: String) -> Self {
-        Self {
-            message,
-            retry_after_seconds: DEFAULT_RETRY_SECONDS,
-        }
-    }
-}
-
-impl From<runinator_adapter_client::AdapterClientError> for PollFailure {
-    fn from(error: runinator_adapter_client::AdapterClientError) -> Self {
-        match error {
-            runinator_adapter_client::AdapterClientError::CircuitOpen {
-                retry_after_seconds,
-            } => Self {
-                message: "adapter-host circuit is open".into(),
-                retry_after_seconds: i64::try_from(retry_after_seconds)
-                    .unwrap_or(MAX_INTERVAL_SECONDS)
-                    .clamp(MIN_INTERVAL_SECONDS, MAX_INTERVAL_SECONDS),
-            },
-            error => Self::from(error.to_string()),
-        }
-    }
-}
-
 fn interval_seconds(configuration: &runinator_models::value::Value) -> i64 {
     configuration
         .get("poll_interval_seconds")
         .and_then(|value| value.as_i64())
         .unwrap_or(DEFAULT_RETRY_SECONDS)
         .clamp(MIN_INTERVAL_SECONDS, MAX_INTERVAL_SECONDS)
-}
-
-#[derive(Default)]
-struct BatchSummary {
-    accepted: usize,
-    skipped: usize,
 }
 
 async fn poll_one<T: BackgroundEngineStore>(
@@ -380,14 +344,6 @@ pub async fn run_adapter_poll_loop<T: BackgroundEngineStore>(
     }
 }
 
-pub struct PollAttemptRequest<'a> {
-    pub adapter: &'a runinator_models::orchestration::AdapterDefinition,
-    pub revision: &'a runinator_models::orchestration::AdapterRevision,
-    pub request: AdapterPollRequest,
-    pub claim_owner: String,
-    pub dry_run: bool,
-}
-
 pub async fn create_poll_attempt<
     T: runinator_store::roles::OrchestrationStore
         + runinator_store::roles::RbacStore
@@ -491,3 +447,12 @@ pub async fn create_poll_attempt<
 #[cfg(test)]
 #[path = "adapter_polling_tests.rs"]
 mod adapter_polling_tests;
+
+mod poll_failure;
+use poll_failure::PollFailure;
+
+mod batch_summary;
+use batch_summary::BatchSummary;
+
+mod poll_attempt_request;
+pub use poll_attempt_request::PollAttemptRequest;

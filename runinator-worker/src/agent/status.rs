@@ -61,145 +61,7 @@ impl AgentConnection {
     }
 }
 
-/// a snapshot of the agent lifecycle, republished on every transition.
-#[derive(Debug, Clone, Default)]
-pub struct AgentStatus {
-    /// true once the replica is registered and the action loop has been handed its first attempt.
-    pub running: bool,
-    pub replica_id: Option<Uuid>,
-    pub connection: AgentConnection,
-    /// how this agent reaches the broker, e.g. `relay via wss://host/ws/broker`.
-    pub broker_connection: Option<String>,
-    pub metrics: AgentMetrics,
-    pub last_error: Option<String>,
-    pub last_error_at: Option<DateTime<Utc>>,
-}
-
 /// immutable facts combined with each live status snapshot to build the wire report.
-pub struct AgentReportContext {
-    started_at: Instant,
-    broker_mode: String,
-    broker_endpoint: String,
-    agent_version: Option<String>,
-    worker_settings: RwLock<ActiveWorkerSettings>,
-    provider_count: usize,
-    labels: std::collections::BTreeMap<String, String>,
-    stale_after_seconds: u64,
-    outbox: std::sync::Arc<dyn ResultOutbox>,
-}
-
-struct ActiveWorkerSettings {
-    config_hash: String,
-    max_concurrent_actions: u64,
-    shutdown_grace_seconds: u64,
-    source: String,
-}
-
-impl AgentReportContext {
-    pub fn new(
-        config: &AgentRuntimeConfig,
-        provider_count: usize,
-        outbox: std::sync::Arc<dyn ResultOutbox>,
-    ) -> Self {
-        let broker_mode = if config.broker.broker_backend == "ws" {
-            "relay"
-        } else {
-            "direct"
-        };
-        Self {
-            started_at: Instant::now(),
-            broker_mode: broker_mode.to_string(),
-            broker_endpoint: config.broker.broker_endpoint.clone(),
-            agent_version: config.version.clone(),
-            worker_settings: RwLock::new(active_worker_settings(
-                config,
-                initial_settings_source(config),
-            )),
-            provider_count,
-            labels: config.labels.clone(),
-            stale_after_seconds: config.stale_after.as_secs(),
-            outbox,
-        }
-    }
-
-    pub fn report(
-        &self,
-        status: &AgentStatus,
-        heartbeat_seq: u64,
-        clock_skew_ms: i64,
-    ) -> AgentStatusReport {
-        let worker_settings = self
-            .worker_settings
-            .read()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
-        let (mut connection_state, reconnect_retry_seconds, reconnect_attempt, reconnect_budget) =
-            match &status.connection {
-                AgentConnection::Stopped => (AgentConnectionState::Stopped, None, None, None),
-                AgentConnection::Registering => {
-                    (AgentConnectionState::Registering, None, None, None)
-                }
-                AgentConnection::Connecting => (AgentConnectionState::Connecting, None, None, None),
-                AgentConnection::Connected => (AgentConnectionState::Connected, None, None, None),
-                AgentConnection::Reconnecting {
-                    retry_secs,
-                    attempt,
-                    max_attempts,
-                } => (
-                    AgentConnectionState::Reconnecting,
-                    Some(*retry_secs),
-                    Some(*attempt),
-                    *max_attempts,
-                ),
-                AgentConnection::Disconnected { attempts, .. } => (
-                    AgentConnectionState::Disconnected,
-                    None,
-                    Some(*attempts),
-                    Some(*attempts),
-                ),
-                AgentConnection::ReenrollmentRequired { .. } => {
-                    (AgentConnectionState::ReenrollmentRequired, None, None, None)
-                }
-            };
-        if self.outbox.is_full() {
-            connection_state = AgentConnectionState::Draining;
-        }
-        AgentStatusReport {
-            connection_state,
-            reconnect_retry_seconds,
-            reconnect_attempt,
-            reconnect_max_attempts: reconnect_budget,
-            broker_mode: self.broker_mode.clone(),
-            broker_endpoint: self.broker_endpoint.clone(),
-            in_flight: status.metrics.in_flight,
-            succeeded: status.metrics.succeeded,
-            failed: status.metrics.failed,
-            timed_out: status.metrics.timed_out,
-            canceled: status.metrics.canceled,
-            last_error: status.last_error.clone(),
-            last_error_at: status.last_error_at,
-            outbox_depth: self.outbox.depth(),
-            agent_version: self.agent_version.clone(),
-            config_hash: worker_settings.config_hash.clone(),
-            max_concurrent_actions: Some(worker_settings.max_concurrent_actions),
-            shutdown_grace_seconds: Some(worker_settings.shutdown_grace_seconds),
-            worker_settings_source: Some(worker_settings.source.clone()),
-            provider_count: self.provider_count,
-            labels: self.labels.clone(),
-            uptime_seconds: self.started_at.elapsed().as_secs(),
-            heartbeat_seq,
-            clock_skew_ms,
-            stale_after_seconds: Some(self.stale_after_seconds),
-        }
-    }
-
-    pub fn update_worker_settings(&self, config: &AgentRuntimeConfig, source: &str) {
-        *self
-            .worker_settings
-            .write()
-            .unwrap_or_else(|poisoned| poisoned.into_inner()) =
-            active_worker_settings(config, source);
-    }
-}
 
 fn initial_settings_source(config: &AgentRuntimeConfig) -> &'static str {
     if config.use_server_worker_settings {
@@ -240,71 +102,6 @@ fn config_hash(config: &AgentRuntimeConfig) -> String {
     digest.iter().map(|byte| format!("{byte:02x}")).collect()
 }
 
-/// a single finished action, kept so a host can show what this machine last did.
-#[derive(Debug, Clone)]
-pub struct CompletedAction {
-    pub summary: String,
-    pub outcome: ActionOutcome,
-    pub duration_ms: i64,
-}
-
-/// live action counters folded from the worker event stream. `cpu_percent`/`mem_percent` are filled
-/// by the telemetry sampler rather than by events.
-#[derive(Debug, Clone, Default)]
-pub struct AgentMetrics {
-    pub in_flight: u32,
-    pub succeeded: u64,
-    pub failed: u64,
-    pub timed_out: u64,
-    pub canceled: u64,
-    pub skipped_duplicates: u64,
-    pub last_completed: Option<CompletedAction>,
-    pub cpu_percent: Option<f32>,
-    pub mem_percent: Option<f32>,
-}
-
-impl AgentMetrics {
-    /// fold one worker-loop event into the counters. saturating throughout: a counter that drifted
-    /// (a finish with no matching start after a restart) must never panic the event sink.
-    pub fn apply(&mut self, event: &WorkerEvent) {
-        match event {
-            WorkerEvent::EffectStarted { .. } => {
-                self.in_flight = self.in_flight.saturating_add(1);
-            }
-            WorkerEvent::EffectSkippedDuplicate { .. } => {
-                self.skipped_duplicates = self.skipped_duplicates.saturating_add(1);
-            }
-            WorkerEvent::EffectFinished {
-                workflow_run_id,
-                provider,
-                function,
-                effect_id,
-                outcome,
-                duration_ms,
-                ..
-            } => {
-                self.in_flight = self.in_flight.saturating_sub(1);
-                match outcome {
-                    ActionOutcome::Succeeded => self.succeeded = self.succeeded.saturating_add(1),
-                    ActionOutcome::Failed => self.failed = self.failed.saturating_add(1),
-                    ActionOutcome::TimedOut => self.timed_out = self.timed_out.saturating_add(1),
-                    ActionOutcome::Canceled => self.canceled = self.canceled.saturating_add(1),
-                }
-                self.last_completed = Some(CompletedAction {
-                    summary: format!(
-                        "{provider}.{function} (effect {}, run {})",
-                        short_id(effect_id),
-                        short_id(workflow_run_id)
-                    ),
-                    outcome: *outcome,
-                    duration_ms: *duration_ms,
-                });
-            }
-            WorkerEvent::EffectOutputChunk { .. } | WorkerEvent::ControlReceived { .. } => {}
-        }
-    }
-}
-
 /// first UUID segment; enough to correlate a console line with the run in the command center.
 pub fn short_id(id: &Uuid) -> String {
     id.to_string().chars().take(8).collect()
@@ -313,3 +110,18 @@ pub fn short_id(id: &Uuid) -> String {
 #[cfg(test)]
 #[path = "status_tests.rs"]
 mod tests;
+
+mod agent_status;
+pub use agent_status::AgentStatus;
+
+mod agent_report_context;
+pub use agent_report_context::AgentReportContext;
+
+mod active_worker_settings;
+use active_worker_settings::ActiveWorkerSettings;
+
+mod completed_action;
+pub use completed_action::CompletedAction;
+
+mod agent_metrics;
+pub use agent_metrics::AgentMetrics;

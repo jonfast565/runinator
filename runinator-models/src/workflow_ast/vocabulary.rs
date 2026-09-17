@@ -21,13 +21,6 @@ pub enum WorkflowRefSource {
     NodeOutput(WorkflowNodeRef),
 }
 
-/// a resolved `$ref`: a source root plus a path into it.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct WorkflowValueRef {
-    pub source: WorkflowRefSource,
-    pub path: Vec<WorkflowPathSegment>,
-}
-
 /// the typed form of a workflow expression (the `$ref`/`$concat`/`$call`/`$if`/... json encoding).
 /// serializes through `Value` so it is field-ready with byte-identical json.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -88,10 +81,6 @@ pub enum ComputeStmt {
     },
     Expr(WorkflowExpression),
 }
-
-/// an ordered list of compute statements.
-#[derive(Debug, Clone, PartialEq, Default)]
-pub struct ComputeProgram(pub Vec<ComputeStmt>);
 
 // condition encoding keys (the `{all|any|not}` combinator tree and the `{value, <op>}` leaf). kept
 // here so both the typed ast conversions (this crate) and the workflows evaluator share one source.
@@ -166,3 +155,9 @@ impl CompareOp {
         CompareOp::LessThanOrEqual,
     ];
 }
+
+mod workflow_value_ref;
+pub use workflow_value_ref::WorkflowValueRef;
+
+mod compute_program;
+pub use compute_program::ComputeProgram;
