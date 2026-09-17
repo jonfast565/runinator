@@ -73,14 +73,22 @@ impl Provider for HttpProvider {
             actions: vec![
                 ActionMetadata::new("request", "Issue a bounded authenticated HTTP request")
                     .with_parameters(vec![
+                        // the enum arm keeps editor completion on the verbs; the string arm lets a
+                        // plain literal (`method: "GET"`) type-check, since a bare literal infers
+                        // as `string` and neither assignment nor an explicit cast reaches an enum.
+                        // `execute` still uppercases and rejects anything outside ALLOWED_METHODS,
+                        // so the runtime contract is unchanged.
                         ParameterMetadata::required(
                             "method",
-                            RuninatorType::Enum(
-                                ALLOWED_METHODS
-                                    .iter()
-                                    .map(|value| (*value).into())
-                                    .collect(),
-                            ),
+                            RuninatorType::Union(vec![
+                                RuninatorType::Enum(
+                                    ALLOWED_METHODS
+                                        .iter()
+                                        .map(|value| (*value).into())
+                                        .collect(),
+                                ),
+                                RuninatorType::String,
+                            ]),
                         ),
                         ParameterMetadata::required("url", RuninatorType::String),
                         ParameterMetadata::optional(

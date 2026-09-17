@@ -234,6 +234,9 @@ fn failed_claude_attempt_still_emits_terminal_usage() {
     let mut permissions = binary.as_file().metadata().unwrap().permissions();
     permissions.set_mode(0o700);
     binary.as_file().set_permissions(permissions).unwrap();
+    // close the write handle before exec: Linux refuses to run a file that is still open for
+    // writing (ETXTBSY), and the path stays on disk until this value drops.
+    let binary = binary.into_temp_path();
 
     let provider = AiCommandProvider;
     let request = ProviderExecutionRequest {
@@ -241,7 +244,7 @@ fn failed_claude_attempt_still_emits_terminal_usage() {
         action_name: "ai-command".into(),
         action_function: "claude_code".into(),
         parameters: json!({
-            "binary": binary.path(),
+            "binary": &*binary,
             "prompt": "anything",
             "output_format": "json"
         }),

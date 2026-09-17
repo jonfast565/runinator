@@ -57,7 +57,13 @@ impl<R: ProcessRunner + Clone + 'static> Provider for AiCommandProvider<R> {
                 .with_parameters(vec![
                     ParameterMetadata::required("prompt", RuninatorType::String),
                     ParameterMetadata::optional("prompt_asset", RuninatorType::String),
-                    ParameterMetadata::optional("prompt_override", RuninatorType::String),
+                    // the authoring idiom passes a nullable config slot straight through
+                    // (`prompt_override: prompt_settings.config.review`), so an explicit null has
+                    // to type-check as "no override" rather than fail pack validation.
+                    ParameterMetadata::optional(
+                        "prompt_override",
+                        RuninatorType::Union(vec![RuninatorType::String, RuninatorType::Null]),
+                    ),
                     ParameterMetadata::optional("prompt_context", RuninatorType::String),
                     ParameterMetadata::optional("interactive", RuninatorType::Boolean)
                         .with_default(json!(false)),
