@@ -84,9 +84,9 @@ pub unsafe fn validate_files<T: Adapter>(
 ) -> i32 {
     let result = (|| {
         // SAFETY: the adapter host passes non-null, NUL-terminated paths for this invocation.
-        let request = unsafe { std::ffi::CStr::from_ptr(request_path) }.to_str()?;
+        let request = unsafe { contract::cstr_to_rust_string(request_path) }?;
         // SAFETY: same contract as above.
-        let response = unsafe { std::ffi::CStr::from_ptr(response_path) }.to_str()?;
+        let response = unsafe { contract::cstr_to_rust_string(response_path) }?;
         let request: AdapterValidationRequest = serde_json::from_slice(&std::fs::read(request)?)?;
         std::fs::write(
             response,
@@ -106,7 +106,7 @@ pub unsafe fn validate_files<T: Adapter>(
 pub unsafe fn write_metadata<T: Adapter>(response_path: *const std::ffi::c_char) -> i32 {
     let result = (|| {
         // SAFETY: the adapter host passes a non-null, NUL-terminated path for this invocation.
-        let response = unsafe { std::ffi::CStr::from_ptr(response_path) }.to_str()?;
+        let response = unsafe { contract::cstr_to_rust_string(response_path) }?;
         let envelope = contract::AdapterMetadataEnvelope {
             abi_version: contract::ADAPTER_ABI_VERSION,
             metadata: T::default().metadata(),
@@ -129,9 +129,9 @@ pub unsafe fn handle_files<T: Adapter>(
 ) -> i32 {
     let result = (|| {
         // SAFETY: the adapter host passes non-null, NUL-terminated paths for this invocation.
-        let request = unsafe { std::ffi::CStr::from_ptr(request_path) }.to_str()?;
+        let request = unsafe { contract::cstr_to_rust_string(request_path) }?;
         // SAFETY: same contract as above.
-        let response = unsafe { std::ffi::CStr::from_ptr(response_path) }.to_str()?;
+        let response = unsafe { contract::cstr_to_rust_string(response_path) }?;
         let request: AdapterRequest = serde_json::from_slice(&std::fs::read(request)?)?;
         std::fs::write(response, serde_json::to_vec(&T::default().handle(request))?)?;
         Ok::<(), Box<dyn std::error::Error>>(())
@@ -151,8 +151,8 @@ pub unsafe fn poll_files<T: Adapter>(
 ) -> i32 {
     let result = (|| {
         // SAFETY: same bounded-file contract as `handle_files`.
-        let request = unsafe { std::ffi::CStr::from_ptr(request_path) }.to_str()?;
-        let response = unsafe { std::ffi::CStr::from_ptr(response_path) }.to_str()?;
+        let request = unsafe { contract::cstr_to_rust_string(request_path) }?;
+        let response = unsafe { contract::cstr_to_rust_string(response_path) }?;
         let request: AdapterPollRequest = serde_json::from_slice(&std::fs::read(request)?)?;
         std::fs::write(response, serde_json::to_vec(&T::default().poll(request))?)?;
         Ok::<(), Box<dyn std::error::Error>>(())

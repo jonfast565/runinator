@@ -1,7 +1,6 @@
 mod builtins;
 use std::{
     collections::BTreeMap,
-    ffi::{CStr, CString},
     net::{IpAddr, Ipv4Addr, SocketAddr},
     path::{Path, PathBuf},
     sync::Arc,
@@ -18,7 +17,8 @@ use runinator_adapter_contract::{
     ADAPTER_ABI_VERSION, AdapterImmediateResponse, AdapterMetadataEnvelope, AdapterPollRequest,
     AdapterPollResponse, AdapterRequest, AdapterResponse, AdapterValidationRequest,
     AdapterValidationResponse, FileOperationFn, HANDLE_SYMBOL, MARKER_SYMBOL, METADATA_SYMBOL,
-    MarkerFn, NAME_SYMBOL, NameFn, POLL_SYMBOL, VALIDATE_SYMBOL, verify_bearer, verify_hmac_sha256,
+    MarkerFn, NAME_SYMBOL, NameFn, POLL_SYMBOL, VALIDATE_SYMBOL, call_symbol, cstr_to_rust_string,
+    find_marker, invoke_file_operation, verify_bearer, verify_hmac_sha256,
 };
 use runinator_models::{
     orchestration::{
@@ -610,23 +610,7 @@ fn child_metadata(
     library_path: &Path,
     response_path: &Path,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    // SAFETY: all dynamically loaded code is contained in this disposable child process.
-    unsafe {
-        let library = libloading::Library::new(library_path)?;
-        let marker = library.get::<MarkerFn>(MARKER_SYMBOL)?;
-        let version = marker();
-        if version != ADAPTER_ABI_VERSION {
-            return Err(format!(
-                "adapter ABI {version} unsupported; rebuild with adapter SDK v{ADAPTER_ABI_VERSION}"
-            )
-            .into());
-        }
-        let name = library.get::<NameFn>(NAME_SYMBOL)?;
-        let _ = CStr::from_ptr(name()).to_str()?;
-        let operation = library.get::<FileOperationFn>(METADATA_SYMBOL)?;
-        invoke_file_operation(*operation, None, response_path)?;
-    }
-    Ok(())
+    child_file_operation(library_path, METADATA_SYMBOL, None, response_path, true)
 }
 
 fn child_handle(
@@ -634,21 +618,13 @@ fn child_handle(
     request_path: &Path,
     response_path: &Path,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    // SAFETY: all dynamically loaded code is contained in this disposable child process.
-    unsafe {
-        let library = libloading::Library::new(library_path)?;
-        let marker = library.get::<MarkerFn>(MARKER_SYMBOL)?;
-        let version = marker();
-        if version != ADAPTER_ABI_VERSION {
-            return Err(format!(
-                "adapter ABI {version} unsupported; rebuild with adapter SDK v{ADAPTER_ABI_VERSION}"
-            )
-            .into());
-        }
-        let operation = library.get::<FileOperationFn>(HANDLE_SYMBOL)?;
-        invoke_file_operation(*operation, Some(request_path), response_path)?;
-    }
-    Ok(())
+    child_file_operation(
+        library_path,
+        HANDLE_SYMBOL,
+        Some(request_path),
+        response_path,
+        false,
+    )
 }
 
 fn child_poll(
@@ -656,21 +632,13 @@ fn child_poll(
     request_path: &Path,
     response_path: &Path,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    // SAFETY: all dynamically loaded code is contained in this disposable child process.
-    unsafe {
-        let library = libloading::Library::new(library_path)?;
-        let marker = library.get::<MarkerFn>(MARKER_SYMBOL)?;
-        let version = marker();
-        if version != ADAPTER_ABI_VERSION {
-            return Err(format!(
-                "adapter ABI {version} unsupported; rebuild with adapter SDK v{ADAPTER_ABI_VERSION}"
-            )
-            .into());
-        }
-        let operation = library.get::<FileOperationFn>(POLL_SYMBOL)?;
-        invoke_file_operation(*operation, Some(request_path), response_path)?;
-    }
-    Ok(())
+    child_file_operation(
+        library_path,
+        POLL_SYMBOL,
+        Some(request_path),
+        response_path,
+        false,
+    )
 }
 
 fn child_validate(
@@ -678,38 +646,38 @@ fn child_validate(
     request_path: &Path,
     response_path: &Path,
 ) -> Result<(), Box<dyn std::error::Error>> {
+    child_file_operation(
+        library_path,
+        VALIDATE_SYMBOL,
+        Some(request_path),
+        response_path,
+        false,
+    )
+}
+
+fn child_file_operation(
+    library_path: &Path,
+    operation_symbol: &[u8],
+    request_path: Option<&Path>,
+    response_path: &Path,
+    validate_name: bool,
+) -> Result<(), Box<dyn std::error::Error>> {
     // SAFETY: all dynamically loaded code is contained in this disposable child process.
     unsafe {
         let library = libloading::Library::new(library_path)?;
-        let marker = library.get::<MarkerFn>(MARKER_SYMBOL)?;
-        let version = marker();
+        let version = find_marker(&library, MARKER_SYMBOL, |marker: MarkerFn| marker())?;
         if version != ADAPTER_ABI_VERSION {
             return Err(format!(
                 "adapter ABI {version} unsupported; rebuild with adapter SDK v{ADAPTER_ABI_VERSION}"
             )
             .into());
         }
-        let operation = library.get::<FileOperationFn>(VALIDATE_SYMBOL)?;
-        invoke_file_operation(*operation, Some(request_path), response_path)?;
-    }
-    Ok(())
-}
-
-unsafe fn invoke_file_operation(
-    operation: FileOperationFn,
-    request: Option<&Path>,
-    response: &Path,
-) -> Result<(), Box<dyn std::error::Error>> {
-    let request = CString::new(
-        request
-            .map(|path| path.to_string_lossy())
-            .unwrap_or_default()
-            .as_bytes(),
-    )?;
-    let response = CString::new(response.to_string_lossy().as_bytes())?;
-    // SAFETY: the loaded function was resolved by the versioned symbol contract and receives valid C strings.
-    if unsafe { operation(request.as_ptr(), response.as_ptr()) } != 0 {
-        return Err("adapter operation failed".into());
+        if validate_name {
+            let name = call_symbol(&library, NAME_SYMBOL, |name: NameFn| name())?;
+            let _ = cstr_to_rust_string(name)?;
+        }
+        let operation = library.get::<FileOperationFn>(operation_symbol)?;
+        invoke_file_operation(*operation, request_path, response_path)?;
     }
     Ok(())
 }

@@ -49,10 +49,10 @@ pub fn verify_hmac_sha256(secret: &str, body: &[u8], supplied: &str) -> bool {
     mac.verify_slice(&expected).is_ok()
 }
 
-pub type MarkerFn = unsafe extern "C" fn() -> u32;
-pub type NameFn = unsafe extern "C" fn() -> *const std::ffi::c_char;
-pub type FileOperationFn =
-    unsafe extern "C" fn(*const std::ffi::c_char, *const std::ffi::c_char) -> i32;
+pub use runinator_plugin::ffi::{
+    FileOperationError, FileOperationFn, MarkerFn, NameFn, call_symbol, cstr_to_rust_string,
+    find_marker, invoke_file_operation, path_to_cstring,
+};
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]

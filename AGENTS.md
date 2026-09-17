@@ -23,6 +23,7 @@ rule plus a source-of-truth path over implementation history.
 Redeploy the cluster after every change except:
 
 - Documentation-only changes: do not deploy.
+- Refactoring-only changes that preserve behavior: do not deploy.
 - UI-only changes: deploy only `runinator-command-center`.
 - Changes confined to `runinator-desktop-agent`: do not rebuild or redeploy the cluster unless a
   shared runtime dependency or cluster-owned artifact also changed.

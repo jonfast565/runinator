@@ -1,5 +1,6 @@
 pub mod cancel;
 pub mod errors;
+pub mod ffi;
 pub mod plugin;
 pub mod provider;
 mod utilities;
