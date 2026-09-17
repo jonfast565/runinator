@@ -7,6 +7,7 @@ use runinator_engine::services::DiagnosticsOperations;
 use runinator_models::auth::AuthContext;
 use runinator_models::diagnostics::{RuntimeLogBatch, RuntimeLogQuery};
 use runinator_models::rbac::SystemRole;
+use runinator_platform::env;
 use runinator_store::{
     RuntimeStore,
     roles::{AutomationStore, DeliveryStore, WorkflowVmStore},
@@ -267,11 +268,10 @@ pub async fn get_runtime_logs<T: AuthorizationStore + DeliveryStore + WorkflowVm
 }
 
 fn log_retention_seconds() -> i64 {
-    std::env::var("RUNINATOR_DIAGNOSTICS_RETENTION_SECONDS")
-        .ok()
-        .and_then(|value| value.parse::<i64>().ok())
-        .filter(|value| *value > 0)
-        .unwrap_or(DEFAULT_LOG_RETENTION_SECONDS)
+    env::parse_positive_or(
+        "RUNINATOR_DIAGNOSTICS_RETENTION_SECONDS",
+        DEFAULT_LOG_RETENTION_SECONDS,
+    )
 }
 
 /// the `observability` endpoints.

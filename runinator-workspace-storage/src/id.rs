@@ -2,7 +2,6 @@ use crate::{
     error::{Result, invalid},
     model::Kind,
 };
-use sha2::{Digest, Sha256};
 use std::{fmt, str::FromStr};
 #[derive(
     Clone,
@@ -30,7 +29,7 @@ impl Id {
         Self(*h.finalize().as_bytes())
     }
     pub fn sha256(bytes: &[u8]) -> Self {
-        Self(Sha256::digest(bytes).into())
+        Self(runinator_hash::sha256(bytes))
     }
 }
 impl fmt::Display for Id {
@@ -44,20 +43,8 @@ impl fmt::Display for Id {
 impl FromStr for Id {
     type Err = crate::Error;
     fn from_str(s: &str) -> Result<Self> {
-        if s.len() != 64
-            || !s
-                .bytes()
-                .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
-        {
-            return Err(invalid(
-                "digest must be 64 lowercase hexadecimal characters",
-            ));
-        }
-        let mut bytes = [0; 32];
-        for (i, b) in bytes.iter_mut().enumerate() {
-            *b = u8::from_str_radix(&s[i * 2..i * 2 + 2], 16)
-                .map_err(|_| invalid("invalid digest"))?;
-        }
+        let bytes = runinator_hash::parse_lowercase_hex(s)
+            .ok_or_else(|| invalid("digest must be 64 lowercase hexadecimal characters"))?;
         Ok(Self(bytes))
     }
 }

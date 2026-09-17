@@ -9,6 +9,7 @@ use std::sync::Arc;
 use std::thread;
 use std::time::{Duration, Instant};
 
+use runinator_platform::env;
 use uuid::Uuid;
 
 use crate::Result;
@@ -38,7 +39,7 @@ impl DockerRunner {
     pub fn new() -> Self {
         Self {
             // podman is argv-compatible for everything used here, so an operator can point at it.
-            binary: std::env::var("RUNINATOR_CONTAINER_BINARY").unwrap_or_else(|_| "docker".into()),
+            binary: env::string("RUNINATOR_CONTAINER_BINARY").unwrap_or_else(|| "docker".into()),
         }
     }
 

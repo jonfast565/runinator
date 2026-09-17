@@ -80,15 +80,10 @@ macro_rules! dispatch_server_database {
 
 #[cfg(test)]
 mod tests {
-    use std::time::{SystemTime, UNIX_EPOCH};
-
     use super::*;
 
     fn unique_sqlite_path() -> PathBuf {
-        let suffix = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_nanos();
+        let suffix = runinator_platform::time::unix_timestamp_nanos();
         std::env::temp_dir()
             .join(format!("runinator-service-bootstrap-{suffix}"))
             .join("runinator.db")

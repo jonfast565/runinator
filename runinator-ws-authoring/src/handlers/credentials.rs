@@ -1,5 +1,4 @@
 use std::sync::Arc;
-use std::time::{SystemTime, UNIX_EPOCH};
 
 use axum::{
     Extension, Json,
@@ -35,14 +34,6 @@ use runinator_ws_middleware::authz::{AuthContextExt, AuthorizationStore, AuthzCh
 // only the web service holds the keys.
 fn settings_cipher() -> SecretCipher {
     SecretCipher::from_env()
-}
-
-// current time in unix seconds, used to stamp settings that arrive without their own timestamp.
-fn now_unix() -> i64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|elapsed| elapsed.as_secs() as i64)
-        .unwrap_or(0)
 }
 
 #[derive(serde::Deserialize)]
@@ -407,7 +398,7 @@ pub async fn reencrypt_settings<T: AuthorizationStore + SettingStore + RuntimeSt
                 entry.scope.clone(),
                 entry.name.clone(),
                 cipher.encrypt(&plaintext),
-                now_unix(),
+                runinator_platform::time::unix_timestamp_seconds(),
             )
             .await
         {

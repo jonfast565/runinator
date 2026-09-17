@@ -8,6 +8,7 @@ use std::{
 };
 
 use runinator_api::capabilities::ExecutionProfileSource;
+use runinator_hash::sha256_hex;
 use runinator_models::{
     errors::SendableError,
     execution_profiles::{
@@ -15,7 +16,6 @@ use runinator_models::{
     },
 };
 use serde::Deserialize;
-use sha2::{Digest, Sha256};
 
 const MAX_ARCHIVE_BYTES: usize = 10 * 1024 * 1024;
 const MAX_EXPANDED_BYTES: u64 = 32 * 1024 * 1024;
@@ -126,7 +126,7 @@ async fn materialize_for_consumer(
             "execution profile archive exceeds 10 MiB",
         )));
     }
-    let actual = hex::encode(Sha256::digest(&bytes));
+    let actual = sha256_hex(&bytes);
     if !actual.eq_ignore_ascii_case(expected) {
         return Err(Box::new(std::io::Error::new(
             std::io::ErrorKind::InvalidData,
@@ -250,7 +250,7 @@ fn unpack(
         let contents = fs::read(&output)?;
         extracted.insert(
             path.to_string_lossy().replace('\\', "/"),
-            (hex::encode(Sha256::digest(&contents)), contents.len()),
+            (sha256_hex(&contents), contents.len()),
         );
     }
     let manifest_path = target.join(".runinator-profile.json");
@@ -313,7 +313,7 @@ mod tests {
             "config_digest": "config",
             "files": [{
                 "path": ".tool/session.json",
-                "sha256": hex::encode(Sha256::digest(declared)),
+                "sha256": sha256_hex(declared),
                 "size": declared.len(),
             }],
         });

@@ -15,7 +15,6 @@ pub struct ReplayPlan {
 
 impl ReplayPlan {
     pub fn fingerprint(payload: &[u8]) -> String {
-        use sha2::{Digest, Sha256};
-        format!("sha256:{}", hex::encode(Sha256::digest(payload)))
+        runinator_hash::sha256_digest(payload)
     }
 }

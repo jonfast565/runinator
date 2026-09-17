@@ -15,6 +15,7 @@ use runinator_blob_core::{
     BlobError, BlobStore, ByteRange, FUNCTION_ARTIFACT_BUCKET, ObjectKey, PutOptions, blob_uri,
     parse_blob_uri, sha256_hex,
 };
+use runinator_hash::hex_part;
 use runinator_models::errors::SendableError;
 use runinator_models::functions::{
     ARTIFACT_MEDIA_TYPE, DEFAULT_ALIAS, FunctionAlias, FunctionArtifact, FunctionCatalogEntry,
@@ -48,7 +49,7 @@ fn artifact_key(digest: &str) -> Result<ObjectKey, SendableError> {
     if !is_valid_digest(digest) {
         return Err(FUNCTION_INVALID_DIGEST.error(format!("'{digest}' is not a sha256 digest")));
     }
-    let hex = digest.trim_start_matches("sha256:");
+    let hex = hex_part(digest);
     // split two levels deep so one bucket listing never has to enumerate every artifact at once.
     ObjectKey::parse(&format!("sha256/{}/{}/{hex}.zip", &hex[..2], &hex[2..4]))
         .map_err(|err| FUNCTION_INVALID_DIGEST.error(err))
@@ -105,7 +106,7 @@ pub async fn stage_artifact(
             bytes,
             PutOptions {
                 content_type: Some(ARTIFACT_MEDIA_TYPE.to_string()),
-                ..PutOptions::content_addressed(digest.trim_start_matches("sha256:"))
+                ..PutOptions::content_addressed(hex_part(digest))
             },
         )
         .await

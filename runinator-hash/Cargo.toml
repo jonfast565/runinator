@@ -1,0 +1,10 @@
+[package]
+name = "runinator-hash"
+version.workspace = true
+edition = "2024"
+license = "Apache-2.0"
+
+[dependencies]
+hex = "0.4"
+sha2 = "0.11"
+

@@ -2,6 +2,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use chrono::{DateTime, Utc};
+use runinator_hash::sha256_digest;
 use runinator_models::bundles::SettingsBundle;
 use runinator_models::functions::FunctionCatalogEntry;
 use runinator_models::pipelines::PipelineBundle;
@@ -10,7 +11,6 @@ use runinator_models::semver::SemVer;
 use runinator_models::value::Value;
 use runinator_models::workflows::{WorkflowBundle, WorkflowDefinition};
 use runinator_rexrap::WorkflowSignature;
-use sha2::{Digest, Sha256};
 
 use crate::errors::{PackError, Result};
 
@@ -458,7 +458,7 @@ fn attach_prompt_assets(
         assets.push(serde_json::json!({
             "name": name,
             "path": relative.to_string_lossy(),
-            "digest": sha256_hex(&content),
+            "digest": sha256_digest(&content),
             "size_bytes": content.len(),
         }));
     }
@@ -481,18 +481,6 @@ fn attach_prompt_assets(
             .into(),
     );
     Ok(())
-}
-
-fn sha256_hex(bytes: &[u8]) -> String {
-    const HEX: &[u8; 16] = b"0123456789abcdef";
-    let digest = Sha256::digest(bytes);
-    let mut encoded = String::with_capacity(7 + digest.len() * 2);
-    encoded.push_str("sha256:");
-    for byte in digest {
-        encoded.push(HEX[(byte >> 4) as usize] as char);
-        encoded.push(HEX[(byte & 0x0f) as usize] as char);
-    }
-    encoded
 }
 
 fn collect_workflow_signatures_with_current(

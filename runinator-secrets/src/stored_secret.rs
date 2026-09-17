@@ -1,6 +1,5 @@
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
-use sha2::{Digest, Sha256};
 
 const ENVELOPE_PREFIX: &[u8] = b"runinator-secret:v1:";
 
@@ -11,15 +10,14 @@ pub fn secret_expiry_occurrence(
     expires_at: DateTime<Utc>,
     warning_seconds: i64,
 ) -> String {
-    let mut digest = Sha256::new();
-    digest.update((scope.len() as u64).to_be_bytes());
-    digest.update(scope.as_bytes());
-    digest.update((name.len() as u64).to_be_bytes());
-    digest.update(name.as_bytes());
-    digest.update(expires_at.timestamp().to_be_bytes());
-    digest.update(warning_seconds.to_be_bytes());
-    let digest = digest.finalize();
-    hex::encode(digest)
+    let mut input = Vec::new();
+    input.extend_from_slice(&(scope.len() as u64).to_be_bytes());
+    input.extend_from_slice(scope.as_bytes());
+    input.extend_from_slice(&(name.len() as u64).to_be_bytes());
+    input.extend_from_slice(name.as_bytes());
+    input.extend_from_slice(&expires_at.timestamp().to_be_bytes());
+    input.extend_from_slice(&warning_seconds.to_be_bytes());
+    runinator_hash::sha256_hex(&input)
 }
 
 #[cfg(test)]

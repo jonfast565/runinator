@@ -4,6 +4,8 @@
 
 use std::time::Duration;
 
+use runinator_platform::time;
+
 const INITIAL_MS: u64 = 500;
 const MAX_MS: u64 = 30_000;
 
@@ -28,15 +30,7 @@ impl Backoff {
         let capped_ms = INITIAL_MS.saturating_mul(1u64 << exponent).min(MAX_MS);
         let half = capped_ms / 2;
         let jitter_range = (capped_ms - half).max(1);
-        let jitter_ms = jitter_nanos() % jitter_range;
+        let jitter_ms = (time::unix_timestamp_nanos() % u128::from(jitter_range)) as u64;
         Duration::from_millis(half + jitter_ms)
     }
-}
-
-fn jitter_nanos() -> u64 {
-    use std::time::{SystemTime, UNIX_EPOCH};
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|d| d.subsec_nanos() as u64)
-        .unwrap_or(0)
 }

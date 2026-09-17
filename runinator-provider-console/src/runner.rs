@@ -17,6 +17,7 @@ use runinator_models::{
         TaskExecutionResult, TerminalInteraction, TerminalInteractionState,
     },
 };
+use runinator_platform::env;
 use runinator_plugin::cancel::CancellationToken;
 use runinator_plugin::provider::ProviderEventSink;
 use runinator_provider_support::process::ProcessOutputPump;
@@ -33,7 +34,8 @@ use crate::params::{
 // whether `interactive: true` is permitted on this worker, from the `ALLOW_INTERACTIVE_ENV` flag the
 // desktop agent sets. a missing, empty, or "0" value means not permitted (the cloud-worker default).
 fn interactive_permitted() -> bool {
-    allow_interactive(std::env::var(crate::ALLOW_INTERACTIVE_ENV).ok().as_deref())
+    let value = env::string(crate::ALLOW_INTERACTIVE_ENV);
+    allow_interactive(value.as_deref())
 }
 
 // pure decision split from the env read so it is unit-testable without mutating process env.
@@ -44,7 +46,8 @@ fn allow_interactive(raw: Option<&str>) -> bool {
 // the base directory console commands run from, from the `WORKING_DIR_ENV` var the desktop agent
 // sets. a missing or empty value means inherit the worker process's cwd (unchanged behavior).
 fn configured_working_dir() -> Option<PathBuf> {
-    working_dir(std::env::var(crate::WORKING_DIR_ENV).ok().as_deref())
+    let value = env::string(crate::WORKING_DIR_ENV);
+    working_dir(value.as_deref())
 }
 
 // pure decision split from the env read so it is unit-testable without mutating process env.

@@ -4,6 +4,8 @@
 //! defaults stay sane for the local stack while production can raise them to match the database.
 
 #[cfg(any(feature = "sqlite", feature = "postgres", feature = "mariadb"))]
+use runinator_platform::env;
+#[cfg(any(feature = "sqlite", feature = "postgres", feature = "mariadb"))]
 use std::time::Duration;
 
 /// default maximum pooled connections. sqlx's built-in default is 10; 20 gives the web service and
@@ -20,21 +22,16 @@ const DEFAULT_ACQUIRE_TIMEOUT_SECONDS: u64 = 30;
 /// or zero value falls back to the default.
 #[cfg(any(feature = "postgres", feature = "mariadb"))]
 pub(crate) fn pool_max_connections() -> u32 {
-    std::env::var("RUNINATOR_DB_MAX_CONNECTIONS")
-        .ok()
-        .and_then(|raw| raw.trim().parse::<u32>().ok())
-        .filter(|value| *value > 0)
-        .unwrap_or(DEFAULT_MAX_CONNECTIONS)
+    env::parse_positive_or("RUNINATOR_DB_MAX_CONNECTIONS", DEFAULT_MAX_CONNECTIONS)
 }
 
 /// pool acquisition timeout, overridable via `RUNINATOR_DB_ACQUIRE_TIMEOUT_SECONDS`. a missing,
 /// unparseable, or zero value falls back to the default.
 #[cfg(any(feature = "sqlite", feature = "postgres", feature = "mariadb"))]
 pub(crate) fn pool_acquire_timeout() -> Duration {
-    let seconds = std::env::var("RUNINATOR_DB_ACQUIRE_TIMEOUT_SECONDS")
-        .ok()
-        .and_then(|raw| raw.trim().parse::<u64>().ok())
-        .filter(|value| *value > 0)
-        .unwrap_or(DEFAULT_ACQUIRE_TIMEOUT_SECONDS);
+    let seconds = env::parse_positive_or(
+        "RUNINATOR_DB_ACQUIRE_TIMEOUT_SECONDS",
+        DEFAULT_ACQUIRE_TIMEOUT_SECONDS,
+    );
     Duration::from_secs(seconds)
 }

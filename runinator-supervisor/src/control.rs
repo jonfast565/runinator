@@ -2,9 +2,9 @@ use std::{
     fs,
     path::Path,
     sync::atomic::{AtomicU64, Ordering},
-    time::{SystemTime, UNIX_EPOCH},
 };
 
+use runinator_platform::time as platform_time;
 use serde::{Deserialize, Serialize};
 
 use crate::{config::ProcessConfig, types::DynError};
@@ -69,10 +69,7 @@ pub fn drain(control_dir: &Path) -> Vec<ControlCommand> {
 }
 
 fn next_id() -> String {
-    let nanos = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_nanos())
-        .unwrap_or(0);
+    let nanos = platform_time::unix_timestamp_nanos();
     let seq = SEQUENCE.fetch_add(1, Ordering::Relaxed);
     // zero-padded nanos keep lexical order aligned with chronological order.
     format!("{nanos:039}-{:08x}-{seq:08x}", std::process::id())

@@ -104,7 +104,7 @@ fn a_transition_in_flight_outranks_the_underlying_phase() {
 #[test]
 fn dashboard_duration_and_byte_values_stay_compact() {
     assert_eq!(
-        display_duration(std::time::Duration::from_secs(65)),
+        format_duration(std::time::Duration::from_secs(65)),
         "1m 05s"
     );
     assert_eq!(format_bytes(1_536.0), "1.5 KB");

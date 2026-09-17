@@ -402,10 +402,8 @@ pub(crate) fn stored_metadata(metadata: &fs::Metadata) -> Metadata {
     let modified_ns = metadata
         .modified()
         .ok()
-        .and_then(|time| time.duration_since(std::time::UNIX_EPOCH).ok())
-        .map_or(0, |duration| {
-            duration.as_nanos().min(i64::MAX as u128) as i64
-        });
+        .and_then(runinator_platform::time::system_time_unix_nanos)
+        .map_or(0, |nanos| nanos.min(i64::MAX as u128) as i64);
     Metadata {
         mode,
         modified_ns,

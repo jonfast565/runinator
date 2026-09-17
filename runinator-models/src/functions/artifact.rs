@@ -23,27 +23,22 @@ pub struct FunctionArtifact {
 pub const ARTIFACT_MEDIA_TYPE: &str = "application/zip";
 
 /// the digest prefix every artifact digest carries.
-pub const DIGEST_PREFIX: &str = "sha256:";
+pub const DIGEST_PREFIX: &str = runinator_hash::SHA256_PREFIX;
 
 impl FunctionArtifact {
     /// the hex half of the digest, without the algorithm prefix.
     pub fn digest_hex(&self) -> &str {
-        self.digest
-            .strip_prefix(DIGEST_PREFIX)
-            .unwrap_or(&self.digest)
+        runinator_hash::hex_part(&self.digest)
     }
 }
 
 /// render a hex sha-256 as a prefixed digest.
 pub fn digest_from_hex(hex: &str) -> String {
-    format!("{DIGEST_PREFIX}{}", hex.to_ascii_lowercase())
+    runinator_hash::digest_from_hex(hex)
 }
 
 /// true when a string is a well-formed artifact digest. checked wherever a digest crosses a trust
 /// boundary, since it is used to build an object key.
 pub fn is_valid_digest(digest: &str) -> bool {
-    let Some(hex) = digest.strip_prefix(DIGEST_PREFIX) else {
-        return false;
-    };
-    hex.len() == 64 && hex.chars().all(|character| character.is_ascii_hexdigit())
+    runinator_hash::is_valid_digest(digest)
 }

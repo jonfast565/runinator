@@ -1,6 +1,5 @@
 //! Workspace results, materialization, and native transfers over immutable paged storage.
 use runinator_models::errors::{SendableError, WORKSPACE_INVALID};
-use sha2::{Digest, Sha256};
 use std::{
     collections::BTreeMap,
     path::{Component, Path},
@@ -14,7 +13,7 @@ pub use results::{has_result_references, resolve_results};
 pub use runinator_workspace_storage as storage;
 
 pub fn digest(bytes: &[u8]) -> String {
-    hex::encode(Sha256::digest(bytes))
+    runinator_hash::sha256_hex(bytes)
 }
 
 fn validate_path(path: &Path) -> Result<(), SendableError> {

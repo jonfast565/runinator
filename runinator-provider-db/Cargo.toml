@@ -27,6 +27,7 @@ bigdecimal = "0.4"
 runinator-plugin = { path = "../runinator-plugin" }
 runinator-data-export = { path = "../runinator-data-export" }
 runinator-models = { path = "../runinator-models" }
+runinator-provider-support = { path = "../runinator-provider-support" }
 
 [features]
 default = ["sqlite", "postgres", "mariadb"]

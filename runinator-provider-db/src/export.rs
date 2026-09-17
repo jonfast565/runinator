@@ -10,8 +10,9 @@ use runinator_models::runs::NewRunArtifact;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
-use crate::helpers::{file_size, next_available_stem, sanitize_file_stem, to_sendable};
+use crate::helpers::{file_size, next_available_stem, to_sendable};
 use crate::rowset::RowSet;
+use runinator_provider_support::sanitize_file_stem;
 
 #[derive(Clone, Copy, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]

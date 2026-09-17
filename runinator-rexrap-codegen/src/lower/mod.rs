@@ -8,7 +8,6 @@ mod expr;
 mod inline;
 mod spreads;
 
-use sha2::{Digest, Sha256};
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 
@@ -278,13 +277,11 @@ fn lower_workflow(
                 RexRapError::lower(format!("pack has no source module '{}'", import.path))
             })?;
         let canonical = runinator_rexrap_syntax::format::format_source_module(module);
-        let mut digest = Sha256::new();
-        digest.update(canonical.as_bytes());
         let mut entry = Map::new();
         entry.insert("path".into(), Value::String(module.path.clone()));
         entry.insert(
             "digest".into(),
-            Value::String(format!("sha256:{}", hex::encode(digest.finalize()))),
+            Value::String(runinator_hash::sha256_digest(canonical.as_bytes())),
         );
         source_modules.push(Value::Object(entry));
     }

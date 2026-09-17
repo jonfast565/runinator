@@ -128,12 +128,7 @@ pub fn workspace_pack_uri(workspace: Uuid, pack: &str) -> Result<String, Sendabl
     let (scope, digest) = pack
         .split_once('/')
         .ok_or_else(|| runinator_models::errors::WORKSPACE_INVALID.error("invalid pack key"))?;
-    if Uuid::parse_str(scope).is_err()
-        || digest.len() != 64
-        || !digest
-            .bytes()
-            .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
-    {
+    if Uuid::parse_str(scope).is_err() || !runinator_hash::is_valid_lowercase_hex(digest) {
         return Err(runinator_models::errors::WORKSPACE_INVALID.error("invalid pack key"));
     }
     Ok(blob_uri(

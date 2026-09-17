@@ -8,6 +8,7 @@
 use std::sync::Arc;
 
 use runinator_blob_core::{BlobError, BlobStore, FsBlobStore};
+use runinator_platform::env;
 
 use crate::client::S3BlobClient;
 use crate::config::{BlobClientConfig, DEFAULT_DATA_DIR};
@@ -46,10 +47,8 @@ pub async fn ensure_buckets(store: &Arc<dyn BlobStore>) -> Result<(), BlobError>
 /// rather than the service's `/var/lib` default, since this path is a workstation or a single-node
 /// install rather than a container.
 fn local_data_dir() -> String {
-    if let Ok(configured) = std::env::var(crate::config::ENV_DATA_DIR) {
-        if !configured.is_empty() {
-            return configured;
-        }
+    if let Some(configured) = env::non_empty(crate::config::ENV_DATA_DIR) {
+        return configured;
     }
     runinator_platform::app_data::app_data_path("blobs")
         .map(|path| path.display().to_string())

@@ -18,6 +18,7 @@ use runinator_models::{
     workflows::{WorkflowAction, WorkflowObject},
     workspaces::WorkspaceAffinity,
 };
+use runinator_platform::env;
 use runinator_plugin::{cancel::CancellationToken, plugin::Plugin, provider::ProviderEventSink};
 use std::sync::atomic::{AtomicBool, Ordering};
 use tokio::{
@@ -59,8 +60,7 @@ async fn execute_adapter_poll(
     )
     .await
     .map_err(|error| error.to_string())?;
-    let executable = std::env::var_os("RUNINATOR_ADAPTER_RUNNER_PATH")
-        .map(std::path::PathBuf::from)
+    let executable = env::path("RUNINATOR_ADAPTER_RUNNER_PATH")
         .or_else(|| {
             std::env::current_exe()
                 .ok()
@@ -1000,12 +1000,10 @@ async fn expose_workspace_path(
         )) as SendableError
     })?;
     validate_workspace_key(&affinity.local_key)?;
-    let root = std::env::var_os("RUNINATOR_WORKSPACE_ROOT")
-        .map(std::path::PathBuf::from)
-        .unwrap_or_else(|| {
-            runinator_platform::app_data::app_data_path("workspaces")
-                .unwrap_or_else(|_| std::path::PathBuf::from(".runinator/workspaces"))
-        });
+    let root = env::path("RUNINATOR_WORKSPACE_ROOT").unwrap_or_else(|| {
+        runinator_platform::app_data::app_data_path("workspaces")
+            .unwrap_or_else(|_| std::path::PathBuf::from(".runinator/workspaces"))
+    });
     tokio::fs::create_dir_all(&root).await?;
     let canonical_root = tokio::fs::canonicalize(&root).await?;
     let workspace_path = canonical_root.join(&affinity.local_key);

@@ -7,6 +7,7 @@ use crate::{
     snapshot::{StateSnapshot, read_snapshot},
     types::DynError,
 };
+use runinator_platform::time::format_uptime;
 use runinator_tui::supervisor::{DashboardMode, SupervisorTui};
 
 pub fn show_status(paths: &Paths, watch: bool) -> Result<(), DynError> {
@@ -224,13 +225,6 @@ fn print_row(values: &[String], widths: &[usize]) {
         print!(" {}{} ║", value, " ".repeat(padding));
     }
     println!();
-}
-
-fn format_uptime(seconds: u64) -> String {
-    let hours = seconds / 3600;
-    let minutes = (seconds % 3600) / 60;
-    let secs = seconds % 60;
-    format!("{hours:02}:{minutes:02}:{secs:02}")
 }
 
 fn human_time(input: &str) -> Option<String> {

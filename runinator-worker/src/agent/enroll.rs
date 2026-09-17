@@ -15,7 +15,6 @@ use rustls::{
     pki_types::{CertificateDer, ServerName, UnixTime},
 };
 use serde::{Deserialize, Serialize};
-use sha2::{Digest, Sha256};
 use x509_parser::parse_x509_certificate;
 
 use crate::agent::config::{AgentRuntimeConfig, LocatorMode};

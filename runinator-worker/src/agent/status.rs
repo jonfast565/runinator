@@ -5,8 +5,8 @@
 use std::{sync::RwLock, time::Instant};
 
 use chrono::{DateTime, Utc};
+use runinator_hash::sha256_hex;
 use runinator_models::replicas::{AgentConnectionState, AgentStatusReport};
-use sha2::{Digest, Sha256};
 use uuid::Uuid;
 
 use crate::agent::config::AgentRuntimeConfig;
@@ -98,8 +98,7 @@ fn config_hash(config: &AgentRuntimeConfig) -> String {
         "stale_after_seconds": config.stale_after.as_secs(),
         "outbox_file": config.outbox_file,
     });
-    let digest = Sha256::digest(canonical.to_string().as_bytes());
-    digest.iter().map(|byte| format!("{byte:02x}")).collect()
+    sha256_hex(canonical.to_string().as_bytes())
 }
 
 /// first UUID segment; enough to correlate a console line with the run in the command center.

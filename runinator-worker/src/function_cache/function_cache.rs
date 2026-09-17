@@ -38,7 +38,7 @@ impl FunctionCache {
                 FUNCTION_UNTRUSTED_ARCHIVE.error(format!("'{digest}' is not a sha256 digest"))
             );
         }
-        let hex = digest.trim_start_matches("sha256:");
+        let hex = hex_part(digest);
         let staged = self.root.join(hex);
         if staged.join(READY_MARKER).is_file() {
             // touch the marker so eviction sees this as recently used; the code itself is never

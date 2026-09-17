@@ -64,6 +64,7 @@ use runinator_models::{
     workflows::{WorkflowDefinition, WorkflowRun, WorkflowStatus, WorkflowTrigger},
     workspaces::{NewWorkspaceLease, WorkspaceLease, WorkspaceStatus},
 };
+use runinator_platform::time;
 use sqlx::{ColumnIndex, Database, Decode, Encode, Executor, IntoArguments, Row, Type};
 use uuid::Uuid;
 
@@ -173,7 +174,7 @@ pub(crate) fn archived_column_names(table: ArchiveTable) -> Vec<&'static str> {
 }
 
 fn timestamp_to_utc(timestamp: i64) -> Result<DateTime<Utc>, SendableError> {
-    DateTime::from_timestamp(timestamp, 0).ok_or_else(|| {
+    time::from_unix_seconds(timestamp).ok_or_else(|| {
         Box::new(std::io::Error::new(
             std::io::ErrorKind::InvalidData,
             format!("invalid unix timestamp {timestamp}"),

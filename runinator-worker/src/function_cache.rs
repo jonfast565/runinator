@@ -19,6 +19,7 @@ use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 
 use runinator_api::capabilities::{FunctionArtifactSource, FunctionExportResolver};
+use runinator_hash::{hex_part, sha256_hex};
 use runinator_models::errors::SendableError;
 use runinator_models::functions::{FunctionBinding, is_valid_digest};
 use runinator_models::value::{Map, Value};
@@ -251,17 +252,6 @@ fn unpack_into(bytes: &[u8], staging: &Path, limits: UnpackLimits) -> Result<(),
         remaining -= copied;
     }
     Ok(())
-}
-
-fn sha256_hex(bytes: &[u8]) -> String {
-    use sha2::{Digest, Sha256};
-    let mut hasher = Sha256::new();
-    hasher.update(bytes);
-    hasher
-        .finalize()
-        .iter()
-        .map(|byte| format!("{byte:02x}"))
-        .collect()
 }
 
 fn last_used(path: &Path) -> SystemTime {

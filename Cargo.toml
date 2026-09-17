@@ -4,6 +4,7 @@ resolver = "2"
 members = [
     "runinator-command-center/src-tauri",
     "runinator-models",
+    "runinator-hash",
     "runinator-auth",
     "runinator-pack",
     "runinator-lsp",
@@ -84,4 +85,4 @@ members = [
 ]
 
 [workspace.package]
-version = "0.38.767"
+version = "0.38.768"

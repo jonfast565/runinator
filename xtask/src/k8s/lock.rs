@@ -11,10 +11,11 @@ use std::process::{Command, Output, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, mpsc};
 use std::thread;
-use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result, bail};
 use chrono::{DateTime, SecondsFormat, Utc};
+use runinator_platform::time;
 use serde_json::{Value, json};
 
 const LOCK_NAMESPACE: &str = "runinator-deploy-lock";
@@ -150,10 +151,7 @@ fn holder_identity(operation: &str) -> String {
     let host = std::env::var("HOSTNAME")
         .or_else(|_| std::env::var("COMPUTERNAME"))
         .unwrap_or_else(|_| "unknown-host".to_string());
-    let nonce = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|duration| duration.as_nanos())
-        .unwrap_or(0);
+    let nonce = time::unix_timestamp_nanos();
     format!("xtask/{operation}/{host}/{}/{nonce}", std::process::id())
 }
 

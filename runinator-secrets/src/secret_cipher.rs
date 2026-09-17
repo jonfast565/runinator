@@ -5,7 +5,6 @@
 
 use chacha20poly1305::aead::{Aead, Generate};
 use chacha20poly1305::{ChaCha20Poly1305, KeyInit, Nonce};
-use sha2::{Digest, Sha256};
 
 const MAGIC: [u8; 4] = [0x52, 0x41, 0x45, 0x31]; // "RAE1" tags an authenticated, key-tagged value.
 const KEY_ID_LEN: usize = 4;
@@ -33,10 +32,10 @@ fn parse_sealed(value: &[u8]) -> Option<([u8; KEY_ID_LEN], &[u8], &[u8])> {
 
 // derive a 32-byte value from a domain separator and the raw key material.
 fn derive(domain: &[u8], raw: &[u8]) -> [u8; 32] {
-    let mut hasher = Sha256::new();
-    hasher.update(domain);
-    hasher.update(raw);
-    hasher.finalize().into()
+    let mut input = Vec::with_capacity(domain.len() + raw.len());
+    input.extend_from_slice(domain);
+    input.extend_from_slice(raw);
+    runinator_hash::sha256(&input)
 }
 
 #[cfg(test)]

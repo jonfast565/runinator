@@ -16,6 +16,7 @@ use runinator_adapter_contract::{
     AdapterValidationRequest, AdapterValidationResponse,
 };
 use runinator_models::orchestration::AdapterKindCatalogEntry;
+use runinator_platform::env;
 use serde::de::DeserializeOwned;
 use thiserror::Error;
 use tower::{ServiceExt, service_fn};
@@ -63,12 +64,12 @@ struct AdapterCircuit {
 
 impl AdapterCircuit {
     fn from_env() -> Self {
-        let enabled = env_bool("RUNINATOR_ADAPTER_CLIENT_CIRCUIT_BREAKER_ENABLED", true);
-        let failures = env_usize(
+        let enabled = env::flag_or("RUNINATOR_ADAPTER_CLIENT_CIRCUIT_BREAKER_ENABLED", true);
+        let failures = env::parse_positive_or(
             "RUNINATOR_ADAPTER_CLIENT_CIRCUIT_BREAKER_FAILURE_THRESHOLD",
             DEFAULT_CIRCUIT_FAILURE_THRESHOLD,
         );
-        let cooldown = Duration::from_secs(env_u64(
+        let cooldown = Duration::from_secs(env::parse_positive_or(
             "RUNINATOR_ADAPTER_CLIENT_CIRCUIT_BREAKER_COOLDOWN_SECONDS",
             DEFAULT_CIRCUIT_COOLDOWN_SECONDS,
         ));
@@ -121,33 +122,10 @@ fn adapter_host_failure(result: &HttpResult) -> bool {
     }
 }
 
-fn env_bool(key: &str, default: bool) -> bool {
-    std::env::var(key)
-        .ok()
-        .and_then(|raw| raw.trim().parse().ok())
-        .unwrap_or(default)
-}
-
-fn env_usize(key: &str, default: usize) -> usize {
-    std::env::var(key)
-        .ok()
-        .and_then(|raw| raw.trim().parse().ok())
-        .filter(|value| *value > 0)
-        .unwrap_or(default)
-}
-
-fn env_u64(key: &str, default: u64) -> u64 {
-    std::env::var(key)
-        .ok()
-        .and_then(|raw| raw.trim().parse().ok())
-        .filter(|value| *value > 0)
-        .unwrap_or(default)
-}
-
 /// The configured adapter-host base url, for diagnostics that report what this process will call.
 pub fn host_url() -> String {
-    std::env::var("RUNINATOR_ADAPTER_HOST_URL")
-        .unwrap_or_else(|_| "http://127.0.0.1:8790".into())
+    env::string("RUNINATOR_ADAPTER_HOST_URL")
+        .unwrap_or_else(|| "http://127.0.0.1:8790".into())
         .trim_end_matches('/')
         .to_owned()
 }
@@ -155,7 +133,7 @@ pub fn host_url() -> String {
 /// The configured adapter-host credential. Exposed so a health endpoint can report whether one is
 /// present without ever rendering its value.
 pub fn host_token() -> Result<String> {
-    std::env::var("RUNINATOR_ADAPTER_HOST_TOKEN").map_err(|_| {
+    env::string("RUNINATOR_ADAPTER_HOST_TOKEN").ok_or_else(|| {
         AdapterClientError::Configuration("RUNINATOR_ADAPTER_HOST_TOKEN is not configured".into())
     })
 }

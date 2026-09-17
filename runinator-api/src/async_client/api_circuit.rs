@@ -13,12 +13,12 @@ pub(super) struct ApiCircuit {
 
 impl ApiCircuit {
     pub(super) fn from_env() -> Self {
-        let enabled = env_bool("RUNINATOR_API_CIRCUIT_BREAKER_ENABLED", true);
-        let failures = env_usize(
+        let enabled = env::flag_or("RUNINATOR_API_CIRCUIT_BREAKER_ENABLED", true);
+        let failures = env::parse_positive_or(
             "RUNINATOR_API_CIRCUIT_BREAKER_FAILURE_THRESHOLD",
             DEFAULT_CIRCUIT_FAILURE_THRESHOLD,
         );
-        let cooldown = Duration::from_secs(env_u64(
+        let cooldown = Duration::from_secs(env::parse_positive_or(
             "RUNINATOR_API_CIRCUIT_BREAKER_COOLDOWN_SECONDS",
             DEFAULT_CIRCUIT_COOLDOWN_SECONDS,
         ));

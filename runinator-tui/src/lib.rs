@@ -32,6 +32,7 @@ use ratatui::{
 use tracing_subscriber::fmt::MakeWriter;
 
 use runinator_observability::resource_telemetry::TelemetryCollector;
+use runinator_platform::time::format_duration;
 
 mod ansi;
 mod capture;
@@ -338,7 +339,7 @@ fn render(
                 .fg(Color::Cyan)
                 .add_modifier(Modifier::BOLD),
         ),
-        Span::raw(format!("uptime {}", human_duration(snapshot.uptime))),
+        Span::raw(format!("uptime {}", format_duration(snapshot.uptime))),
     ]);
     frame.render_widget(
         Paragraph::new(title).block(Block::default().borders(Borders::ALL)),
@@ -431,7 +432,7 @@ fn render(
             }
             let remaining = component
                 .expected_remaining
-                .map(|duration| format!("  deadline in {}", human_duration(duration)))
+                .map(|duration| format!("  deadline in {}", format_duration(duration)))
                 .unwrap_or_default();
             lines.push(Line::from(vec![
                 Span::styled("now   ", Style::default().fg(Color::Yellow)),
@@ -439,7 +440,7 @@ fn render(
                 Span::styled(
                     format!(
                         "  for {}{}",
-                        human_duration(component.activity_age),
+                        format_duration(component.activity_age),
                         remaining
                     ),
                     Style::default().fg(Color::DarkGray),
@@ -571,23 +572,12 @@ fn format_metrics<T: std::fmt::Display>(
     format!("{prefix:<5} {entries}")
 }
 
-fn human_duration(duration: Duration) -> String {
-    let seconds = duration.as_secs();
-    if seconds >= 3600 {
-        format!("{}h {:02}m", seconds / 3600, (seconds % 3600) / 60)
-    } else if seconds >= 60 {
-        format!("{}m {:02}s", seconds / 60, seconds % 60)
-    } else {
-        format!("{}s", seconds)
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::{
         ComponentSnapshot, Dashboard, DashboardSnapshot, RESOURCE_HISTORY_CAPACITY,
         ResourceHistory, component_page_capacity, component_page_count,
-        dashboard_component_page_capacity, format_bytes, human_duration, memory_graph_title,
+        dashboard_component_page_capacity, format_bytes, format_duration, memory_graph_title,
         percent_graph_title, push_history, rate_graph_title, render,
     };
     use ratatui::{Terminal, backend::TestBackend};
@@ -595,7 +585,7 @@ mod tests {
 
     #[test]
     fn duration_formatter_keeps_the_dashboard_scannable() {
-        assert_eq!(human_duration(Duration::from_secs(125)), "2m 05s");
+        assert_eq!(format_duration(Duration::from_secs(125)), "2m 05s");
     }
 
     #[test]

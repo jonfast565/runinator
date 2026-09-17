@@ -30,8 +30,8 @@ async fn main() {
 async fn run_process() {
     // Metadata completion uses the process-level base URL. Apply-on-save uses the editor's
     // configured service URL instead.
-    let base_url = std::env::var("RUNINATOR_API_BASE_URL")
-        .unwrap_or_else(|_| "http://127.0.0.1:8080/".to_string());
+    let base_url = runinator_platform::env::string("RUNINATOR_API_BASE_URL")
+        .unwrap_or_else(|| "http://127.0.0.1:8080/".to_string());
 
     let metadata = match MetadataCache::new(base_url) {
         Ok(cache) => Arc::new(cache),

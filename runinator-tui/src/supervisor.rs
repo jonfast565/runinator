@@ -26,6 +26,7 @@ use ratatui::{
     widgets::{Block, Borders, Cell, Paragraph, Row, Sparkline, Table, TableState, Wrap},
 };
 
+use runinator_platform::time::format_uptime;
 use serde::{Deserialize, Serialize};
 
 pub type DynError = Box<dyn std::error::Error + Send + Sync>;
@@ -472,13 +473,6 @@ fn process_page_position(
     let page =
         (selected.min(process_count.saturating_sub(1)) / process_page_rows + 1).min(page_count);
     (page, page_count)
-}
-
-fn format_uptime(seconds: u64) -> String {
-    let hours = seconds / 3600;
-    let minutes = (seconds % 3600) / 60;
-    let secs = seconds % 60;
-    format!("{hours:02}:{minutes:02}:{secs:02}")
 }
 
 #[cfg(test)]

@@ -10,6 +10,7 @@ path = "src/main.rs"
 [dependencies]
 runinator-api = { path = "../runinator-api" }
 runinator-models = { path = "../runinator-models" }
+runinator-platform = { path = "../runinator-platform" }
 runinator-pack = { path = "../runinator-pack" }
 runinator-provider-catalog = { path = "../runinator-provider-catalog" }
 runinator-rexrap = { path = "../runinator-rexrap" }

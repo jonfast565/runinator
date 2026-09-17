@@ -6,12 +6,12 @@
 use std::path::Path;
 
 use runinator_api::capabilities::RunFileSource;
+use runinator_hash::sha256_hex;
 use runinator_models::{
     errors::SendableError,
     files::{FileDescriptor, validate_relative_path, with_local_path},
     value::{Map, Value},
 };
-use sha2::{Digest, Sha256};
 use uuid::Uuid;
 
 pub async fn materialize(
@@ -73,7 +73,7 @@ async fn materialize_file(
     let bytes = client
         .download_workflow_file_for_run(descriptor.id, workflow_run_id)
         .await?;
-    let digest = hex::encode(Sha256::digest(&bytes));
+    let digest = sha256_hex(&bytes);
     if !digest.eq_ignore_ascii_case(&descriptor.sha256) {
         return Err(Box::new(std::io::Error::new(
             std::io::ErrorKind::InvalidData,

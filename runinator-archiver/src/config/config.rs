@@ -45,7 +45,7 @@ impl Config {
     pub fn from_cli(cli: Cli) -> Result<Self, SendableError> {
         let database_url = cli
             .database_url
-            .or_else(|| std::env::var("DATABASE_URL").ok())
+            .or_else(|| runinator_platform::env::string("DATABASE_URL"))
             .ok_or_else(|| -> SendableError {
                 "missing connection string: pass --database-url or set RUNINATOR_DATABASE_URL"
                     .into()

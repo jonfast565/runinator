@@ -14,34 +14,6 @@ pub(crate) fn normalize_timeout(timeout_secs: i64) -> Duration {
     }
 }
 
-pub(crate) fn sanitize_file_stem(input: &str) -> String {
-    let mut sanitized = input
-        .chars()
-        .map(|ch| match ch {
-            '<' | '>' | ':' | '"' | '/' | '\\' | '|' | '?' | '*' => '_',
-            _ if ch.is_control() => '_',
-            _ => ch,
-        })
-        .collect::<String>();
-
-    sanitized = sanitized
-        .trim()
-        .trim_matches('.')
-        .trim_matches('\'')
-        .to_string();
-
-    if sanitized.is_empty() {
-        return sanitized;
-    }
-
-    const MAX_LEN: usize = 120;
-    if sanitized.len() > MAX_LEN {
-        sanitized.truncate(MAX_LEN);
-    }
-
-    sanitized
-}
-
 pub(crate) fn next_available_stem(base: String, counts: &mut HashMap<String, usize>) -> String {
     let counter = counts.entry(base.clone()).or_insert(0usize);
     let stem = if base.is_empty() {

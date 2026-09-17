@@ -1,5 +1,3 @@
-use std::env;
-
 use lettre::{
     AsyncSmtpTransport, AsyncTransport, Message, Tokio1Executor,
     message::{Mailbox, header::ContentType},
@@ -11,6 +9,7 @@ use runinator_models::{
     errors::SendableError,
     runs::{ProviderExecutionRequest, TaskExecutionResult},
 };
+use runinator_platform::env;
 
 use crate::errors::{
     INVALID, INVALID_PARAMS, NOTIFICATION_INVALID_PARAMS, NOTIFICATION_POST, NOTIFICATION_RESPONSE,
@@ -32,23 +31,23 @@ pub(crate) async fn send_email(
 
     let host = params
         .smtp_host
-        .or_else(|| env::var("SMTP_HOST").ok())
+        .or_else(|| env::string("SMTP_HOST"))
         .ok_or_else(|| invalid("missing smtp_host (provide via parameters or SMTP_HOST env)"))?;
     let port = params
         .smtp_port
-        .or_else(|| env::var("SMTP_PORT").ok().and_then(|v| v.parse().ok()))
+        .or_else(|| env::parse("SMTP_PORT"))
         .unwrap_or(587u16);
     let user = params
         .smtp_user
-        .or_else(|| env::var("SMTP_USER").ok())
+        .or_else(|| env::string("SMTP_USER"))
         .unwrap_or_default();
     let password = params
         .smtp_password
-        .or_else(|| env::var("SMTP_PASSWORD").ok())
+        .or_else(|| env::string("SMTP_PASSWORD"))
         .unwrap_or_default();
     let from = params
         .from
-        .or_else(|| env::var("SMTP_FROM").ok())
+        .or_else(|| env::string("SMTP_FROM"))
         .unwrap_or_else(|| user.clone());
 
     if from.trim().is_empty() {
@@ -157,8 +156,8 @@ pub(crate) async fn send_notification(
 }
 
 async fn post_notification(payload: NotificationPayload) -> Result<String, SendableError> {
-    let service_url = env::var("RUNINATOR_SERVICE_URL")
-        .map_err(|_| NOTIFICATION_SERVICE_URL.error("missing RUNINATOR_SERVICE_URL"))?;
+    let service_url = env::string("RUNINATOR_SERVICE_URL")
+        .ok_or_else(|| NOTIFICATION_SERVICE_URL.error("missing RUNINATOR_SERVICE_URL"))?;
     if service_url.trim().is_empty() {
         return Err(NOTIFICATION_SERVICE_URL.error("empty RUNINATOR_SERVICE_URL"));
     }

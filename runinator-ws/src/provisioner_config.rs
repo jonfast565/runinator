@@ -2,7 +2,7 @@ use std::collections::BTreeMap;
 use std::path::PathBuf;
 
 use runinator_models::replicas::ReplicaKind;
-use runinator_platform::app_data;
+use runinator_platform::{app_data, env};
 use runinator_provisioner::{
     KubernetesBackendConfig, ProvisionerConfig, SupervisorBackendConfig, SupervisorNodeTemplate,
 };
@@ -16,19 +16,12 @@ pub(crate) fn from_env() -> ProvisionerConfig {
     }
 }
 
-fn env_enabled(key: &str) -> bool {
-    std::env::var(key)
-        .map(|value| matches!(value.trim(), "1" | "true" | "TRUE" | "yes"))
-        .unwrap_or(false)
-}
-
 fn supervisor_backend_from_env() -> Option<SupervisorBackendConfig> {
-    if !env_enabled("RUNINATOR_PROVISIONER_SUPERVISOR_ENABLED") {
+    if !env::flag("RUNINATOR_PROVISIONER_SUPERVISOR_ENABLED") {
         return None;
     }
-    let state_file = std::env::var("RUNINATOR_PROVISIONER_SUPERVISOR_STATE_PATH")
-        .map(PathBuf::from)
-        .unwrap_or_else(|_| {
+    let state_file =
+        env::path("RUNINATOR_PROVISIONER_SUPERVISOR_STATE_PATH").unwrap_or_else(|| {
             app_data::default_supervisor_state_dir()
                 .map(|dir| dir.join("state.json"))
                 .unwrap_or_else(|_| PathBuf::from("supervisor/state.json"))
@@ -65,7 +58,7 @@ fn supervisor_suffix(kind: ReplicaKind) -> String {
 }
 
 fn template_from_env(key: &str) -> Option<SupervisorNodeTemplate> {
-    let raw = std::env::var(key).ok()?;
+    let raw = env::string(key)?;
     match serde_json::from_str::<SupervisorNodeTemplate>(&raw) {
         Ok(template) => Some(template),
         Err(err) => {
@@ -76,7 +69,7 @@ fn template_from_env(key: &str) -> Option<SupervisorNodeTemplate> {
 }
 
 fn kubernetes_backend_from_env() -> Option<KubernetesBackendConfig> {
-    if !env_enabled("RUNINATOR_PROVISIONER_K8S_ENABLED") {
+    if !env::flag("RUNINATOR_PROVISIONER_K8S_ENABLED") {
         return None;
     }
     // Map a deployment per kind: RUNINATOR_PROVISIONER_K8S_<KIND>_DEPLOYMENT. Worker, waker, and
@@ -93,20 +86,17 @@ fn kubernetes_backend_from_env() -> Option<KubernetesBackendConfig> {
     }
 
     let mut stateful_sets = BTreeMap::new();
-    if let Some(name) = std::env::var("RUNINATOR_PROVISIONER_K8S_POSTGRES_STATEFULSET")
-        .ok()
-        .map(|value| value.trim().to_string())
-        .filter(|value| !value.is_empty())
-    {
+    if let Some(name) = env::non_empty("RUNINATOR_PROVISIONER_K8S_POSTGRES_STATEFULSET") {
+        let name = name.trim().to_string();
         stateful_sets.insert(ReplicaKind::Postgres, name);
     }
 
     Some(KubernetesBackendConfig {
-        namespace: std::env::var("RUNINATOR_PROVISIONER_K8S_NAMESPACE")
-            .unwrap_or_else(|_| "runinator".to_string()),
+        namespace: env::non_empty("RUNINATOR_PROVISIONER_K8S_NAMESPACE")
+            .unwrap_or_else(|| "runinator".to_string()),
         deployments,
         stateful_sets,
-        postgres_scale_out_enabled: env_enabled(
+        postgres_scale_out_enabled: env::flag(
             "RUNINATOR_PROVISIONER_K8S_POSTGRES_SCALE_OUT_ENABLED",
         ),
     })
@@ -117,11 +107,8 @@ fn kubernetes_backend_from_env() -> Option<KubernetesBackendConfig> {
 fn k8s_deployment(kind: ReplicaKind) -> Option<String> {
     let infix = kind.as_str().to_uppercase();
     let key = format!("RUNINATOR_PROVISIONER_K8S_{infix}_DEPLOYMENT");
-    if let Some(name) = std::env::var(&key)
-        .ok()
-        .map(|value| value.trim().to_string())
-        .filter(|value| !value.is_empty())
-    {
+    if let Some(name) = env::non_empty(&key) {
+        let name = name.trim().to_string();
         return Some(name);
     }
     match kind {

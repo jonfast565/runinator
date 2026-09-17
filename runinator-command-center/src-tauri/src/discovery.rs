@@ -6,6 +6,7 @@ use std::{
 };
 
 use chrono::{DateTime, Utc};
+use runinator_platform::env;
 use serde_json::Value;
 use socket2::{Domain, Protocol, Socket, Type};
 use tauri::{AppHandle, Emitter};
@@ -55,14 +56,9 @@ pub fn start_discovery_thread(app: AppHandle, state: CommandCenterState) {
 
 fn run_discovery_loop(app: AppHandle, state: CommandCenterState) -> Result<(), String> {
     println!("Gossip discovery loop started...");
-    let bind_address = std::env::var("RUNINATOR_GOSSIP_BIND")
-        .ok()
-        .filter(|value| !value.trim().is_empty())
-        .unwrap_or_else(|| "0.0.0.0".to_string());
-    let port = std::env::var("RUNINATOR_GOSSIP_PORT")
-        .ok()
-        .and_then(|value| value.parse::<u16>().ok())
-        .unwrap_or(5000);
+    let bind_address =
+        env::non_empty("RUNINATOR_GOSSIP_BIND").unwrap_or_else(|| "0.0.0.0".to_string());
+    let port = env::parse_or("RUNINATOR_GOSSIP_PORT", 5000);
     let ip = bind_address
         .parse::<IpAddr>()
         .unwrap_or(IpAddr::V4(Ipv4Addr::UNSPECIFIED));
@@ -102,7 +98,7 @@ fn run_discovery_loop(app: AppHandle, state: CommandCenterState) -> Result<(), S
 
 fn configured_service_url_from_env() -> Result<Option<String>, String> {
     for name in DIRECT_SERVICE_URL_ENV {
-        let Ok(value) = std::env::var(name) else {
+        let Some(value) = env::string(name) else {
             continue;
         };
 
@@ -112,12 +108,11 @@ fn configured_service_url_from_env() -> Result<Option<String>, String> {
         }
     }
 
-    if let Ok(host) = std::env::var("RUNINATOR_WS_SERVICE_HOST") {
+    if let Some(host) = env::string("RUNINATOR_WS_SERVICE_HOST") {
         println!("Checking RUNINATOR_WS_SERVICE_HOST: {}", host);
-        let port =
-            std::env::var("RUNINATOR_WS_SERVICE_PORT").unwrap_or_else(|_| "8080".to_string());
+        let port = env::string("RUNINATOR_WS_SERVICE_PORT").unwrap_or_else(|| "8080".to_string());
         let scheme =
-            std::env::var("RUNINATOR_WS_SERVICE_SCHEME").unwrap_or_else(|_| "http".to_string());
+            env::string("RUNINATOR_WS_SERVICE_SCHEME").unwrap_or_else(|| "http".to_string());
         let mut url_str = format!("{scheme}://{host}");
         if !host.contains(':') && port != "80" && port != "443" {
             url_str.push(':');
@@ -133,12 +128,12 @@ fn configured_service_url_from_env() -> Result<Option<String>, String> {
     }
 
     // default for local development if nothing else is found.
-    if std::env::var("TAURI_DEV").is_ok() {
+    if env::string("TAURI_DEV").is_some() {
         println!("TAURI_DEV detected, falling back to http://127.0.0.1:8080/");
         return Ok(Some("http://127.0.0.1:8080/".to_string()));
     }
 
-    if std::env::var("CARGO_MANIFEST_DIR").is_ok() {
+    if env::string("CARGO_MANIFEST_DIR").is_some() {
         println!("CARGO_MANIFEST_DIR detected, assuming local development and falling back to http://127.0.0.1:8080/");
         return Ok(Some("http://127.0.0.1:8080/".to_string()));
     }

@@ -17,6 +17,7 @@ uuid = { version = "1.26", features = ["v4", "v7", "serde"] }
 
 runinator-auth = { path = "../runinator-auth" }
 runinator-models = { path = "../runinator-models" }
+runinator-platform = { path = "../runinator-platform" }
 runinator-store = { path = "../runinator-store" }
 runinator-comm = { path = "../runinator-comm" }
 runinator-secrets = { path = "../runinator-secrets" }

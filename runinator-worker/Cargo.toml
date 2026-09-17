@@ -26,6 +26,7 @@ runinator-auth = { path = "../runinator-auth" }
 runinator-comm = { path = "../runinator-comm" }
 runinator-plugin = { path = "../runinator-plugin" }
 runinator-models = { path = "../runinator-models" }
+runinator-hash = { path = "../runinator-hash" }
 runinator-observability = { path = "../runinator-observability" }
 runinator-tui = { path = "../runinator-tui" }
 runinator-platform = { path = "../runinator-platform" }

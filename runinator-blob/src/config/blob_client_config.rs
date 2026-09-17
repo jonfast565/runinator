@@ -13,9 +13,7 @@ impl BlobClientConfig {
     /// read the configuration from the environment, or `None` when no endpoint is configured — the
     /// signal that this deployment stores blobs on a local directory instead.
     pub fn from_env() -> Option<Self> {
-        let endpoint = env::var(ENV_ENDPOINT)
-            .ok()
-            .filter(|value| !value.is_empty())?;
+        let endpoint = platform_env::non_empty(ENV_ENDPOINT)?;
         Some(Self {
             endpoint,
             region: env_or(ENV_REGION, DEFAULT_REGION),

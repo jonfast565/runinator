@@ -10,6 +10,7 @@ mod node;
 mod python;
 
 use runinator_models::errors::SendableError;
+use runinator_platform::env;
 
 use crate::errors::UNKNOWN_RUNTIME;
 
@@ -57,9 +58,7 @@ pub fn default_image(runtime: &str) -> Result<String, SendableError> {
         "RUNINATOR_FUNCTION_IMAGE_{}",
         adapter.family().to_uppercase()
     );
-    if let Ok(image) = std::env::var(&override_key)
-        && !image.trim().is_empty()
-    {
+    if let Some(image) = env::non_empty(&override_key) {
         return Ok(image);
     }
     Ok(adapter.default_image(&version))

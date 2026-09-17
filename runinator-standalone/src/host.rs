@@ -10,7 +10,7 @@ use runinator_db_cli::{
 };
 use runinator_engine::BackgroundEngineStore;
 use runinator_models::{errors::SendableError, provisioning::NodeSpec, replicas::ReplicaKind};
-use runinator_platform::startup::Shutdown;
+use runinator_platform::{env, startup::Shutdown};
 use runinator_provisioner::{Provisioner, ProvisionerRegistry};
 use runinator_worker::{AgentRuntime, NoopObserver};
 use runinator_ws::{
@@ -431,17 +431,14 @@ fn broker_config(config: &StandaloneConfig, client_id: &str) -> BrokerClientConf
 }
 
 fn plugin_paths() -> Vec<PathBuf> {
-    std::env::var_os("RUNINATOR_ADAPTER_PLUGIN_PATHS")
-        .map(|value| std::env::split_paths(&value).collect())
-        .unwrap_or_default()
+    env::paths("RUNINATOR_ADAPTER_PLUGIN_PATHS")
 }
 
 pub fn configure_environment(config: &StandaloneConfig) -> Result<(), SendableError> {
     let child = std::env::current_exe()?;
     let invoking_dir = std::env::current_dir()?;
-    let local_files_source = std::env::var_os("RUNINATOR_LOCAL_FILES_ROOT")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from("."));
+    let local_files_source =
+        env::path("RUNINATOR_LOCAL_FILES_ROOT").unwrap_or_else(|| PathBuf::from("."));
     validate_wsl_path(&local_files_source)?;
     let local_files_root = absolute_from(&invoking_dir, local_files_source);
     let blob_dir = config.state_dir.join("blobs");

@@ -4,11 +4,10 @@
 //! (the web service, a worker) reads it to decide what to talk to. that keeps a misconfiguration
 //! from producing a server and a client that disagree about the region or the credentials.
 
-use std::env;
-
 use runinator_blob_core::sigv4::{BlobCredential, DEFAULT_REGION};
 #[cfg(feature = "server")]
 use runinator_blob_core::{BlobError, CredentialStore};
+use runinator_platform::env as platform_env;
 
 /// where the service listens.
 #[cfg(feature = "server")]
@@ -48,15 +47,13 @@ pub const DEFAULT_MAX_OBJECT_BYTES: usize = 256 * 1024 * 1024;
 #[cfg(feature = "server")]
 pub fn credential_store_from_env() -> Result<CredentialStore, BlobError> {
     let mut credentials = Vec::new();
-    if let Ok(raw) = env::var(ENV_CREDENTIALS) {
-        if !raw.trim().is_empty() {
-            let parsed: Vec<BlobCredential> = serde_json::from_str(&raw).map_err(|err| {
-                BlobError::BadRequest(format!(
-                    "{ENV_CREDENTIALS} is not a valid credential list: {err}"
-                ))
-            })?;
-            credentials.extend(parsed);
-        }
+    if let Some(raw) = platform_env::non_empty(ENV_CREDENTIALS) {
+        let parsed: Vec<BlobCredential> = serde_json::from_str(&raw).map_err(|err| {
+            BlobError::BadRequest(format!(
+                "{ENV_CREDENTIALS} is not a valid credential list: {err}"
+            ))
+        })?;
+        credentials.extend(parsed);
     }
     if let Some(credential) = single_credential_from_env() {
         credentials.push(credential);
@@ -69,10 +66,8 @@ pub fn credential_store_from_env() -> Result<CredentialStore, BlobError> {
 }
 
 fn single_credential_from_env() -> Option<BlobCredential> {
-    let access_key_id = env::var(ENV_ACCESS_KEY_ID).ok().filter(|v| !v.is_empty())?;
-    let secret_access_key = env::var(ENV_SECRET_ACCESS_KEY)
-        .ok()
-        .filter(|v| !v.is_empty())?;
+    let access_key_id = platform_env::non_empty(ENV_ACCESS_KEY_ID)?;
+    let secret_access_key = platform_env::non_empty(ENV_SECRET_ACCESS_KEY)?;
     Some(BlobCredential {
         access_key_id,
         secret_access_key,
@@ -80,22 +75,12 @@ fn single_credential_from_env() -> Option<BlobCredential> {
 }
 
 fn env_or(name: &str, fallback: &str) -> String {
-    env::var(name)
-        .ok()
-        .filter(|value| !value.is_empty())
-        .unwrap_or_else(|| fallback.to_string())
+    platform_env::non_empty(name).unwrap_or_else(|| fallback.to_string())
 }
 
 #[cfg(feature = "server")]
 fn env_flag(name: &str) -> bool {
-    env::var(name)
-        .map(|value| {
-            matches!(
-                value.trim().to_ascii_lowercase().as_str(),
-                "1" | "true" | "yes"
-            )
-        })
-        .unwrap_or(false)
+    platform_env::flag(name)
 }
 
 #[cfg(feature = "server")]

@@ -27,6 +27,7 @@ use runinator_models::{
     },
     types::{RuninatorField, RuninatorType},
 };
+use runinator_platform::{env, time};
 use serde::Deserialize;
 use serde_json::{Value, json};
 use tokio::{process::Command, sync::RwLock, time::timeout};
@@ -47,20 +48,6 @@ const JIRA_MAX_PAGES: usize = 100;
 const JIRA_SKEW_MARGIN_MINUTES: i64 = 5;
 const JIRA_MAX_LOOKBACK_MINUTES: i64 = 90 * 24 * 60;
 
-fn positive_env_usize(name: &str) -> Option<usize> {
-    std::env::var(name)
-        .ok()
-        .and_then(|value| value.parse().ok())
-        .filter(|value| *value > 0)
-}
-
-fn positive_env_u64(name: &str) -> Option<u64> {
-    std::env::var(name)
-        .ok()
-        .and_then(|value| value.parse().ok())
-        .filter(|value| *value > 0)
-}
-
 #[allow(dead_code)]
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -72,17 +59,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let process = runinator_platform::startup::ProcessResources::start("Runinator Adapter Host")
         .map_err(|error| std::io::Error::other(error.to_string()))?;
 
-    let token = std::env::var("RUNINATOR_ADAPTER_HOST_TOKEN")
-        .map_err(|_| "RUNINATOR_ADAPTER_HOST_TOKEN is required")?;
+    let token = env::string("RUNINATOR_ADAPTER_HOST_TOKEN")
+        .ok_or("RUNINATOR_ADAPTER_HOST_TOKEN is required")?;
 
-    let paths = std::env::var_os("RUNINATOR_ADAPTER_PLUGIN_PATHS")
-        .map(|value| std::env::split_paths(&value).collect())
-        .unwrap_or_default();
+    let paths = env::paths("RUNINATOR_ADAPTER_PLUGIN_PATHS");
 
-    let port = std::env::var("RUNINATOR_ADAPTER_HOST_PORT")
-        .ok()
-        .and_then(|raw| raw.parse().ok())
-        .unwrap_or(8790);
+    let port = env::parse_or("RUNINATOR_ADAPTER_HOST_PORT", 8790);
     let address = SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), port);
     let listener = tokio::net::TcpListener::bind(address).await?;
     let shutdown = process.shutdown().clone();
@@ -182,9 +164,7 @@ async fn poll_once(
     let response = if builtin_catalog().contains_key(kind) {
         builtin_poll(kind, request).await
     } else {
-        let paths = std::env::var_os("RUNINATOR_ADAPTER_PLUGIN_PATHS")
-            .map(|value| std::env::split_paths(&value).collect::<Vec<_>>())
-            .unwrap_or_default();
+        let paths = env::paths("RUNINATOR_ADAPTER_PLUGIN_PATHS");
         let limits = HostLimits::from_env();
         let mut selected = None;
         for directory in paths {
@@ -620,8 +600,8 @@ async fn invoke_dynamic_validation(
 }
 
 fn adapter_child_executable() -> Result<PathBuf, String> {
-    match std::env::var_os("RUNINATOR_ADAPTER_CHILD_EXE") {
-        Some(path) if !path.is_empty() => Ok(PathBuf::from(path)),
+    match env::path("RUNINATOR_ADAPTER_CHILD_EXE") {
+        Some(path) => Ok(path),
         _ => std::env::current_exe().map_err(|error| error.to_string()),
     }
 }
@@ -1877,30 +1857,18 @@ fn parse_occurred_at(value: &Value) -> Result<chrono::DateTime<chrono::Utc>, Str
             return Ok(parsed.with_timezone(&Utc));
         }
         if let Ok(timestamp) = value.parse::<i64>() {
-            return timestamp_to_datetime(timestamp);
+            return time::from_unix_millis_or_seconds(timestamp)
+                .ok_or_else(|| "occurrence time is outside the supported range".into());
         }
         return Err("occurrence time is neither RFC3339 nor an epoch timestamp".into());
     }
     value
         .as_i64()
         .ok_or_else(|| "occurrence time must be a string or integer".into())
-        .and_then(timestamp_to_datetime)
-}
-
-fn timestamp_to_datetime(timestamp: i64) -> Result<chrono::DateTime<chrono::Utc>, String> {
-    use chrono::{TimeZone, Utc};
-
-    let (seconds, nanos) = if timestamp.abs() >= 10_000_000_000 {
-        (
-            timestamp.div_euclid(1_000),
-            timestamp.rem_euclid(1_000) as u32 * 1_000_000,
-        )
-    } else {
-        (timestamp, 0)
-    };
-    Utc.timestamp_opt(seconds, nanos)
-        .single()
-        .ok_or_else(|| "occurrence time is outside the supported range".into())
+        .and_then(|timestamp| {
+            time::from_unix_millis_or_seconds(timestamp)
+                .ok_or_else(|| "occurrence time is outside the supported range".into())
+        })
 }
 
 fn configured_occurred_at(

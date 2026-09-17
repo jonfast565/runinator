@@ -11,6 +11,7 @@ use std::{
 
 use glob::Pattern;
 use runinator_api::{AsyncApiClient, StaticLocator};
+use runinator_hash::sha256_hex;
 use runinator_models::execution_profiles::{
     ExecutionProfile, ExecutionProfileAgentStatusRequest, ExecutionProfileApprovalState,
     ExecutionProfileCommand, ExecutionProfileOperation, ExecutionProfileOperationClaimRequest,
@@ -18,7 +19,6 @@ use runinator_models::execution_profiles::{
     ExecutionProfileOperationState, ExecutionProfilePublishRequest, ExecutionProfileSource,
     validate_bundle_path,
 };
-use sha2::{Digest, Sha256};
 
 use crate::agent::{ConnectionState, SharedHandle, log_line};
 
@@ -518,7 +518,7 @@ fn collect(
         "config_digest": profile.config_digest,
         "files": files.iter().map(|(path, bytes)| serde_json::json!({
             "path": path,
-            "sha256": hex::encode(Sha256::digest(bytes)),
+            "sha256": sha256_hex(bytes),
             "size": bytes.len(),
         })).collect::<Vec<_>>()
     }))?;
@@ -541,7 +541,7 @@ fn collect(
     if bytes.len() > MAX_ARCHIVE_BYTES {
         return Err("execution profile archive exceeds 10 MiB".into());
     }
-    let digest = hex::encode(Sha256::digest(&bytes));
+    let digest = sha256_hex(&bytes);
     Ok((profile.id, bytes, digest))
 }
 

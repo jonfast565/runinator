@@ -12,12 +12,8 @@ pub struct BrokerAuth {
 impl BrokerAuth {
     /// build from env: returns `None` when no secret is configured, leaving the broker open.
     pub fn from_env() -> Option<Self> {
-        let secret = std::env::var(SECRET_ENV)
-            .ok()
-            .filter(|value| !value.trim().is_empty())?;
-        let previous = std::env::var(SECRET_PREVIOUS_ENV)
-            .ok()
-            .filter(|value| !value.trim().is_empty());
+        let secret = env::non_empty(SECRET_ENV)?;
+        let previous = env::non_empty(SECRET_PREVIOUS_ENV);
         Some(Self::new(
             secret.into_bytes(),
             previous.map(String::into_bytes),

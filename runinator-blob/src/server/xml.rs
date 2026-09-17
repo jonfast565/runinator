@@ -5,11 +5,12 @@
 //! attack surface than the twenty lines of scanning below. the one thing that genuinely matters is
 //! escaping, since object keys are attacker-influenced and land inside element text.
 
-use chrono::{DateTime, SecondsFormat, Utc};
+use chrono::{DateTime, Utc};
 
 use runinator_blob_core::listing::{BucketSummary, ListResponse};
 use runinator_blob_core::multipart::CompletedPart;
 use runinator_blob_core::BlobError;
+use runinator_platform::time::rfc3339_millis;
 
 const DECLARATION: &str = r#"<?xml version="1.0" encoding="UTF-8"?>"#;
 const NAMESPACE: &str = "http://s3.amazonaws.com/doc/2006-03-01/";
@@ -31,7 +32,7 @@ pub fn escape(value: &str) -> String {
 }
 
 fn timestamp(value: DateTime<Utc>) -> String {
-    value.to_rfc3339_opts(SecondsFormat::Millis, true)
+    rfc3339_millis(value)
 }
 
 /// An S3 `<Error>` document.

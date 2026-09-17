@@ -13,12 +13,17 @@ use crate::agent::{
 use crate::config::{self, LogLevel, WindowCloseAction};
 use crate::logging;
 use crate::tray::{AgentTray, TrayAction, TrayColor};
+use runinator_platform::time::format_duration;
 use runinator_worker::ActionOutcome;
 
 // presets offered by the optional-label type-ahead. `pool=desktop` and `runner=desktop` are shown
 // separately as fixed identity labels, so suggestions only cover user-configurable routing facts.
 const LABEL_SUGGESTIONS: &[&str] = &["zone=home", "capability=desktop"];
 const REQUIRED_LABELS: &[&str] = &["pool=desktop", "runner=desktop"];
+
+fn display_duration(duration: Duration) -> String {
+    format_duration(duration)
+}
 
 /// a per-frame copy of the shared agent state the GUI renders from, taken under one short lock.
 
@@ -332,17 +337,6 @@ fn status_light(ui: &mut egui::Ui, presentation: &StatusPresentation) {
         egui::Stroke::new(1.0_f32, ui.visuals().widgets.inactive.bg_fill),
     );
     response.on_hover_text(&presentation.tooltip);
-}
-
-fn display_duration(duration: Duration) -> String {
-    let seconds = duration.as_secs();
-    if seconds >= 3_600 {
-        format!("{}h {:02}m", seconds / 3_600, (seconds % 3_600) / 60)
-    } else if seconds >= 60 {
-        format!("{}m {:02}s", seconds / 60, seconds % 60)
-    } else {
-        format!("{seconds}s")
-    }
 }
 
 fn format_bytes(value: f64) -> String {

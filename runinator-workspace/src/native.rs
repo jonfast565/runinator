@@ -43,9 +43,9 @@ fn descriptor(
     }
     let id = value["digest"]
         .as_str()
-        .and_then(|s| s.strip_prefix("sha256:"))
-        .ok_or_else(|| WORKSPACE_INVALID.error("invalid OCI digest"))?
-        .parse::<Id>()?;
+        .and_then(runinator_hash::parse_lowercase_digest)
+        .map(Id)
+        .ok_or_else(|| WORKSPACE_INVALID.error("invalid OCI digest"))?;
     let path = root.join(format!("blobs/sha256/{id}"));
     if value["size"].as_u64() != Some(std::fs::metadata(&path)?.len()) {
         return Err(WORKSPACE_INVALID.error("OCI descriptor size mismatch"));

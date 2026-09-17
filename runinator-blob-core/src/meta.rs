@@ -6,7 +6,6 @@ use base64::engine::general_purpose::STANDARD as BASE64;
 use base64::Engine;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
-use sha2::{Digest, Sha256};
 
 use crate::range::ResolvedRange;
 
@@ -16,9 +15,7 @@ pub const DEFAULT_CONTENT_TYPE: &str = "binary/octet-stream";
 /// lowercase hex sha-256 of a byte slice. the one digest helper every blob caller uses, so it lives
 /// beside the descriptor that stores the result.
 pub fn sha256_hex(bytes: &[u8]) -> String {
-    let mut hasher = Sha256::new();
-    hasher.update(bytes);
-    hex::encode(hasher.finalize())
+    runinator_hash::sha256_hex(bytes)
 }
 
 /// the `x-amz-checksum-sha256` wire form of a hex digest.
@@ -28,10 +25,7 @@ pub fn sha256_hex(bytes: &[u8]) -> String {
 /// stores and displays digests as hex elsewhere, so the conversion lives at the wire boundary
 /// rather than in the model.
 pub fn sha256_hex_to_base64(hex_digest: &str) -> Option<String> {
-    let bytes = hex::decode(hex_digest).ok()?;
-    if bytes.len() != 32 {
-        return None;
-    }
+    let bytes = runinator_hash::parse_hex(hex_digest)?;
     Some(BASE64.encode(bytes))
 }
 
@@ -39,7 +33,7 @@ pub fn sha256_hex_to_base64(hex_digest: &str) -> Option<String> {
 /// callers use, and normalising to lowercase hex.
 pub fn sha256_from_checksum_header(value: &str) -> Option<String> {
     let value = value.trim();
-    if value.len() == 64 && value.chars().all(|character| character.is_ascii_hexdigit()) {
+    if runinator_hash::is_valid_hex(value) {
         return Some(value.to_ascii_lowercase());
     }
     let bytes = BASE64.decode(value).ok()?;

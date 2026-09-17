@@ -32,12 +32,7 @@ impl FileDescriptor {
         if descriptor.size_bytes < 0 {
             return Err("file descriptor size_bytes cannot be negative".into());
         }
-        if descriptor.sha256.len() != 64
-            || !descriptor
-                .sha256
-                .chars()
-                .all(|character| character.is_ascii_hexdigit())
-        {
+        if !runinator_hash::is_valid_hex(&descriptor.sha256) {
             return Err("file descriptor sha256 must be a 64-character hex digest".into());
         }
         Ok(descriptor)

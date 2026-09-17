@@ -24,7 +24,7 @@ impl ServerCertVerifier for PinnedServerVerifier {
         let (_, certificate) = parse_x509_certificate(end_entity.as_ref()).map_err(|_| {
             rustls::Error::InvalidCertificate(rustls::CertificateError::BadEncoding)
         })?;
-        let actual: [u8; 32] = Sha256::digest(certificate.public_key().raw).into();
+        let actual = runinator_hash::sha256(certificate.public_key().raw);
         if actual != self.pin {
             return Err(rustls::Error::InvalidCertificate(
                 rustls::CertificateError::ApplicationVerificationFailure,

@@ -38,9 +38,7 @@ impl PipelineRevision {
     ) -> String {
         let payload = serde_json::to_vec(&(graph, concurrency, defaults, metadata))
             .expect("pipeline revision payload is serializable");
-        let mut digest = Sha256::new();
-        digest.update(payload);
-        format!("sha256:{}", hex::encode(digest.finalize()))
+        runinator_hash::sha256_digest(&payload)
     }
 
     pub fn from_pipeline(pipeline: &Pipeline, author: &RevisionAuthor) -> Option<Self> {

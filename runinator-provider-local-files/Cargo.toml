@@ -10,3 +10,4 @@ mime_guess = "2"
 runinator-plugin = { path = "../runinator-plugin" }
 runinator-models = { path = "../runinator-models" }
 runinator-provider-support = { path = "../runinator-provider-support" }
+runinator-platform = { path = "../runinator-platform" }

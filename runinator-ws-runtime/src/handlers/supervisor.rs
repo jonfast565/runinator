@@ -8,7 +8,7 @@ use runinator_models::{
     local_runtime::{LocalRuntimeComponentSnapshot, LocalRuntimeHostKind, LocalRuntimeSnapshot},
     rbac::{Action, ScopeRef},
 };
-use runinator_platform::app_data;
+use runinator_platform::{app_data, env};
 use runinator_ws_middleware::authz::AuthContextExt;
 
 use crate::handlers::runs::compute_stale_seconds;
@@ -18,13 +18,12 @@ pub async fn get_supervisor_status(Extension(ctx): Extension<AuthContext>) -> Re
     if let Err(reply) = ctx.require_scope_action(Action::View, ScopeRef::PLATFORM) {
         return reply.into_reply().into_response();
     }
-    let path = std::env::var("RUNINATOR_SUPERVISOR_STATE_PATH").unwrap_or_else(|_| {
+    let path = env::path("RUNINATOR_SUPERVISOR_STATE_PATH").unwrap_or_else(|| {
         app_data::default_supervisor_state_dir()
-            .map(|path| path.join("state.json").to_string_lossy().into_owned())
-            .unwrap_or_else(|_| "supervisor/state.json".to_string())
+            .map(|path| path.join("state.json"))
+            .unwrap_or_else(|_| std::path::PathBuf::from("supervisor/state.json"))
     });
-    let path_buf = std::path::PathBuf::from(&path);
-    if !path_buf.exists() {
+    if !path.exists() {
         // An absent local supervisor is an expected deployment mode, not an unavailable API
         // resource. Reply successfully so Command Center can disable its optional status poll
         // without leaving a benign 404 in the browser console.
@@ -32,12 +31,12 @@ pub async fn get_supervisor_status(Extension(ctx): Extension<AuthContext>) -> Re
             StatusCode::OK,
             Json(serde_json::json!({
                 "configured": false,
-                "path": path
+                "path": path.display().to_string()
             })),
         )
             .into_response();
     }
-    match runinator_supervisor::snapshot::read_snapshot(&path_buf) {
+    match runinator_supervisor::snapshot::read_snapshot(&path) {
         Ok(snapshot) => {
             let stale_seconds = compute_stale_seconds(&snapshot.updated_at);
             let mut body =
@@ -63,10 +62,9 @@ pub async fn get_local_runtime_status(Extension(ctx): Extension<AuthContext>) ->
     if let Err(reply) = ctx.require_scope_action(Action::View, ScopeRef::PLATFORM) {
         return reply.into_reply().into_response();
     }
-    let standalone_path = std::env::var("RUNINATOR_STANDALONE_STATE_PATH").unwrap_or_else(|_| {
+    let standalone_path = env::path("RUNINATOR_STANDALONE_STATE_PATH").unwrap_or_else(|| {
         app_data::app_data_path("standalone/state.json")
-            .map(|path| path.to_string_lossy().into_owned())
-            .unwrap_or_else(|_| "standalone/state.json".to_string())
+            .unwrap_or_else(|_| std::path::PathBuf::from("standalone/state.json"))
     });
     if let Ok(data) = std::fs::read_to_string(&standalone_path)
         && let Ok(snapshot) = serde_json::from_str::<LocalRuntimeSnapshot>(&data)
@@ -74,14 +72,12 @@ pub async fn get_local_runtime_status(Extension(ctx): Extension<AuthContext>) ->
         return local_runtime_reply(snapshot);
     }
 
-    let supervisor_path = std::env::var("RUNINATOR_SUPERVISOR_STATE_PATH").unwrap_or_else(|_| {
+    let supervisor_path = env::path("RUNINATOR_SUPERVISOR_STATE_PATH").unwrap_or_else(|| {
         app_data::default_supervisor_state_dir()
-            .map(|path| path.join("state.json").to_string_lossy().into_owned())
-            .unwrap_or_else(|_| "supervisor/state.json".to_string())
+            .map(|path| path.join("state.json"))
+            .unwrap_or_else(|_| std::path::PathBuf::from("supervisor/state.json"))
     });
-    if let Ok(snapshot) =
-        runinator_supervisor::snapshot::read_snapshot(std::path::Path::new(&supervisor_path))
-    {
+    if let Ok(snapshot) = runinator_supervisor::snapshot::read_snapshot(&supervisor_path) {
         return local_runtime_reply(LocalRuntimeSnapshot {
             host_kind: LocalRuntimeHostKind::Supervisor,
             pid: snapshot.supervisor_pid,

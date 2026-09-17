@@ -76,7 +76,7 @@ impl<'a> PackBuilder<'a> {
                 zip.write_all(&serde_json::to_vec(&self.functions)?)?;
             }
             for (digest, bytes) in &self.function_artifacts {
-                let hex = digest.strip_prefix("sha256:").unwrap_or(digest);
+                let hex = runinator_hash::hex_part(digest);
                 zip.start_file(format!("{FUNCTION_ARTIFACT_PREFIX}{hex}.zip"), options)?;
                 zip.write_all(bytes)?;
             }

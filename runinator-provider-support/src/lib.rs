@@ -59,6 +59,29 @@ pub fn resolve_working_dir(
     Ok(Some(candidate))
 }
 
+/// sanitize a provider-generated filename stem for portable filesystem exports.
+pub fn sanitize_file_stem(input: &str) -> String {
+    let mut sanitized = input
+        .chars()
+        .map(|character| match character {
+            '<' | '>' | ':' | '"' | '/' | '\\' | '|' | '?' | '*' => '_',
+            _ if character.is_control() => '_',
+            _ => character,
+        })
+        .collect::<String>();
+
+    sanitized = sanitized
+        .trim()
+        .trim_matches('.')
+        .trim_matches('\'')
+        .to_string();
+
+    if sanitized.len() > 120 {
+        sanitized.truncate(120);
+    }
+    sanitized
+}
+
 /// deserialize a provider request's parameters into `T`, tagging failures with the
 /// caller's invalid-params error descriptor so each provider keeps its own error code.
 pub fn parse_params<T: DeserializeOwned>(

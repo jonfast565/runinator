@@ -24,6 +24,7 @@ runinator-adapter-client = { path = "../runinator-adapter-client" }
 runinator-broker-core = { path = "../runinator-broker-core" }
 runinator-engine = { path = "../runinator-engine" }
 runinator-models = { path = "../runinator-models" }
+runinator-platform = { path = "../runinator-platform" }
 runinator-store = { path = "../runinator-store" }
 runinator-provider-catalog = { path = "../runinator-provider-catalog", default-features = false }
 runinator-pack-wire = { path = "../runinator-pack-wire" }

@@ -64,10 +64,7 @@ pub fn random_secret(len: usize) -> Vec<u8> {
 
 /// SHA-256 of a secret, encoded with base64url. Store this for API keys and refresh tokens.
 pub fn hash_secret(secret: &str) -> String {
-    use sha2::{Digest, Sha256};
-    let mut hasher = Sha256::new();
-    hasher.update(secret.as_bytes());
-    URL_SAFE_NO_PAD.encode(hasher.finalize())
+    URL_SAFE_NO_PAD.encode(runinator_hash::sha256(secret.as_bytes()))
 }
 
 /// Create an API key. Its wire form is `<prefix>.<secret>`.

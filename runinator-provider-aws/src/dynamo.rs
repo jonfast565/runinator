@@ -18,6 +18,7 @@ use runinator_models::{
     errors::SendableError,
     runs::{NewRunArtifact, ProviderExecutionRequest},
 };
+use runinator_provider_support::sanitize_file_stem;
 
 use crate::errors::{
     DYNAMO_TIMEOUT, INVALID_ATTRIBUTE_VALUE, MISSING_KEY_CONDITION, MISSING_PARTIQL_STATEMENT,
@@ -577,30 +578,6 @@ fn attribute_value_to_json(value: &AttributeValue) -> JsonValue {
 
 fn sanitize_limit(limit: Option<i32>) -> Option<i32> {
     limit.filter(|value| *value > 0)
-}
-
-fn sanitize_file_stem(input: &str) -> String {
-    let mut sanitized = input
-        .chars()
-        .map(|ch| match ch {
-            '<' | '>' | ':' | '"' | '/' | '\\' | '|' | '?' | '*' => '_',
-            _ if ch.is_control() => '_',
-            _ => ch,
-        })
-        .collect::<String>();
-
-    sanitized = sanitized
-        .trim()
-        .trim_matches('.')
-        .trim_matches('\'')
-        .to_string();
-
-    const MAX_LEN: usize = 120;
-    if sanitized.len() > MAX_LEN {
-        sanitized.truncate(MAX_LEN);
-    }
-
-    sanitized
 }
 
 fn normalize_timeout(timeout_secs: i64) -> Duration {

@@ -9,6 +9,7 @@ use runinator_comm::{
     WsIngressCommand,
 };
 use runinator_models::{errors::SendableError, value::Value};
+use runinator_platform::env;
 use tokio::sync::Notify;
 use tracing::{error, info};
 
@@ -147,7 +148,7 @@ async fn cleanup_workspace(workspace_id: uuid::Uuid, local_key: &str) -> Directi
     {
         return DirectiveResponse::failed("workspace key is not a safe relative path");
     }
-    let Some(root) = std::env::var_os("RUNINATOR_WORKSPACE_ROOT") else {
+    let Some(root) = env::path("RUNINATOR_WORKSPACE_ROOT") else {
         return DirectiveResponse::failed("worker workspace root is not configured");
     };
     let root = match tokio::fs::canonicalize(root).await {

@@ -2,8 +2,8 @@
 use runinator_broker::http;
 use runinator_broker::in_memory::InMemoryBroker;
 use runinator_broker::tcp;
-use runinator_platform::startup::ProcessResources;
-use std::{env, net::SocketAddr};
+use runinator_platform::{env, startup::ProcessResources};
+use std::net::SocketAddr;
 
 #[path = "main/service.rs"]
 mod service;
@@ -17,10 +17,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
 async fn run_process() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let process = ProcessResources::start("Runinator Broker")?;
     let shutdown = process.shutdown();
-    let addr: SocketAddr = env::var("RUNINATOR_BROKER_ADDR")
-        .unwrap_or_else(|_| "127.0.0.1:7070".into())
+    let addr: SocketAddr = env::string("RUNINATOR_BROKER_ADDR")
+        .unwrap_or_else(|| "127.0.0.1:7070".into())
         .parse()?;
-    let transport = env::var("RUNINATOR_BROKER_TRANSPORT").unwrap_or_else(|_| "tcp".into());
+    let transport = env::string("RUNINATOR_BROKER_TRANSPORT").unwrap_or_else(|| "tcp".into());
 
     let broker = InMemoryBroker::new();
     match transport.as_str() {

@@ -6,6 +6,7 @@ use std::{
     time::{Duration, Instant},
 };
 
+use runinator_hash::sha256_digest;
 use runinator_models::json;
 use runinator_models::value::Value;
 use runinator_models::{
@@ -19,7 +20,6 @@ use runinator_plugin::cancel::CancellationToken;
 use runinator_plugin::provider::ProviderEventSink;
 use runinator_provider_support::process_runner::{ProcessFailure, ProcessRequest, ProcessRunner};
 use runinator_provider_support::terminal::{self, CommandBuilder, TerminalError};
-use sha2::{Digest, Sha256};
 
 use crate::errors::{
     CLAUDE_CANCELED, CLAUDE_EXIT_CODE, CLAUDE_INPUT, CLAUDE_INTERACTIVE_NOT_PERMITTED,
@@ -177,21 +177,9 @@ fn resolve_prompt(
     };
     PromptMetadata {
         asset: params.prompt_asset.clone(),
-        digest: sha256_hex(params.prompt.as_bytes()),
+        digest: sha256_digest(params.prompt.as_bytes()),
         source,
     }
-}
-
-fn sha256_hex(bytes: &[u8]) -> String {
-    const HEX: &[u8; 16] = b"0123456789abcdef";
-    let digest = Sha256::digest(bytes);
-    let mut encoded = String::with_capacity(7 + digest.len() * 2);
-    encoded.push_str("sha256:");
-    for byte in digest {
-        encoded.push(HEX[(byte >> 4) as usize] as char);
-        encoded.push(HEX[(byte & 0x0f) as usize] as char);
-    }
-    encoded
 }
 
 fn prompt_override_environment_key(asset: &str) -> String {

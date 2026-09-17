@@ -1,5 +1,5 @@
 use std::{
-    env, io,
+    io,
     path::{Path, PathBuf},
 };
 
@@ -8,21 +8,18 @@ use runinator_models::errors::SendableError;
 pub const APP_DATA_DIR_NAME: &str = ".runinator";
 
 pub fn app_data_dir() -> Result<PathBuf, SendableError> {
-    if let Some(path) = env::var_os("RUNINATOR_HOME").filter(|path| !path.is_empty()) {
-        return Ok(PathBuf::from(path));
+    if let Some(path) = crate::env::path("RUNINATOR_HOME") {
+        return Ok(path);
     }
 
-    let Some(home) = env::var_os("HOME")
-        .filter(|path| !path.is_empty())
-        .or_else(|| env::var_os("USERPROFILE").filter(|path| !path.is_empty()))
-    else {
+    let Some(home) = crate::env::path("HOME").or_else(|| crate::env::path("USERPROFILE")) else {
         return Err(Box::new(io::Error::new(
             io::ErrorKind::NotFound,
             "unable to resolve home directory for Runinator app data",
         )));
     };
 
-    Ok(PathBuf::from(home).join(APP_DATA_DIR_NAME))
+    Ok(home.join(APP_DATA_DIR_NAME))
 }
 
 pub fn app_data_path(path: impl AsRef<Path>) -> Result<PathBuf, SendableError> {

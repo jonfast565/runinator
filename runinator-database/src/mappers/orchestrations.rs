@@ -8,9 +8,10 @@ use runinator_models::orchestration::{
     OrchestrationEventReduction, OrchestrationEvidence, OrchestrationPendingIntent,
     OrchestrationPolicy, OrchestrationStatus,
 };
+use runinator_platform::time;
 
 fn timestamp(value: i64) -> DateTime<Utc> {
-    DateTime::<Utc>::from_timestamp(value, 0).unwrap_or_else(Utc::now)
+    time::from_unix_seconds(value).unwrap_or_else(Utc::now)
 }
 
 fn status(raw: &str) -> Result<OrchestrationStatus, SendableError> {

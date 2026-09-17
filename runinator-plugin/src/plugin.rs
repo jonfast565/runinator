@@ -8,7 +8,7 @@ use runinator_models::{
         TaskExecutionResult,
     },
 };
-use runinator_platform::ffiutils;
+use runinator_platform::{ffiutils, time};
 use std::{
     ffi::{CString, c_char, c_int},
     fs::{self, File, OpenOptions},
@@ -207,16 +207,9 @@ fn unique_temp_file(kind: &str, extension: &str) -> PathBuf {
             "{}-{}-{}.{}",
             kind,
             std::process::id(),
-            chrono_like_now(),
+            time::unix_timestamp_nanos(),
             extension
         ))
-}
-
-fn chrono_like_now() -> u128 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|duration| duration.as_nanos())
-        .unwrap_or_default()
 }
 
 // poll the host cancellation token and, on cancellation, touch the sentinel file an abi-2 plugin

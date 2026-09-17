@@ -19,6 +19,7 @@ use runinator_models::{
     rbac::{ScopeKind, ScopeRef},
     value::Value,
 };
+use runinator_platform::env;
 use runinator_store::{
     RuntimeStore,
     roles::{DeliveryStore, OrchestrationStore, RbacStore, ReplicaStore, WorkflowVmStore},
@@ -215,19 +216,17 @@ async fn run_ingress_consumer_inner<
 }
 
 fn diagnostics_retention_seconds() -> i64 {
-    std::env::var("RUNINATOR_DIAGNOSTICS_RETENTION_SECONDS")
-        .ok()
-        .and_then(|value| value.parse::<i64>().ok())
-        .filter(|value| *value > 0)
-        .unwrap_or(DEFAULT_DIAGNOSTICS_RETENTION_SECONDS)
+    env::parse_positive_or(
+        "RUNINATOR_DIAGNOSTICS_RETENTION_SECONDS",
+        DEFAULT_DIAGNOSTICS_RETENTION_SECONDS,
+    )
 }
 
 fn diagnostics_payload_budget_bytes() -> u64 {
-    std::env::var("RUNINATOR_DIAGNOSTICS_PAYLOAD_BUDGET_BYTES")
-        .ok()
-        .and_then(|value| value.parse::<u64>().ok())
-        .filter(|value| *value > 0)
-        .unwrap_or(DEFAULT_DIAGNOSTICS_PAYLOAD_BUDGET_BYTES)
+    env::parse_positive_or(
+        "RUNINATOR_DIAGNOSTICS_PAYLOAD_BUDGET_BYTES",
+        DEFAULT_DIAGNOSTICS_PAYLOAD_BUDGET_BYTES,
+    )
 }
 
 async fn settle_delivery<

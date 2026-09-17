@@ -8,9 +8,10 @@ use crate::actions::Shape;
 use crate::connector::sql::ops::sql_returns_rows;
 use crate::engine::Engine;
 use crate::export::{ExportFormat, ExportSpec, export_rows};
-use crate::helpers::{next_available_stem, normalize_timeout, sanitize_file_stem};
+use crate::helpers::{next_available_stem, normalize_timeout};
 use crate::rowset::{ColumnInfo, ColumnKind, ExecOutcome, RowSet};
 use crate::statement::{StatementFields, StatementInput, StatementSpec};
+use runinator_provider_support::sanitize_file_stem;
 
 fn fields(value: Value) -> StatementFields {
     serde_json::from_value(value).expect("statement fields should deserialize")

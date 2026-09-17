@@ -1,6 +1,7 @@
 use std::path::{Component, Path, PathBuf};
 
 use runinator_models::errors::SendableError;
+use runinator_platform::env;
 
 use crate::errors::{IO, PATH_OUTSIDE_ROOT, ROOT_NOT_CONFIGURED};
 
@@ -17,18 +18,13 @@ pub(crate) const LOCATION_LOCAL: &str = "local";
 
 /// the canonical, existing sandbox root. errors if unset or missing so the provider fails closed.
 pub(crate) fn root() -> Result<PathBuf, SendableError> {
-    let raw = std::env::var(ROOT_ENV)
-        .ok()
-        .filter(|value| !value.trim().is_empty())
-        .ok_or_else(|| ROOT_NOT_CONFIGURED.error(ROOT_ENV))?;
+    let raw = env::non_empty(ROOT_ENV).ok_or_else(|| ROOT_NOT_CONFIGURED.error(ROOT_ENV))?;
     std::fs::canonicalize(&raw).map_err(|err| ROOT_NOT_CONFIGURED.error(format!("{raw}: {err}")))
 }
 
 /// whether the mutating actions are permitted on this worker.
 pub(crate) fn writes_allowed() -> bool {
-    std::env::var(ALLOW_WRITE_ENV)
-        .map(|value| matches!(value.trim(), "1" | "true" | "TRUE" | "yes"))
-        .unwrap_or(false)
+    env::flag(ALLOW_WRITE_ENV)
 }
 
 // lexically join `rel` under `root`, rejecting absolute paths and any `..` escape before touching

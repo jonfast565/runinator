@@ -61,7 +61,7 @@ impl WorkflowRevision {
             definition,
         ))
         .expect("workflow revision payload is serializable");
-        format!("sha256:{}", hex::encode(Sha256::digest(payload)))
+        runinator_hash::sha256_digest(&payload)
     }
 
     /// Canonical digest of the parts of a revision that affect execution. Namespace and display
@@ -74,9 +74,7 @@ impl WorkflowRevision {
     ) -> String {
         let payload = serde_json::to_vec(&(version, input_type, definition))
             .expect("workflow revision payload is serializable");
-        let mut digest = Sha256::new();
-        digest.update(payload);
-        format!("sha256:{}", hex::encode(digest.finalize()))
+        runinator_hash::sha256_digest(&payload)
     }
 
     /// rebuild a savable definition from this revision, carrying the *current* row's identity

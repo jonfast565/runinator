@@ -21,6 +21,7 @@ use std::fs::File;
 use std::path::PathBuf;
 
 use crate::commands::Result;
+use runinator_platform::time;
 
 #[cfg(unix)]
 #[path = "capture/unix.rs"]
@@ -84,10 +85,7 @@ impl Drop for OutputCapture {
 /// named for the process and the moment, because two servers under one client share a temp
 /// directory and neither should be reading the other's output.
 fn scratch_path() -> PathBuf {
-    let unique = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|elapsed| elapsed.as_nanos())
-        .unwrap_or_default();
+    let unique = time::unix_timestamp_nanos();
     std::env::temp_dir().join(format!("runinator-mcp-{}-{unique}.out", std::process::id()))
 }
 

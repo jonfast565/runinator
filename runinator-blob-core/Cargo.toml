@@ -11,6 +11,7 @@ chrono = { version = "0.4", features = ["serde"] }
 hex = "0.4"
 hmac = "0.13"
 runinator-models = { path = "../runinator-models" }
+runinator-hash = { path = "../runinator-hash" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 sha2 = "0.11"

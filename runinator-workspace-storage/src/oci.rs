@@ -860,11 +860,9 @@ fn checked_blob(root: &Path, d: &Descriptor, expected: Option<&str>) -> Result<P
             d.media_type
         )));
     }
-    let text = d
-        .digest
-        .strip_prefix("sha256:")
+    let id = runinator_hash::parse_lowercase_digest(&d.digest)
+        .map(Id)
         .ok_or_else(|| corrupt("only OCI SHA-256 digests are accepted"))?;
-    let id: Id = text.parse()?;
     let path = root.join("blobs/sha256").join(id.to_string());
     let actual = fs::canonicalize(&path)?;
     if !actual.starts_with(root) {
@@ -1187,10 +1185,9 @@ pub fn import_image(
     }
     let mut tx = repo.transaction(name)?;
     for (layer, expected_diff) in manifest.layers.iter().zip(&config.rootfs.diff_ids) {
-        let expected: Id = expected_diff
-            .strip_prefix("sha256:")
-            .ok_or_else(|| corrupt("OCI DiffID must use SHA-256"))?
-            .parse()?;
+        let expected = runinator_hash::parse_lowercase_digest(expected_diff)
+            .map(Id)
+            .ok_or_else(|| corrupt("OCI DiffID must use SHA-256"))?;
         let path = checked_blob(&root, layer, None)?;
         let (tar_file, actual) = match layer.media_type.as_str() {
             LAYER_TAR => copy_layer(File::open(path)?, &repo.root.join("tmp"))?,
@@ -1234,10 +1231,9 @@ pub fn import_image_edit<S: WriteStore>(
     let mut tx = Edit::new(store, None, crate::Layout::default(), 16 * 1024 * 1024)?;
     let mut remaining = max_expanded_bytes;
     for (layer, expected_diff) in manifest.layers.iter().zip(&config.rootfs.diff_ids) {
-        let expected: Id = expected_diff
-            .strip_prefix("sha256:")
-            .ok_or_else(|| corrupt("OCI DiffID must use SHA-256"))?
-            .parse()?;
+        let expected = runinator_hash::parse_lowercase_digest(expected_diff)
+            .map(Id)
+            .ok_or_else(|| corrupt("OCI DiffID must use SHA-256"))?;
         let path = checked_blob(&root, layer, None)?;
         let input: Box<dyn Read> = match layer.media_type.as_str() {
             LAYER_TAR => Box::new(File::open(path)?),

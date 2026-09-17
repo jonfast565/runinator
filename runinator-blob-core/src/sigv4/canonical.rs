@@ -4,7 +4,7 @@
 //! The rules follow the AWS specification: encode paths as required, sort encoded query names,
 //! normalize signed headers, and join the canonical request with `\n`.
 
-use sha2::{Digest, Sha256};
+use runinator_hash::sha256_hex;
 
 /// Payload hash used when the body is not signed. S3 accepts it for HTTPS and presigned URLs.
 /// It lets the server verify the request without buffering the body.
@@ -77,7 +77,7 @@ impl CanonicalRequest<'_> {
 
     /// lowercase hex sha-256 of the canonical request, which is what the string-to-sign carries.
     pub fn hash(&self) -> String {
-        hex::encode(Sha256::digest(self.render().as_bytes()))
+        sha256_hex(self.render().as_bytes())
     }
 }
 
@@ -128,5 +128,5 @@ fn collapse_whitespace(value: &str) -> String {
 
 /// lowercase hex sha-256 of a payload.
 pub fn payload_hash(body: &[u8]) -> String {
-    hex::encode(Sha256::digest(body))
+    sha256_hex(body)
 }

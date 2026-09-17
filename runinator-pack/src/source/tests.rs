@@ -247,7 +247,7 @@ namespace runinator.test {
     assert_eq!(assets.len(), 1);
     assert_eq!(assets[0]["name"].as_str(), Some("review"));
     assert_eq!(assets[0]["path"].as_str(), Some("prompts/review.md"));
-    let expected_digest = super::sha256_hex(prompt);
+    let expected_digest = runinator_hash::sha256_digest(prompt);
     assert_eq!(assets[0]["digest"].as_str(), Some(expected_digest.as_str()));
 
     let _ = fs::remove_dir_all(&dir);

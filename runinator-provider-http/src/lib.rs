@@ -25,6 +25,7 @@ use runinator_models::{
     runs::{ProviderExecutionRequest, TaskExecutionResult},
     value::Value,
 };
+use runinator_platform::env;
 use runinator_plugin::{cancel::CancellationToken, provider::Provider};
 use serde::Deserialize;
 
@@ -230,7 +231,7 @@ fn status_expected(status: u16, expected: Option<&[u16]>) -> bool {
 }
 
 fn configured_allowed_hosts() -> BTreeSet<String> {
-    std::env::var("RUNINATOR_HTTP_ALLOWED_HOSTS")
+    env::string("RUNINATOR_HTTP_ALLOWED_HOSTS")
         .unwrap_or_default()
         .split(',')
         .map(str::trim)

@@ -77,6 +77,7 @@ use runinator_models::{
     },
     workspaces::WorkspaceLease,
 };
+use runinator_platform::env;
 use serde::de::DeserializeOwned;
 use tower::{service_fn, ServiceExt};
 use tower_resilience_circuitbreaker::{CircuitBreakerError, CircuitBreakerLayer, FnClassifier};
@@ -114,49 +115,17 @@ fn outbound_failure(result: &HttpResult) -> bool {
     }
 }
 
-fn env_bool(key: &str, default: bool) -> bool {
-    std::env::var(key)
-        .ok()
-        .and_then(|raw| raw.trim().parse().ok())
-        .unwrap_or(default)
-}
-
-fn env_usize(key: &str, default: usize) -> usize {
-    std::env::var(key)
-        .ok()
-        .and_then(|raw| raw.trim().parse().ok())
-        .filter(|value| *value > 0)
-        .unwrap_or(default)
-}
-
-fn env_u64(key: &str, default: u64) -> u64 {
-    std::env::var(key)
-        .ok()
-        .and_then(|raw| raw.trim().parse().ok())
-        .filter(|value| *value > 0)
-        .unwrap_or(default)
-}
-
-fn env_duration(key: &str, default_seconds: u64) -> Duration {
-    let seconds = std::env::var(key)
-        .ok()
-        .and_then(|raw| raw.trim().parse::<u64>().ok())
-        .filter(|value| *value > 0)
-        .unwrap_or(default_seconds);
-    Duration::from_secs(seconds)
-}
-
 /// A `reqwest::ClientBuilder` preconfigured with the request/connect timeouts every client shares.
 fn timed_client_builder() -> reqwest::ClientBuilder {
     Client::builder()
-        .timeout(env_duration(
+        .timeout(Duration::from_secs(env::parse_positive_or(
             "RUNINATOR_API_TIMEOUT_SECONDS",
             DEFAULT_REQUEST_TIMEOUT_SECONDS,
-        ))
-        .connect_timeout(env_duration(
+        )))
+        .connect_timeout(Duration::from_secs(env::parse_positive_or(
             "RUNINATOR_API_CONNECT_TIMEOUT_SECONDS",
             DEFAULT_CONNECT_TIMEOUT_SECONDS,
-        ))
+        )))
 }
 
 #[cfg(test)]

@@ -30,18 +30,18 @@ impl BlobServerConfig {
             data_dir: env_or(ENV_DATA_DIR, DEFAULT_DATA_DIR),
             region: env_or(ENV_REGION, DEFAULT_REGION),
             credentials,
-            max_object_bytes: env::var(ENV_MAX_OBJECT_BYTES)
-                .ok()
-                .and_then(|raw| raw.parse().ok())
-                .unwrap_or(DEFAULT_MAX_OBJECT_BYTES),
-            metadata_cache_bytes: env::var(ENV_METADATA_CACHE_BYTES)
-                .ok()
-                .and_then(|raw| raw.parse().ok())
-                .unwrap_or(runinator_blob_core::DEFAULT_METADATA_CACHE_BYTES),
-            max_concurrent_writes: env::var(ENV_MAX_CONCURRENT_WRITES)
-                .ok()
-                .and_then(|raw| raw.parse().ok())
-                .unwrap_or(runinator_blob_core::DEFAULT_MAX_CONCURRENT_WRITES),
+            max_object_bytes: platform_env::parse_or(
+                ENV_MAX_OBJECT_BYTES,
+                DEFAULT_MAX_OBJECT_BYTES,
+            ),
+            metadata_cache_bytes: platform_env::parse_or(
+                ENV_METADATA_CACHE_BYTES,
+                runinator_blob_core::DEFAULT_METADATA_CACHE_BYTES,
+            ),
+            max_concurrent_writes: platform_env::parse_or(
+                ENV_MAX_CONCURRENT_WRITES,
+                runinator_blob_core::DEFAULT_MAX_CONCURRENT_WRITES,
+            ),
         })
     }
 }

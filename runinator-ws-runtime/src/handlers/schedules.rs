@@ -7,6 +7,7 @@ use axum::{
     http::{StatusCode, header},
     response::{IntoResponse, Response},
 };
+use runinator_hash::sha256_hex;
 use runinator_models::{
     auth::PrincipalKind,
     auth::ResourceType,
@@ -24,7 +25,6 @@ use runinator_store::{
     roles::{DefinitionStore, ScheduleStore},
 };
 use serde::Deserialize;
-use sha2::{Digest, Sha256};
 
 use runinator_engine::services::SchedulingOperations;
 use runinator_ws_core::ValidatedJson;
@@ -172,10 +172,7 @@ pub async fn subscribed_calendar<
 }
 
 fn sha256(value: &str) -> String {
-    Sha256::digest(value.as_bytes())
-        .iter()
-        .map(|byte| format!("{byte:02x}"))
-        .collect()
+    sha256_hex(value.as_bytes())
 }
 
 /// Outlook-compatible iCalendar export of every scheduled workflow/pipeline the caller can view.

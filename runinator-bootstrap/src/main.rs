@@ -100,7 +100,7 @@ async fn run() -> Result<(), SendableError> {
     };
     let url = cli
         .database_url
-        .or_else(|| std::env::var("DATABASE_URL").ok())
+        .or_else(|| runinator_platform::env::string("DATABASE_URL"))
         .ok_or_else(|| -> SendableError {
             "missing connection string: pass --database-url or set DATABASE_URL".into()
         })?;

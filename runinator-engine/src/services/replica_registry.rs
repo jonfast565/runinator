@@ -15,6 +15,7 @@ use runinator_models::{
     },
     telemetry::{ReplicaSample, ReplicaSampleSeries, ResourceTelemetry},
 };
+use runinator_platform::env;
 use runinator_store::{
     RuntimeStore,
     roles::{AuthStore, RbacStore, ReplicaStore},
@@ -53,11 +54,7 @@ pub fn replica_delete_seconds() -> i64 {
 }
 
 fn configured_seconds(name: &str, default: i64) -> i64 {
-    std::env::var(name)
-        .ok()
-        .and_then(|raw| raw.parse::<i64>().ok())
-        .filter(|seconds| *seconds > 0)
-        .unwrap_or(default)
+    env::parse_positive_or(name, default)
 }
 
 fn extract_telemetry(attributes: &runinator_models::value::Value) -> Option<ResourceTelemetry> {

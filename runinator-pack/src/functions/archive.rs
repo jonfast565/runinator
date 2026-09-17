@@ -9,7 +9,6 @@
 use std::io::{Cursor, Write};
 use std::path::{Path, PathBuf};
 
-use sha2::{Digest, Sha256};
 use zip::write::SimpleFileOptions;
 
 use crate::errors::{PackError, Result};
@@ -114,7 +113,7 @@ pub fn archive_directory(directory: &Path, exclude: &[String]) -> Result<Functio
             .map_err(|err| PackError::source(format!("failed to finish archive: {err}")))?;
     }
 
-    let digest = runinator_models::functions::digest_from_hex(&hex(&Sha256::digest(&buffer)));
+    let digest = runinator_hash::sha256_digest(&buffer);
     Ok(FunctionArchive {
         digest,
         bytes: buffer,
@@ -186,11 +185,4 @@ pub fn is_excluded(relative: &str, exclude: &[String]) -> bool {
         || exclude
             .iter()
             .any(|pattern| glob::matches(pattern, relative))
-}
-
-fn hex(bytes: &[u8]) -> String {
-    bytes
-        .iter()
-        .map(|byte| format!("{byte:02x}"))
-        .collect::<String>()
 }

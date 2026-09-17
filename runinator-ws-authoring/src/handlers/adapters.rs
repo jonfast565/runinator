@@ -27,6 +27,7 @@ use runinator_models::{
     replicas::{ReplicaKind, ReplicaStatus},
     web::TaskResponse,
 };
+use runinator_platform::env;
 use runinator_store::{
     RuntimeStore,
     roles::{
@@ -633,11 +634,7 @@ fn identity_projection(
 }
 
 fn webhook_body_limit() -> usize {
-    std::env::var("RUNINATOR_ADAPTER_WEBHOOK_BODY_LIMIT")
-        .ok()
-        .and_then(|value| value.parse().ok())
-        .filter(|value| *value > 0)
-        .unwrap_or(1024 * 1024)
+    env::parse_positive_or("RUNINATOR_ADAPTER_WEBHOOK_BODY_LIMIT", 1024 * 1024)
 }
 
 fn allowed_webhook_headers(headers: &HeaderMap) -> BTreeMap<String, String> {
@@ -654,8 +651,7 @@ fn allowed_webhook_headers(headers: &HeaderMap) -> BTreeMap<String, String> {
 }
 
 fn webhook_header_allowlist() -> std::collections::BTreeSet<String> {
-    let configured = std::env::var("RUNINATOR_ADAPTER_WEBHOOK_HEADER_ALLOWLIST")
-        .unwrap_or_else(|_| {
+    let configured = env::string("RUNINATOR_ADAPTER_WEBHOOK_HEADER_ALLOWLIST").unwrap_or_else(|| {
             "authorization,content-type,x-runinator-signature,x-hub-signature-256,x-github-delivery,x-github-event,x-atlassian-webhook-identifier,x-slack-signature,x-slack-request-timestamp".into()
         });
     configured
