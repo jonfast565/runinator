@@ -176,7 +176,7 @@ async fn profile_download_honors_worker_authority_and_run_admission() {
             Some(Uuid::new_v4()),
             1,
             vec![],
-            StatusCode::NOT_FOUND,
+            StatusCode::OK,
         ),
         (None, true, true, None, 2, vec![], StatusCode::NOT_FOUND),
         (

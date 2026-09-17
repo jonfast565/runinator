@@ -1,12 +1,16 @@
 //! restart budgets, spawn failures, and forced shutdown through fake processes.
 use super::*;
 use std::sync::Mutex;
+use std::sync::atomic::{AtomicU64, Ordering};
+
+static NEXT_TEMP_DIR: AtomicU64 = AtomicU64::new(0);
 
 fn process() -> ManagedProcess {
     let dir = std::env::temp_dir().join(format!(
-        "runinator-supervisor-traits-{}-{}",
+        "runinator-supervisor-traits-{}-{}-{}",
         std::process::id(),
-        Utc::now().timestamp_nanos_opt().unwrap()
+        Utc::now().timestamp_nanos_opt().unwrap(),
+        NEXT_TEMP_DIR.fetch_add(1, Ordering::Relaxed)
     ));
     fs::create_dir_all(&dir).unwrap();
     let paths = Paths {
