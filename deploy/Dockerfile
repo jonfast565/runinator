@@ -136,8 +136,22 @@ RUN wget -O /etc/apk/keys/claude-code.rsa.pub https://downloads.claude.ai/keys/c
     && claude --version \
     && codex --version \
     && gh --version
+# .NET SDKs and PowerShell for workflows that build or test .NET repositories and run pwsh
+# acceptance scripts. Kept in its own layer so a toolchain bump does not invalidate the
+# claude-code/codex layer above, and vice versa.
+#
+# Alpine carries no dotnet6-sdk (net6.0 is end of life), so a project pinned to net6.0 cannot be
+# built here; a workflow should report it as skipped-for-environment rather than as a pass.
+ARG DOTNET_SDK_PACKAGES="dotnet8-sdk dotnet9-sdk dotnet10-sdk"
+ARG POWERSHELL_VERSION=7.6.1-r0
+RUN apk add --no-cache ${DOTNET_SDK_PACKAGES} "powershell=${POWERSHELL_VERSION}" \
+    && dotnet --list-sdks \
+    && pwsh --version
 ENV USE_BUILTIN_RIPGREP=0 \
-    DISABLE_AUTOUPDATER=1
+    DISABLE_AUTOUPDATER=1 \
+    DOTNET_CLI_TELEMETRY_OPTOUT=1 \
+    DOTNET_SKIP_FIRST_TIME_EXPERIENCE=1 \
+    DOTNET_NOLOGO=1
 COPY --from=builder --chown=root:root --chmod=755 /out/runinator-worker /usr/local/bin/runinator-worker
 COPY --from=builder --chown=root:root --chmod=755 /out/runinator-adapter-host /usr/local/bin/runinator-adapter-host
 COPY --from=builder --chown=root:root --chmod=755 /out/runinatorctl /usr/local/bin/runinatorctl
