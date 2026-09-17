@@ -75,6 +75,14 @@ pub enum GitHubOperation {
         per_page: u32,
         page: u32,
     },
+    /// Conversation comments across every issue and pull request in a repository, newest first.
+    /// Polling needs one repository-wide call; the per-issue listing would cost one call per pull
+    /// request and exhaust the hourly quota on a busy repository.
+    RepositoryIssueComments {
+        repository: String,
+        per_page: u32,
+        page: u32,
+    },
     AddComment {
         repository: String,
         issue_number: String,
@@ -197,6 +205,20 @@ impl GitHubOperation {
                     "/repos/{repository}/issues/{issue_number}/comments"
                 ));
                 request.query.extend([
+                    ("per_page".into(), per_page.to_string()),
+                    ("page".into(), page.to_string()),
+                ]);
+                request
+            }
+            RepositoryIssueComments {
+                repository,
+                per_page,
+                page,
+            } => {
+                let mut request = get(format!("/repos/{repository}/issues/comments"));
+                request.query.extend([
+                    ("sort".into(), "updated".into()),
+                    ("direction".into(), "desc".into()),
                     ("per_page".into(), per_page.to_string()),
                     ("page".into(), page.to_string()),
                 ]);

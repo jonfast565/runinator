@@ -1280,14 +1280,65 @@ fn github_repository_id(repository: &str, value: &Value) -> Result<String, Strin
         .ok_or_else(|| format!("GitHub repository '{repository}' has no stable id"))
 }
 
-fn github_poll_correlation(event_type: &str, id: &str, value: &Value) -> String {
+/// Correlate a polled GitHub item, or `None` when the item belongs to no pull request and must not
+/// be reported. A conversation comment is the only polled kind that can legitimately be unrelated
+/// to a pull request, because the issues endpoint also returns plain issue comments.
+fn github_poll_correlation(event_type: &str, id: &str, value: &Value) -> Option<String> {
     if event_type == "pull_request" {
-        return format!("pr:{id}");
+        return Some(format!("pr:{id}"));
     }
-    value
-        .pointer("/pull_requests/0/id")
-        .map(|value| format!("pr:{}", value_string(value)))
-        .unwrap_or_else(|| format!("workflow:{id}"))
+    if event_type == "issue_comment" {
+        // a pull request correlates by number here: the comment carries no pull request id, and
+        // `pr-number:` is the alias a mission publishes alongside `pr:` for exactly this case.
+        return github_comment_pull_number(value).map(|number| format!("pr-number:{number}"));
+    }
+    Some(
+        value
+            .pointer("/pull_requests/0/id")
+            .map(|value| format!("pr:{}", value_string(value)))
+            .unwrap_or_else(|| format!("workflow:{id}")),
+    )
+}
+
+/// Read a conversation comment's pull request number from its HTML url, which is the only field on
+/// an issue comment that distinguishes a pull request from a plain issue without a second call.
+fn github_comment_pull_number(value: &Value) -> Option<String> {
+    let html_url = value.get("html_url").and_then(Value::as_str)?;
+    let number = html_url
+        .split("/pull/")
+        .nth(1)?
+        .split(['#', '/', '?'])
+        .next()?;
+    if number.is_empty() || !number.chars().all(|value| value.is_ascii_digit()) {
+        return None;
+    }
+    Some(number.to_owned())
+}
+
+/// Event kinds this repository has no checkpoint mark for. A stream an existing adapter has never
+/// marked establishes its boundary the same way a first poll does: without this, adding an event
+/// kind makes the next poll of every already-running adapter replay the repository's entire
+/// history for that kind, which for reviews means one call per pull request ever opened and a
+/// certain rate-limit failure.
+fn unmarked_streams<'a>(
+    checkpoint: &Value,
+    repository_id: &str,
+    kinds: &[&'a str],
+) -> std::collections::BTreeSet<&'a str> {
+    kinds
+        .iter()
+        .copied()
+        .filter(|kind| stream_checkpoint(checkpoint, &format!("{repository_id}:{kind}")).is_none())
+        .collect()
+}
+
+fn github_review_stamp(value: &Value) -> String {
+    canonical_poll_timestamp(
+        value
+            .get("submitted_at")
+            .and_then(Value::as_str)
+            .unwrap_or_default(),
+    )
 }
 
 /// Advance a stream's mark only for an event that was actually emitted. Advancing before the
@@ -1373,43 +1424,60 @@ async fn poll_github_inner(request: &AdapterPollRequest) -> Result<AdapterPollRe
             .await
             .map_err(github_poll_error)?;
         let repository_id = github_repository_id(repository, &repository_info)?;
+        let kinds = [
+            "pull_request",
+            "workflow_run",
+            "check_run",
+            "issue_comment",
+            "pull_request_review",
+        ];
+        let now = chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, true);
         if request.initialize {
             // initialization deliberately establishes the boundary without scanning old history.
-            let now = chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, true);
-            for kind in ["pull_request", "workflow_run", "check_run"] {
+            for kind in kinds {
                 advance(&mut marks, &format!("{repository_id}:{kind}"), &now);
             }
             continue;
+        }
+        let seeded = unmarked_streams(&request.checkpoint, &repository_id, &kinds);
+        for kind in &seeded {
+            advance(&mut marks, &format!("{repository_id}:{kind}"), &now);
         }
 
         for (event_type, array_key) in [
             ("pull_request", None),
             ("workflow_run", Some("workflow_runs")),
+            ("issue_comment", None),
         ] {
+            if seeded.contains(event_type) {
+                continue;
+            }
             let stream = format!("{repository_id}:{event_type}");
             let since = stream_checkpoint(&request.checkpoint, &stream);
             for value in github_collect(
                 &client,
-                |page| {
-                    if event_type == "pull_request" {
-                        GitHubOperation::PullRequests {
-                            repository: repository.into(),
-                            state: "all".into(),
-                            head: None,
-                            per_page: 100,
-                            page,
-                        }
-                    } else {
-                        GitHubOperation::WorkflowRuns {
-                            repository: repository.into(),
-                            workflow_id: None,
-                            branch: None,
-                            event: None,
-                            status: None,
-                            per_page: Some(100),
-                            page: Some(page),
-                        }
-                    }
+                |page| match event_type {
+                    "pull_request" => GitHubOperation::PullRequests {
+                        repository: repository.into(),
+                        state: "all".into(),
+                        head: None,
+                        per_page: 100,
+                        page,
+                    },
+                    "issue_comment" => GitHubOperation::RepositoryIssueComments {
+                        repository: repository.into(),
+                        per_page: 100,
+                        page,
+                    },
+                    _ => GitHubOperation::WorkflowRuns {
+                        repository: repository.into(),
+                        workflow_id: None,
+                        branch: None,
+                        event: None,
+                        status: None,
+                        per_page: Some(100),
+                        page: Some(page),
+                    },
                 },
                 array_key,
                 since.as_deref(),
@@ -1428,6 +1496,9 @@ async fn poll_github_inner(request: &AdapterPollRequest) -> Result<AdapterPollRe
                 if id.is_empty() {
                     continue;
                 }
+                let Some(correlation_key) = github_poll_correlation(event_type, &id, &value) else {
+                    continue;
+                };
                 let mut payload = value.clone();
                 if let Some(object) = payload.as_object_mut() {
                     object.insert("repository".into(), repository_info.clone());
@@ -1439,7 +1510,7 @@ async fn poll_github_inner(request: &AdapterPollRequest) -> Result<AdapterPollRe
                     delivery_id: format!("github:{repository_id}:{event_type}:{id}:{updated}"),
                     event_type: event_type.into(),
                     scope: format!("github:repository:{repository_id}"),
-                    correlation_key: github_poll_correlation(event_type, &id, &value),
+                    correlation_key,
                     subject_revision: value
                         .get("head_sha")
                         .or_else(|| value.pointer("/head/sha"))
@@ -1452,6 +1523,87 @@ async fn poll_github_inner(request: &AdapterPollRequest) -> Result<AdapterPollRe
             }
         }
 
+        // reviews have no repository-wide endpoint, so they are collected per pull request. the
+        // outer list is bounded by this stream's own mark, which keeps the fan-out to the pull
+        // requests that actually moved since the last poll.
+        let stream = format!("{repository_id}:pull_request_review");
+        let since = stream_checkpoint(&request.checkpoint, &stream);
+        let reviewed_pulls = if seeded.contains("pull_request_review") {
+            Vec::new()
+        } else {
+            github_collect(
+                &client,
+                |page| GitHubOperation::PullRequests {
+                    repository: repository.into(),
+                    state: "all".into(),
+                    head: None,
+                    per_page: 100,
+                    page,
+                },
+                None,
+                since.as_deref(),
+                github_updated_at,
+            )
+            .await?
+        };
+        for pull in reviewed_pulls {
+            let pull_id = pull.get("id").map(value_string).unwrap_or_default();
+            let number = pull.get("number").map(value_string).unwrap_or_default();
+            if pull_id.is_empty() || number.is_empty() {
+                continue;
+            }
+            // the reviews listing is not paginated, so it is fetched whole rather than through
+            // `github_collect`; a pull request returns its reviews oldest first, which the
+            // newest-first page walk would misread as an exhausted stream.
+            let reviews = client
+                .execute(GitHubOperation::Reviews {
+                    repository: repository.into(),
+                    pull_number: number.clone(),
+                })
+                .await
+                .map_err(github_poll_error)?;
+            for review in reviews.as_array().cloned().unwrap_or_default() {
+                let submitted = github_review_stamp(&review);
+                if submitted.is_empty()
+                    || since
+                        .as_deref()
+                        .is_some_and(|mark| submitted.as_str() < mark)
+                {
+                    continue;
+                }
+                let review_id = review.get("id").map(value_string).unwrap_or_default();
+                if review_id.is_empty() {
+                    continue;
+                }
+                let mut payload = review.clone();
+                if let Some(object) = payload.as_object_mut() {
+                    object.insert("repository".into(), repository_info.clone());
+                    object.insert("pull_request".into(), pull.clone());
+                    object.insert("pull_request_review".into(), review.clone());
+                }
+                advance(&mut marks, &stream, &submitted);
+                events.push(NormalizedAdapterEvent {
+                    source: "github".into(),
+                    delivery_id: format!(
+                        "github:{repository_id}:pull_request_review:{review_id}:{submitted}"
+                    ),
+                    event_type: "pull_request_review".into(),
+                    scope: format!("github:repository:{repository_id}"),
+                    correlation_key: format!("pr:{pull_id}"),
+                    subject_revision: review
+                        .get("commit_id")
+                        .and_then(Value::as_str)
+                        .map(str::to_owned),
+                    occurred_at: parse_occurred_at(&Value::String(submitted)).ok(),
+                    provenance: operation_provenance(&payload).into(),
+                    payload: payload.into(),
+                });
+            }
+        }
+
+        if seeded.contains("check_run") {
+            continue;
+        }
         let stream = format!("{repository_id}:check_run");
         let since = stream_checkpoint(&request.checkpoint, &stream);
         let commits = client
@@ -2368,6 +2520,111 @@ mod tests {
     }
 
     #[test]
+    fn polled_conversation_comments_correlate_only_for_pull_requests() {
+        let comment = |html_url: &str| json!({ "id": 7, "html_url": html_url });
+        assert_eq!(
+            github_comment_pull_number(&comment(
+                "https://github.com/whiskerlabs/flint/pull/266#issuecomment-31"
+            ))
+            .as_deref(),
+            Some("266")
+        );
+        // the issues endpoint also returns plain issue comments, which belong to no pull request
+        // and must not be reported under a `pr-number:` correlation another mission may own.
+        assert_eq!(
+            github_comment_pull_number(&comment(
+                "https://github.com/whiskerlabs/flint/issues/266#issuecomment-31"
+            )),
+            None
+        );
+        assert_eq!(
+            github_comment_pull_number(&comment("https://github.com/whiskerlabs/flint/pull/abc")),
+            None
+        );
+        assert_eq!(github_comment_pull_number(&json!({ "id": 7 })), None);
+    }
+
+    #[test]
+    fn polled_correlations_match_the_aliases_a_mission_publishes() {
+        let pull_comment = json!({
+            "id": 31,
+            "html_url": "https://github.com/whiskerlabs/flint/pull/266#issuecomment-31"
+        });
+        assert_eq!(
+            github_poll_correlation("issue_comment", "31", &pull_comment).as_deref(),
+            Some("pr-number:266")
+        );
+        assert_eq!(
+            github_poll_correlation("pull_request", "20", &json!({ "id": 20 })).as_deref(),
+            Some("pr:20")
+        );
+        assert_eq!(
+            github_poll_correlation(
+                "workflow_run",
+                "40",
+                &json!({ "pull_requests": [{ "id": 20 }] })
+            )
+            .as_deref(),
+            Some("pr:20")
+        );
+        assert_eq!(
+            github_poll_correlation(
+                "issue_comment",
+                "31",
+                &json!({ "html_url": "https://github.com/whiskerlabs/flint/issues/9" })
+            ),
+            None
+        );
+    }
+
+    #[test]
+    fn an_unmarked_stream_is_seeded_rather_than_replayed() {
+        let kinds = [
+            "pull_request",
+            "workflow_run",
+            "check_run",
+            "issue_comment",
+            "pull_request_review",
+        ];
+        // an adapter polling since before reviews and comments were collected keeps its three
+        // marks, so exactly the two new streams are seeded and nothing replays.
+        let established = json!({ "streams": {
+            "1242743236:pull_request": "2026-09-17T07:42:52Z",
+            "1242743236:workflow_run": "2026-09-17T07:42:52Z",
+            "1242743236:check_run": "2026-09-17T07:42:52Z"
+        } });
+        assert_eq!(
+            unmarked_streams(&established, "1242743236", &kinds),
+            std::collections::BTreeSet::from(["issue_comment", "pull_request_review"])
+        );
+        // a different repository in the same adapter shares no marks with this one.
+        assert_eq!(
+            unmarked_streams(&established, "999", &kinds),
+            std::collections::BTreeSet::from(kinds)
+        );
+        assert!(
+            unmarked_streams(
+                &json!({ "streams": kinds
+                    .iter()
+                    .map(|kind| (format!("1242743236:{kind}"), "2026-09-17T07:42:52Z"))
+                    .collect::<std::collections::BTreeMap<_, _>>() }),
+                "1242743236",
+                &kinds,
+            )
+            .is_empty()
+        );
+    }
+
+    #[test]
+    fn a_review_stamp_reads_its_submission_time() {
+        assert_eq!(
+            github_review_stamp(&json!({ "submitted_at": "2026-08-27T12:00:00Z" })),
+            canonical_poll_timestamp("2026-08-27T12:00:00Z")
+        );
+        assert!(github_review_stamp(&json!({ "id": 1 })).is_empty());
+    }
+
+    #[test]
     fn github_review_and_pr_comment_events_route_back_to_the_pull_request() {
         let review_body = br#"{"repository":{"id":10},"pull_request":{"id":20,"head":{"sha":"abc"}},"review":{"submitted_at":"2026-08-27T12:05:00Z"}}"#;
         let comment_body = br#"{"repository":{"id":10},"issue":{"number":7,"pull_request":{"url":"https://api.github.test/pulls/7"}},"comment":{"created_at":"2026-08-27T12:06:00Z"}}"#;
@@ -2405,16 +2662,17 @@ mod tests {
             "10"
         );
         assert_eq!(
-            github_poll_correlation("pull_request", "20", &json!({ "id": 20 })),
-            "pr:20"
+            github_poll_correlation("pull_request", "20", &json!({ "id": 20 })).as_deref(),
+            Some("pr:20")
         );
         assert_eq!(
             github_poll_correlation(
                 "workflow_run",
                 "30",
                 &json!({ "pull_requests": [{ "id": 20 }] }),
-            ),
-            "pr:20"
+            )
+            .as_deref(),
+            Some("pr:20")
         );
     }
 
