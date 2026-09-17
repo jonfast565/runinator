@@ -139,15 +139,27 @@ fn tenant_membership_does_not_leak_into_team_or_user_ownership() {
         vec![assignment(user, org, Role::Organization(OrgRole::Member))],
     );
 
-    assert_eq!(scope_permission(&org_member, org), Some(Permission::View));
-    assert_eq!(scope_permission(&org_member, team), None);
-    assert_eq!(scope_permission(&org_member, other_user), None);
+    assert_eq!(
+        runinator_store::resource_access::scope_permission(&org_member, org),
+        Some(Permission::View)
+    );
+    assert_eq!(
+        runinator_store::resource_access::scope_permission(&org_member, team),
+        None
+    );
+    assert_eq!(
+        runinator_store::resource_access::scope_permission(&org_member, other_user),
+        None
+    );
 
     let team_member = context(
         Some(PlatformRole::Member),
         vec![assignment(user, team, Role::Team(TeamRole::Operator))],
     );
-    assert_eq!(scope_permission(&team_member, team), Some(Permission::Edit));
+    assert_eq!(
+        runinator_store::resource_access::scope_permission(&team_member, team),
+        Some(Permission::Edit)
+    );
 }
 
 #[test]

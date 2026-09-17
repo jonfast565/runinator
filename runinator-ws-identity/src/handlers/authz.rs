@@ -172,31 +172,6 @@ async fn principal_exists<T: AuthorizationStore>(
     }
 }
 
-async fn authorize_scope_with_ancestry<T: AuthorizationStore>(
-    db: &T,
-    ctx: &AuthContext,
-    action: Action,
-    scope: ScopeRef,
-) -> Result<bool, Reply> {
-    if ctx.authorize_scope(action, scope) {
-        return Ok(true);
-    }
-    if scope.kind != ScopeKind::Team {
-        return Ok(false);
-    }
-    let Some(team_id) = scope.id else {
-        return Ok(false);
-    };
-    let Some(team) = db
-        .fetch_team(team_id)
-        .await
-        .map_err(|err| api_error(err.to_string()))?
-    else {
-        return Ok(false);
-    };
-    Ok(ctx.authorize_scope(action, team.scope))
-}
-
 async fn can_assign<T: AuthorizationStore>(
     db: &T,
     ctx: &AuthContext,
@@ -210,9 +185,14 @@ async fn can_assign<T: AuthorizationStore>(
         role,
         Role::Organization(OrgRole::Owner) | Role::Team(TeamRole::Owner)
     ) {
-        return authorize_scope_with_ancestry(db, ctx, Action::Own, scope).await;
+        return AuthzChecker::new(db, ctx)
+            .authorize_scope_with_ancestry(Action::Own, scope)
+            .await;
     }
-    if !authorize_scope_with_ancestry(db, ctx, Action::RolesManage, scope).await? {
+    if !AuthzChecker::new(db, ctx)
+        .authorize_scope_with_ancestry(Action::RolesManage, scope)
+        .await?
+    {
         return Ok(false);
     }
     Ok(true)
@@ -263,19 +243,22 @@ pub async fn list_assignments<T: AuthorizationStore>(
         Ok(scope) => scope,
         Err(reply) => return reply.into_reply(),
     };
-    let authorized =
-        match authorize_scope_with_ancestry(db.as_ref(), &ctx, Action::RolesManage, scope).await {
-            Ok(true) => true,
-            Ok(false) => {
-                match authorize_scope_with_ancestry(db.as_ref(), &ctx, Action::MembersManage, scope)
-                    .await
-                {
-                    Ok(value) => value,
-                    Err(reply) => return reply.into_reply(),
-                }
+    let authorized = match AuthzChecker::new(db.as_ref(), &ctx)
+        .authorize_scope_with_ancestry(Action::RolesManage, scope)
+        .await
+    {
+        Ok(true) => true,
+        Ok(false) => {
+            match AuthzChecker::new(db.as_ref(), &ctx)
+                .authorize_scope_with_ancestry(Action::MembersManage, scope)
+                .await
+            {
+                Ok(value) => value,
+                Err(reply) => return reply.into_reply(),
             }
-            Err(reply) => return reply.into_reply(),
-        };
+        }
+        Err(reply) => return reply.into_reply(),
+    };
     if !authorized {
         return forbidden("role administration is not permitted in this scope");
     }
@@ -367,7 +350,10 @@ pub async fn delete_assignment<T: AuthorizationStore>(
         Ok(kind) => kind,
         Err(reply) => return reply.into_reply(),
     };
-    match authorize_scope_with_ancestry(db.as_ref(), &ctx, Action::RolesManage, scope).await {
+    match AuthzChecker::new(db.as_ref(), &ctx)
+        .authorize_scope_with_ancestry(Action::RolesManage, scope)
+        .await
+    {
         Ok(true) => {}
         Ok(false) => return forbidden("role administration is not permitted in this scope"),
         Err(reply) => return reply.into_reply(),
@@ -618,7 +604,10 @@ pub async fn transfer_resource<T: AuthorizationStore>(
         }
     }
     if request.owner.kind != ScopeKind::User {
-        match authorize_scope_with_ancestry(db.as_ref(), &ctx, Action::Own, request.owner).await {
+        match AuthzChecker::new(db.as_ref(), &ctx)
+            .authorize_scope_with_ancestry(Action::Own, request.owner)
+            .await
+        {
             Ok(true) => {}
             Ok(false) => {
                 return forbidden("cannot transfer a resource into a scope you do not own");

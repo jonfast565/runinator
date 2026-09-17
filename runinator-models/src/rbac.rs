@@ -275,6 +275,17 @@ pub struct RoleAssignment {
     pub updated_at: DateTime<Utc>,
 }
 
+/// Return the strongest platform role in an additive assignment set.
+pub fn strongest_platform_role(assignments: &[RoleAssignment]) -> Option<PlatformRole> {
+    assignments
+        .iter()
+        .filter_map(|assignment| match assignment.role {
+            Role::Platform(role) => Some(role),
+            _ => None,
+        })
+        .max()
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ResourceOwnership {
     pub resource_type: ResourceType,

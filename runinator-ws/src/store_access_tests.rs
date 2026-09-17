@@ -216,6 +216,52 @@ fn every_exemption_states_a_reason() {
     }
 }
 
+fn rust_sources_below(dir: &std::path::Path, sources: &mut Vec<std::path::PathBuf>) {
+    for entry in fs::read_dir(dir).unwrap_or_else(|err| panic!("{} readable: {err}", dir.display()))
+    {
+        let path = entry.expect("readable workspace entry").path();
+        if path.is_dir() {
+            let name = path
+                .file_name()
+                .and_then(|value| value.to_str())
+                .unwrap_or("");
+            if !matches!(name, ".git" | "build" | "node_modules" | "target") {
+                rust_sources_below(&path, sources);
+            }
+        } else if path.extension().and_then(|value| value.to_str()) == Some("rs") {
+            sources.push(path);
+        }
+    }
+}
+
+#[test]
+fn effective_resource_grants_are_resolved_only_by_the_shared_policy() {
+    let workspace = workspace_root();
+    let canonical = workspace.join("runinator-store/src/resource_access.rs");
+    let low_level_call = [".list_effective_", "resource_grants("].concat();
+    let mut sources = Vec::new();
+    rust_sources_below(&workspace, &mut sources);
+    let offenders: Vec<String> = sources
+        .into_iter()
+        .filter(|path| path != &canonical)
+        .filter(|path| {
+            fs::read_to_string(path)
+                .expect("rust source readable")
+                .contains(&low_level_call)
+        })
+        .map(|path| {
+            path.strip_prefix(&workspace)
+                .expect("source is under workspace")
+                .display()
+                .to_string()
+        })
+        .collect();
+    assert!(
+        offenders.is_empty(),
+        "effective resource permissions must use runinator_store::resource_access; direct grant resolution found in {offenders:?}"
+    );
+}
+
 #[test]
 fn migrated_handlers_use_services_not_the_engine_repository_facade() {
     let workspace = workspace_root();

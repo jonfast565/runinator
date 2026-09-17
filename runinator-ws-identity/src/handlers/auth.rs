@@ -19,7 +19,9 @@ use runinator_models::auth::{
     PrincipalKind, RefreshRequest, UpdateApiKeyRequest, UpdateCurrentUserRequest,
     UpdateTeamRequest, UpdateUserRequest, User, UserIdentityPutRequest,
 };
-use runinator_models::rbac::{Action, PlatformRole, Role, ScopeKind, ScopeRef, SystemRole};
+use runinator_models::rbac::{
+    Action, PlatformRole, Role, ScopeKind, ScopeRef, SystemRole, strongest_platform_role,
+};
 use runinator_models::server_settings::{
     RuntimeSettingDefinition, ServerSettings, WorkerSettingsResponse, server_setting_catalog,
 };
@@ -189,19 +191,13 @@ async fn user_with_platform_role<T: AuthStore + RbacStore + RuntimeStore>(
     user: &User,
 ) -> Result<Value, Reply> {
     let id = user.id.ok_or_else(|| api_error("stored user has no id"))?;
-    let role = db
+    let assignments = db
         .list_principal_role_assignments(PrincipalKind::User, id)
         .await
-        .map_err(|err| api_error(err.to_string()))?
-        .into_iter()
-        .filter_map(|assignment| match assignment.role {
-            Role::Platform(role) => Some(role),
-            _ => None,
-        })
-        .max();
+        .map_err(|err| api_error(err.to_string()))?;
     serde_json::to_value(runinator_models::auth::UserView {
         user: user.clone(),
-        platform_role: role,
+        platform_role: strongest_platform_role(&assignments),
     })
     .map(Value::from)
     .map_err(|err| api_error(err.to_string()))
@@ -262,13 +258,7 @@ async fn issue_session<T: AuthStore + RbacStore + RuntimeStore + SettingStore + 
         .list_principal_role_assignments(PrincipalKind::User, user_id)
         .await
         .map_err(|err| api_error(err.to_string()))?;
-    let platform_role = assignments
-        .iter()
-        .filter_map(|assignment| match assignment.role {
-            Role::Platform(role) => Some(role),
-            _ => None,
-        })
-        .max();
+    let platform_role = strongest_platform_role(&assignments);
     let context = AuthContext {
         principal_id: Some(user_id),
         session_id: Some(session.id),

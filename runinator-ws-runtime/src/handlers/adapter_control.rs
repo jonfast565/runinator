@@ -10,7 +10,7 @@ use runinator_engine::services::{
 };
 use runinator_models::{
     adapter_control::{AdapterInspection, OrchestrationDebugControl},
-    auth::{AuthContext, Permission, ResourceType},
+    auth::{AuthContext, Permission},
     ingress_control::ExternalIngressGateMode,
 };
 use runinator_store::roles::OrchestrationStore;
@@ -33,22 +33,15 @@ fn json(value: impl serde::Serialize) -> (StatusCode, Json<ApiResponse>) {
         Err(error) => api_error(error.to_string()),
     }
 }
-async fn require_adapter<T: AuthorizationStore>(
-    db: &T,
-    ctx: &AuthContext,
-    id: Uuid,
-    permission: Permission,
-) -> Result<(), (StatusCode, Json<ApiResponse>)> {
-    AuthzChecker::new(db, ctx)
-        .require_resource(ResourceType::OrchestrationAdapter, id, permission)
-        .await
-}
 pub async fn deliveries<T: AuthorizationStore + OrchestrationStore>(
     Extension(db): Extension<Arc<T>>,
     Extension(ctx): Extension<AuthContext>,
     Path(id): Path<Uuid>,
 ) -> (StatusCode, Json<ApiResponse>) {
-    if let Err(reply) = require_adapter(db.as_ref(), &ctx, id, Permission::View).await {
+    if let Err(reply) = AuthzChecker::new(db.as_ref(), &ctx)
+        .require_adapter(id, Permission::View)
+        .await
+    {
         return reply;
     }
     match AdapterOperations::new(db).deliveries(id).await {
@@ -61,7 +54,10 @@ pub async fn attempts<T: AuthorizationStore + OrchestrationStore>(
     Extension(ctx): Extension<AuthContext>,
     Path(id): Path<Uuid>,
 ) -> (StatusCode, Json<ApiResponse>) {
-    if let Err(reply) = require_adapter(db.as_ref(), &ctx, id, Permission::View).await {
+    if let Err(reply) = AuthzChecker::new(db.as_ref(), &ctx)
+        .require_adapter(id, Permission::View)
+        .await
+    {
         return reply;
     }
     match AdapterOperations::new(db).attempts(id).await {
@@ -74,7 +70,10 @@ pub async fn inspection<T: AuthorizationStore + OrchestrationStore>(
     Extension(ctx): Extension<AuthContext>,
     Path(id): Path<Uuid>,
 ) -> (StatusCode, Json<ApiResponse>) {
-    if let Err(reply) = require_adapter(db.as_ref(), &ctx, id, Permission::View).await {
+    if let Err(reply) = AuthzChecker::new(db.as_ref(), &ctx)
+        .require_adapter(id, Permission::View)
+        .await
+    {
         return reply;
     }
     match AdapterOperations::new(db).inspection(id).await {
@@ -92,7 +91,10 @@ pub async fn set_inspection<T: AuthorizationStore + OrchestrationStore>(
     Path(id): Path<Uuid>,
     ValidatedJson(request): ValidatedJson<InspectionRequest>,
 ) -> (StatusCode, Json<ApiResponse>) {
-    if let Err(reply) = require_adapter(db.as_ref(), &ctx, id, Permission::Run).await {
+    if let Err(reply) = AuthzChecker::new(db.as_ref(), &ctx)
+        .require_adapter(id, Permission::Run)
+        .await
+    {
         return reply;
     }
     match AdapterOperations::new(db)
@@ -117,8 +119,9 @@ pub async fn decide<T: AuthorizationStore + OrchestrationStore>(
         Ok(_) => return not_found("adapter delivery not found"),
         Err(error) => return api_error(error.to_string()),
     };
-    if let Err(reply) =
-        require_adapter(db.as_ref(), &ctx, record.origin.adapter_id, Permission::Run).await
+    if let Err(reply) = AuthzChecker::new(db.as_ref(), &ctx)
+        .require_adapter(record.origin.adapter_id, Permission::Run)
+        .await
     {
         return reply;
     }
@@ -142,7 +145,10 @@ pub async fn release<T: AuthorizationStore + OrchestrationStore>(
     Extension(ctx): Extension<AuthContext>,
     Path(id): Path<Uuid>,
 ) -> (StatusCode, Json<ApiResponse>) {
-    if let Err(reply) = require_adapter(db.as_ref(), &ctx, id, Permission::Run).await {
+    if let Err(reply) = AuthzChecker::new(db.as_ref(), &ctx)
+        .require_adapter(id, Permission::Run)
+        .await
+    {
         return reply;
     }
     match AdapterOperations::new(db)
