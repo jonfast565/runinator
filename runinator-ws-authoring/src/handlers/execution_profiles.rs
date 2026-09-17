@@ -375,8 +375,12 @@ pub async fn get_profile<
     {
         return not_found("execution profile not found");
     }
+    // a platform-scoped profile (`org_id` is `None`) is deployment-wide shared infrastructure that
+    // every organization may consume, so it stays visible while an organization selection is
+    // active. this mirrors the same rule in `content`; another organization's profile remains
+    // invisible, and the authorization checks above still gate non-system callers.
     match service.fetch(id).await {
-        Ok(Some(value)) if value.org_id == ctx.org_id => (
+        Ok(Some(value)) if value.org_id.is_none() || value.org_id == ctx.org_id => (
             StatusCode::OK,
             Json(ApiResponse::ExecutionProfile(effective_health(value))),
         ),
@@ -406,7 +410,15 @@ pub async fn resolve<
     let Some(ref name) = query.name else {
         return bad_request("profile name is required");
     };
-    match service.fetch_by_name(ctx.org_id, name).await {
+    // a name binding resolves inside the caller's organization first and then falls back to a
+    // platform-scoped profile of the same name, so `@profile("github-default")` in an
+    // organization's workflow reaches shared deployment infrastructure. the organization's own
+    // profile still wins on a name collision, and the checks below apply to whichever is found.
+    let resolved = match service.fetch_by_name(ctx.org_id, name).await {
+        Ok(None) if ctx.org_id.is_some() => service.fetch_by_name(None, name).await,
+        other => other,
+    };
+    match resolved {
         Ok(Some(value)) => {
             if ctx.system_role == Some(SystemRole::Worker)
                 && !consumer_admitted_profile(service.as_ref(), db.as_ref(), &query, value.id).await
@@ -624,7 +636,15 @@ pub async fn content<
     Path((id, revision)): Path<(Uuid, i64)>,
     Query(query): Query<ProfileLookup>,
 ) -> Response {
-    if ctx.require_system_role(&[SystemRole::Worker]).is_err() {
+    // a desktop relay hosts a worker replica under the agent system role and holds one credential,
+    // so an agent principal reaches this endpoint for the same materialization a cluster worker
+    // performs. `get_profile` already admits both roles, so refusing the bundle here left a desktop
+    // worker able to read a profile it could never use. admission is unchanged: every caller must
+    // still pass `consumer_admitted_profile` below.
+    if ctx
+        .require_system_role(&[SystemRole::Worker, SystemRole::Agent])
+        .is_err()
+    {
         return (StatusCode::NOT_FOUND, "execution profile bundle not found").into_response();
     }
     if !consumer_admitted_profile(service.as_ref(), db.as_ref(), &query, id).await {
