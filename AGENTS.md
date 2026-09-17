@@ -227,6 +227,9 @@ Authorization is deny-by-default and hierarchical; `docs/permissions.md` is the 
 
 - Build UI workflows with purpose-built, rich editors for their domain inputs. Do not make a raw JSON
   form the primary experience; reserve JSON for clearly labeled advanced or escape-hatch inputs.
+- Before adding a function, type, or other item, look for an existing implementation and depend on
+  or re-export its owning library rather than duplicating it. Create a new implementation only when
+  the existing one cannot meet the required contract, and put it in the crate that owns that behavior.
 - Keep each Rust source file to one file-scope `struct` or `trait`. Keep that type's inherent and
   trait implementations with its definition; supporting enums, aliases, constants, functions, and
   nested modules may remain alongside it when they are genuinely shared. Name the file after the
