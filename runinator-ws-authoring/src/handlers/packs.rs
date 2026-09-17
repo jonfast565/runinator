@@ -174,9 +174,10 @@ pub async fn import_pack<
         Err(err) => return bad_request(format!("invalid pack zip: {err}")),
     };
     let settings_section = contents.settings.as_ref();
-    if import_org.is_none() && settings_section.is_some_and(|bundle| !bundle.settings.is_empty()) {
-        return bad_request("pack settings must be imported into an organization");
-    }
+    // settings carry a nullable `org_id` all the way to the store, so a platform-scoped import is
+    // representable. authorization is already the gate: `import_scope` is `ScopeRef::PLATFORM`
+    // without an organization, and the SecretsWrite and CredentialsManage checks below run against
+    // it, so only a platform admin can land platform settings.
     if settings_section.is_some_and(|bundle| {
         bundle
             .settings

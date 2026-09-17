@@ -60,6 +60,9 @@ pub use workspace_operations::{
 };
 
 #[cfg(test)]
+#[path = "adapter_operations_tests.rs"]
+mod adapter_operations_tests;
+#[cfg(test)]
 #[path = "diagnostics_operations_tests.rs"]
 mod diagnostics_operations_tests;
 #[cfg(test)]

@@ -130,16 +130,30 @@ impl<T: RuntimeStore> AdapterOperations<T> {
         let cipher = SecretCipher::from_env();
         let mut values = serde_json::Map::new();
         for (name, id) in bindings {
-            let record = self
+            // an adapter may bind its own organization's secret or a platform-scoped one. the org
+            // listing excludes platform rows, so fall back to the platform scope rather than
+            // reporting a platform secret as missing.
+            let record = match self
                 .store
                 .fetch_setting_by_id(Some(org_id), *id)
                 .await
                 .map_err(|error| error.to_string())?
-                .ok_or_else(|| format!("secret binding '{name}' does not exist"))?;
+            {
+                Some(record) => record,
+                None => self
+                    .store
+                    .fetch_setting_by_id(None, *id)
+                    .await
+                    .map_err(|error| error.to_string())?
+                    .ok_or_else(|| format!("secret binding '{name}' does not exist"))?,
+            };
             if record.kind != SettingKind::Secret {
                 return Err(format!("binding '{name}' does not reference a Secret"));
             }
-            if record.scope != format!("org:{org_id}") {
+            // tenancy lives in `org_id`. `scope` is the authored namespace ("jira"), so comparing
+            // it to an "org:{uuid}" key never matched and rejected every bound secret. a platform
+            // secret (`org_id` is `None`) stays visible to every organization.
+            if record.org_id.is_some_and(|owner| owner != org_id) {
                 return Err(format!(
                     "secret binding '{name}' is outside the adapter organization"
                 ));

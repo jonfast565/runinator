@@ -193,14 +193,17 @@ async fn validate_adapter_auth_access<T: AuthorizationStore + ExecutionProfileSt
                     .await?;
             }
             let service = ExecutionProfileOperations::new(db.clone());
+            // an adapter may bind its own organization's profile or a platform-scoped one. a
+            // platform profile (`org_id` is `None`) is shared infrastructure and stays visible to
+            // every organization; another organization's profile remains invisible.
             let Some(resolved) = service
                 .fetch(profile.id())
                 .await
                 .map_err(|error| api_error(error.to_string()))?
-                .filter(|value| value.org_id == Some(org_id))
+                .filter(|value| value.org_id.is_none_or(|owner| owner == org_id))
             else {
                 return Err(bad_request(
-                    "execution profile was not found in this organization",
+                    "execution profile was not found in this organization or at platform scope",
                 ));
             };
             let missing = required_scopes
