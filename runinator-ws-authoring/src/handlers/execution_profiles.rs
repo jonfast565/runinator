@@ -630,9 +630,14 @@ pub async fn content<
     if !consumer_admitted_profile(service.as_ref(), db.as_ref(), &query, id).await {
         return (StatusCode::NOT_FOUND, "execution profile bundle not found").into_response();
     }
+    // a platform-scoped profile (`org_id` is `None`) is deployment-wide shared infrastructure, so a
+    // worker running an organization's effect can still fetch its bundle. an orchestration adapter
+    // is always org-scoped, so without this a platform profile could authenticate nothing. reading
+    // stays narrow: the caller must hold the Worker system role and be an admitted consumer of this
+    // profile, both checked above. another organization's profile remains invisible.
     let profile = match service.fetch(id).await {
         Ok(Some(value))
-            if value.org_id == ctx.org_id
+            if (value.org_id.is_none() || value.org_id == ctx.org_id)
                 && value.enabled
                 && value.current_revision == Some(revision) =>
         {
