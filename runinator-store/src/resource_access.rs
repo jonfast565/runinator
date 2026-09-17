@@ -66,7 +66,12 @@ pub async fn owner_can_access<T: AuthStore + RbacStore>(
     else {
         return Ok(false);
     };
-    if consumer_tenant != dependency.tenant {
+    // a platform-owned dependency is deployment-wide shared infrastructure, so it stays consumable
+    // from inside an organization. without this, platform scope is unusable by anything an
+    // organization owns: an orchestration adapter is always org-scoped, so a platform execution
+    // profile could never back one. another organization's resource remains invisible.
+    let platform_dependency = dependency.tenant == ScopeRef::PLATFORM;
+    if consumer_tenant != dependency.tenant && !platform_dependency {
         return Ok(false);
     }
     if dependency.owner == dependency.tenant || consumer_owner == dependency.owner {

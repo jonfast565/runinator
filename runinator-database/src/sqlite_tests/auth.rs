@@ -167,6 +167,76 @@ async fn reusable_dependencies_follow_owner_membership_grants_and_tenant_boundar
         .unwrap()
     );
 
+    // a platform-owned dependency is deployment-wide shared infrastructure and stays consumable
+    // from inside an organization. an orchestration adapter is always org-scoped, so without this a
+    // platform execution profile could back nothing at all.
+    let platform_dependency_id = Uuid::now_v7();
+    db.put_resource_ownership(ResourceOwnership {
+        resource_type: ResourceType::ExecutionProfile,
+        resource_id: platform_dependency_id,
+        tenant: ScopeRef::PLATFORM,
+        owner: ScopeRef::PLATFORM,
+        created_by: None,
+        authz_version: 1,
+        created_at: now,
+        updated_at: now,
+    })
+    .await
+    .unwrap();
+    for consumer_tenant in [
+        tenant,
+        ScopeRef::new(
+            runinator_models::rbac::ScopeKind::Organization,
+            Some(other_org_id),
+        )
+        .unwrap(),
+    ] {
+        assert!(
+            runinator_store::resource_access::owner_can_consume(
+                &db,
+                ScopeRef::new(runinator_models::rbac::ScopeKind::User, Some(outsider)).unwrap(),
+                consumer_tenant,
+                ResourceType::ExecutionProfile,
+                platform_dependency_id,
+            )
+            .await
+            .unwrap(),
+            "platform dependency should be consumable from {consumer_tenant:?}"
+        );
+    }
+
+    // widening to platform scope must not expose one organization's resource to another.
+    let foreign_dependency_id = Uuid::now_v7();
+    let foreign_tenant = ScopeRef::new(
+        runinator_models::rbac::ScopeKind::Organization,
+        Some(other_org_id),
+    )
+    .unwrap();
+    db.put_resource_ownership(ResourceOwnership {
+        resource_type: ResourceType::ExecutionProfile,
+        resource_id: foreign_dependency_id,
+        tenant: foreign_tenant,
+        owner: foreign_tenant,
+        created_by: None,
+        authz_version: 1,
+        created_at: now,
+        updated_at: now,
+    })
+    .await
+    .unwrap();
+    assert!(
+        !runinator_store::resource_access::owner_can_consume(
+            &db,
+            ScopeRef::new(runinator_models::rbac::ScopeKind::User, Some(member)).unwrap(),
+            tenant,
+            ResourceType::ExecutionProfile,
+            foreign_dependency_id,
+        )
+        .await
+        .unwrap(),
+        "another organization's dependency must stay invisible"
+    );
+
     let _ = std::fs::remove_file(path);
 }
 
