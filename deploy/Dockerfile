@@ -140,12 +140,21 @@ RUN wget -O /etc/apk/keys/claude-code.rsa.pub https://downloads.claude.ai/keys/c
 # acceptance scripts. Kept in its own layer so a toolchain bump does not invalidate the
 # claude-code/codex layer above, and vice versa.
 #
-# Alpine carries no dotnet6-sdk (net6.0 is end of life), so a project pinned to net6.0 cannot be
-# built here; a workflow should report it as skipped-for-environment rather than as a pass.
+# Alpine carries no dotnet6-sdk because net6.0 is end of life, but repositories still pin projects
+# to it, so the SDK comes from Microsoft's installer into the same root the apk SDKs use
+# (/usr/lib/dotnet). Sharing one root is what lets a single `dotnet` resolve every installed SDK;
+# installing elsewhere would hide the apk SDKs from `dotnet --list-sdks`. The version is pinned
+# because the 6.0 channel is frozen and a floating install would be an unreviewed toolchain change.
 ARG DOTNET_SDK_PACKAGES="dotnet8-sdk dotnet9-sdk dotnet10-sdk"
+ARG DOTNET6_SDK_VERSION=6.0.428
 ARG POWERSHELL_VERSION=7.6.1-r0
-RUN apk add --no-cache ${DOTNET_SDK_PACKAGES} "powershell=${POWERSHELL_VERSION}" \
+RUN apk add --no-cache curl ${DOTNET_SDK_PACKAGES} "powershell=${POWERSHELL_VERSION}" \
+    && curl -fsSL https://dot.net/v1/dotnet-install.sh -o /tmp/dotnet-install.sh \
+    && bash /tmp/dotnet-install.sh --version "${DOTNET6_SDK_VERSION}" \
+        --install-dir /usr/lib/dotnet --no-path \
+    && rm /tmp/dotnet-install.sh \
     && dotnet --list-sdks \
+    && dotnet --list-sdks | grep -q "^${DOTNET6_SDK_VERSION} " \
     && pwsh --version
 ENV USE_BUILTIN_RIPGREP=0 \
     DISABLE_AUTOUPDATER=1 \
