@@ -476,6 +476,7 @@ mod tests {
                     intent: None,
                 },
             ],
+            setting_bindings: vec![],
         };
         let event = IngressEvent {
             source: "example".into(),
@@ -582,6 +583,7 @@ mod tests {
                     intent: None,
                 },
             ],
+            setting_bindings: vec![],
         };
         let initial = IngressEvent {
             source: "test".into(),

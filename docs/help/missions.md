@@ -17,8 +17,9 @@ explicit `packs/codex-missions` pack as `runinator.missions.codex_coding_mission
 `runinator.missions.codex_research_report_mission`.
 
 Runinator also ships an opt-in `runinator.sdlc.sdlc_mission` pack for a complete label-driven
-software-delivery lifecycle. A Jira polling adapter admits an issue when it sees the `runinator`
-label; smaller mission phases then gather Jira and Slack context, plan, implement, review, verify,
+software-delivery lifecycle. Its pipeline admits a Jira issue when it sees the label configured in
+`sdlc.admission_label` (default `autodev`); the polling adapter's JQL is retrieval scope only.
+Smaller mission phases then gather Jira and Slack context, plan, implement, review, verify,
 publish and repair a pull request, enforce an exact-SHA merge gate, assess deployment impact,
 monitor a named deployment workflow when needed, and close the ticket. See
 [`packs/sdlc-missions/README.md`](../../packs/sdlc-missions/README.md) for the adapter and project

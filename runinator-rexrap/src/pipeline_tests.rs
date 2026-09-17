@@ -324,6 +324,7 @@ pipeline "Release" {
 
     workflow "acme.release.build"
 }
+
 "#;
     let bundle = parse_pipeline_str(source).expect("parse");
     let ingress = bundle.pipelines[0]
@@ -345,6 +346,65 @@ pipeline "Release" {
         bundle,
         parse_pipeline_str(&pipeline_to_rexrapp(&bundle)).expect("reparse")
     );
+}
+
+#[test]
+fn pipeline_ingress_config_predicate_round_trips() {
+    let source = r#"
+pipeline "Label admission" {
+    ingress scope "mission.sdlc" {
+        on "issue_updated" when unbound
+            if "/issue/fields/labels" contains config.sdlc.admission_label
+            -> start
+    }
+
+    workflow "acme.sdlc.select"
+}
+"#;
+    let bundle = parse_pipeline_str(source).expect("parse config ingress predicate");
+    let predicate = bundle.pipelines[0]
+        .metadata
+        .pointer("/ingress/routes/0/predicates/0/value")
+        .expect("config predicate value");
+    assert_eq!(
+        predicate,
+        &runinator_models::json!({ "$ref": { "config": ["sdlc", "admission_label"] } })
+    );
+    let rendered = pipeline_to_rexrapp(&bundle);
+    assert!(
+        rendered.contains("config.sdlc.admission_label"),
+        "{rendered}"
+    );
+    assert_eq!(
+        bundle,
+        parse_pipeline_str(&rendered).expect("reparse config ingress predicate")
+    );
+}
+
+#[test]
+fn pipeline_ingress_rejects_non_config_dynamic_predicates() {
+    for expression in ["params.label", "node.source.label", "string(\"autodev\")"] {
+        let source = format!(
+            r#"
+pipeline "Label admission" {{
+    ingress scope "mission.sdlc" {{
+        on "issue_updated" when unbound
+            if "/issue/fields/labels" contains {expression}
+            -> start
+    }}
+
+    workflow "acme.sdlc.select"
+}}
+"#
+        );
+        let error = parse_pipeline_str(&source).expect_err(expression);
+        assert!(
+            error
+                .to_string()
+                .contains("literals or one direct config setting"),
+            "{error}"
+        );
+    }
 }
 
 #[test]

@@ -116,7 +116,18 @@ impl<T: DefinitionStore + RuntimeStore + ScheduleStore + WorkflowVmStore> Pipeli
     }
 
     pub async fn save(&self, pipeline: &Pipeline) -> Result<Pipeline, SendableError> {
-        let saved = repository::upsert_pipeline(self.store.as_ref(), pipeline).await?;
+        let prior = match pipeline.id {
+            Some(id) => self.fetch(id).await?,
+            None => None,
+        };
+        let mut pipeline = pipeline.clone();
+        repository::bind_pipeline_ingress_settings(
+            self.store.as_ref(),
+            &mut pipeline,
+            prior.as_ref(),
+        )
+        .await?;
+        let saved = repository::upsert_pipeline(self.store.as_ref(), &pipeline).await?;
         emit_workflows_changed(&self.events, saved.org_id);
         Ok(saved)
     }

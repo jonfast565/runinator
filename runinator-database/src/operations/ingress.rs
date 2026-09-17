@@ -471,6 +471,20 @@ where
             .transpose()
     }
 
+    async fn fetch_active_ingress_admissions(
+        &self,
+        org_id: Option<Uuid>,
+    ) -> Result<Vec<IngressAdmission>, SendableError> {
+        let org_scope = org_id.map(|id| id.to_string()).unwrap_or_default();
+        let rows = sqlx::query(&self.render(&format!(
+            "SELECT {INGRESS_ADMISSION_COLUMNS} FROM ingress_admissions WHERE org_scope = ? AND status = 'active' ORDER BY updated_at DESC"
+        )))
+        .bind(org_scope)
+        .fetch_all(self.pool())
+        .await?;
+        rows.iter().map(mappers::row_to_ingress_admission).collect()
+    }
+
     async fn record_ingress_event(
         &self,
         admission_id: Uuid,

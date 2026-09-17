@@ -1,22 +1,37 @@
 # Label-driven SDLC missions
 
-This pack admits one durable `mission.sdlc` orchestration for each Jira issue carrying the
-`runinator` label. It divides delivery into bounded ticket selection, Slack context, planning,
+This pack admits one durable `mission.sdlc` orchestration for each Jira issue carrying the label
+configured in `sdlc.admission_label` (default: `autodev`). It divides delivery into bounded ticket
+selection, Slack context, planning,
 implementation, review, verification, pull-request publication, feedback repair, exact-revision
 merge, deployment-impact analysis, named deployment, and Jira closure jobs.
 
 ## Adapter setup
 
 Create a Jira polling adapter in **review** mode first. Use a 60-second cadence, set
-`routing_scope` to `mission.sdlc`, and use JQL shaped like:
+`routing_scope` to `mission.sdlc`, and use broad project/status JQL such as:
 
 ```text
-project = EXAMPLE AND labels = runinator
+project = EXAMPLE AND statusCategory != Done
 ```
 
-The first poll establishes a high-water mark and does not replay existing tagged issues. Inspect
-the routing previews, then approve representative deliveries and enable the adapter. Removing the
-label after admission does not cancel the mission; cancellation is an explicit lifecycle intent.
+The first poll establishes a high-water mark and does not replay existing issues. JQL is retrieval
+scope only: a restrictive JQL can hide an issue before pipeline admission, but it never defines the
+admission policy. Configure the required label with:
+
+```bash
+runinatorctl settings set sdlc admission_label '"autodev"' --kind config
+```
+
+Inspect routing previews, then approve representative deliveries and enable the adapter. Changing
+or removing the label does not cancel an admitted mission, but later nonmatching Jira updates and
+comments are not recorded; cancellation remains an explicit lifecycle intent.
+
+## Migration from pack version 1
+
+Reapply this pack, configure `sdlc.admission_label` to the label your team uses, and broaden each
+Jira polling adapter's JQL to a project/status retrieval scope. Existing missions remain active,
+but Jira updates and comments that do not carry the configured label stop being recorded.
 
 The adapter's `sdlc_profile` is injected as `params.profile`. Configure one installed copy of this
 pack per repository so the pipeline's `concurrency 2 on_conflict queue` is a per-repository FIFO

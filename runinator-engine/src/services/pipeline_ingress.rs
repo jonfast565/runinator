@@ -117,6 +117,13 @@ where
         .map_err(|error| {
             PipelineIngressError::Invalid(format!("invalid pipeline ingress policy: {error}"))
         })?;
+        let policy = crate::repository::resolve_ingress_policy_settings(
+            self.store.as_ref(),
+            pipeline.org_id,
+            &policy,
+        )
+        .await
+        .map_err(|error| PipelineIngressError::Invalid(error.to_string()))?;
         request
             .validate_identity()
             .map_err(PipelineIngressError::Invalid)?;
@@ -248,6 +255,13 @@ where
             }
             let snapshot: IngressPolicy = serde_json::from_value(admission.policy.clone().into())
                 .map_err(PipelineIngressError::internal)?;
+            let snapshot = crate::repository::resolve_ingress_policy_settings(
+                self.store.as_ref(),
+                admission.org_id,
+                &snapshot,
+            )
+            .await
+            .map_err(|error| PipelineIngressError::Invalid(error.to_string()))?;
             let lifecycle = match admission.status {
                 IngressAdmissionStatus::Active => IngressLifecycle::Active,
                 IngressAdmissionStatus::Terminal => IngressLifecycle::Terminal,

@@ -18,11 +18,12 @@ use chrono::{DateTime, Utc};
 use runinator_models::types::RuninatorType;
 use runinator_models::value::Value;
 use runinator_models::{
+    artifacts::ArtifactPath,
     billing::{AI_RATE_CARD_NAME, AI_RATE_CARD_SCOPE, RateCard},
     bundles::{SettingBundleEntry, SettingsBundle},
     errors::SendableError,
     server_settings::{SERVER_SETTINGS_NAME, SERVER_SETTINGS_SCOPE, ServerSettings},
-    settings::SettingKind,
+    settings::{SettingBinding, SettingKind},
 };
 use runinator_secrets::secret_cipher::SecretCipher;
 use runinator_secrets::stored_secret::StoredSecret;
@@ -289,6 +290,46 @@ pub async fn config_type_tree<T: RuntimeStore>(db: &T, org_id: Option<Uuid>) -> 
         )
     });
     RuninatorType::open_structure(scope_fields, RuninatorType::Any)
+}
+
+/// Resolve one UUID-bound config setting for an ingress policy. The binding UUID is authoritative;
+/// the authored path is retained solely for source round-tripping and matching the policy reference.
+pub(crate) async fn config_value_for_binding<T: RuntimeStore>(
+    db: &T,
+    org_id: Option<Uuid>,
+    binding: &SettingBinding,
+) -> Result<Value, SendableError> {
+    let path = binding
+        .reference
+        .authored_path
+        .as_ref()
+        .cloned()
+        .unwrap_or_else(|| ArtifactPath::new(None, "<unknown>"));
+    if binding.kind != SettingKind::Config {
+        return Err(crate::errors::INGRESS_CONFIG_BINDING_INVALID.error(format!(
+            "ingress setting '{}' is not a config setting",
+            path.qualified()
+        )));
+    }
+    let record = db
+        .fetch_setting_by_id(org_id, binding.reference.id)
+        .await?
+        .filter(|record| record.org_id == org_id && record.kind == SettingKind::Config)
+        .ok_or_else(|| {
+            crate::errors::INGRESS_CONFIG_BINDING_INVALID.error(format!(
+                "ingress config setting '{}' is missing or inaccessible",
+                path.qualified()
+            ))
+        })?;
+    let plaintext = settings_cipher()
+        .try_decrypt(&record.value)
+        .ok_or_else(|| {
+            crate::errors::INGRESS_CONFIG_BINDING_INVALID.error(format!(
+                "ingress config setting '{}' could not be decrypted",
+                path.qualified()
+            ))
+        })?;
+    Ok(decode_config_value(&plaintext))
 }
 
 /// Report organization workflows whose durable setting UUID still points at a platform-owned row.

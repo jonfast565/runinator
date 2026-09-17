@@ -12,7 +12,7 @@ use runinator_models::{
 use runinator_secrets::secret_cipher::SecretCipher;
 use runinator_store::{
     RuntimeStore,
-    roles::{DefinitionStore, SettingStore},
+    roles::{DefinitionStore, IngressStore, SettingStore},
 };
 use uuid::Uuid;
 

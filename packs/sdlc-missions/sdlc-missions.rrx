@@ -4,7 +4,7 @@ package {
   {
     "item_type": "rexrap_pack",
     "name": "Label-driven SDLC Missions",
-    "version": 1
+    "version": 2
   }
 }
 
@@ -576,10 +576,14 @@ pipeline "Label-driven SDLC Mission" {
 
     ingress scope "mission.sdlc" {
         on "issue_updated" when unbound
-            if "/issue/fields/labels" contains "runinator"
+            if "/issue/fields/labels" contains config.sdlc.admission_label
             -> start
-        on "issue_updated" when active -> record
-        on "comment_created" when active -> record
+        on "issue_updated" when active
+            if "/issue/fields/labels" contains config.sdlc.admission_label
+            -> record
+        on "comment_created" when active
+            if "/issue/fields/labels" contains config.sdlc.admission_label
+            -> record
         on "pull_request_review" when active -> dispatch "review_revision"
         on "issue_comment" when active -> dispatch "review_comment"
         on "check_run" when active -> record
@@ -641,6 +645,8 @@ pipeline "Label-driven SDLC Mission" {
 }
 
 settings {
+    @schema({ type: "string" })
+    config sdlc.admission_label = "autodev"
     @schema({ type: ["string", "null"] })
     config prompts.plan = null
     @schema({ type: ["string", "null"] })

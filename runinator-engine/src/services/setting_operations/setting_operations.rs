@@ -119,7 +119,7 @@ impl<T: SettingStore + RuntimeStore> SettingOperations<T> {
     }
 }
 
-impl<T: DefinitionStore + SettingStore + RuntimeStore> SettingOperations<T> {
+impl<T: DefinitionStore + IngressStore + SettingStore + RuntimeStore> SettingOperations<T> {
     pub async fn delete(
         &self,
         org_id: Option<Uuid>,
@@ -134,7 +134,7 @@ impl<T: DefinitionStore + SettingStore + RuntimeStore> SettingOperations<T> {
         else {
             return Ok(Vec::new());
         };
-        let inbound = self
+        let mut inbound = self
             .store
             .fetch_workflows()
             .await?
@@ -163,9 +163,74 @@ impl<T: DefinitionStore + SettingStore + RuntimeStore> SettingOperations<T> {
             })
             .map(|workflow| workflow.artifact_path().qualified())
             .collect::<Vec<_>>();
+        let pipeline_inbound = self
+            .store
+            .fetch_pipelines()
+            .await?
+            .into_iter()
+            .filter(|pipeline| pipeline.org_id == org_id)
+            .filter(|pipeline| {
+                ingress_policy_references_setting(
+                    pipeline.metadata.get("ingress"),
+                    target.id,
+                    kind,
+                    &scope,
+                    &name,
+                )
+            })
+            .map(|pipeline| format!("pipeline:{}", pipeline.artifact_path().qualified()));
+        inbound.extend(pipeline_inbound);
+        let admission_inbound = self
+            .store
+            .fetch_active_ingress_admissions(org_id)
+            .await?
+            .into_iter()
+            .filter(|admission| {
+                ingress_policy_references_setting(
+                    Some(&admission.policy),
+                    target.id,
+                    kind,
+                    &scope,
+                    &name,
+                )
+            })
+            .map(|admission| format!("ingress:{}/{}", admission.scope, admission.correlation_key));
+        inbound.extend(admission_inbound);
+        inbound.sort();
+        inbound.dedup();
         if inbound.is_empty() {
             self.store.delete_setting(org_id, kind, scope, name).await?;
         }
         Ok(inbound)
     }
+}
+
+fn ingress_policy_references_setting(
+    value: Option<&Value>,
+    setting_id: Uuid,
+    kind: SettingKind,
+    scope: &str,
+    name: &str,
+) -> bool {
+    let Some(value) = value else {
+        return false;
+    };
+    let Ok(policy) = serde_json::from_value::<runinator_models::orchestration::IngressPolicy>(
+        value.clone().into(),
+    ) else {
+        return false;
+    };
+    if policy
+        .setting_bindings
+        .iter()
+        .any(|binding| binding.reference.id == setting_id)
+    {
+        return true;
+    }
+    kind == SettingKind::Config
+        && policy
+            .routes
+            .iter()
+            .flat_map(|route| route.predicates.iter())
+            .any(|predicate| predicate.config_reference() == Some((scope, name)))
 }

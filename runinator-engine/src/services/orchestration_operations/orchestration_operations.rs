@@ -407,7 +407,7 @@ impl<T: OrchestrationStore + DefinitionStore> OrchestrationOperations<T> {
     }
 }
 
-impl<T: OrchestrationStore + IngressStore> OrchestrationOperations<T> {
+impl<T: OrchestrationStore + IngressStore + RuntimeStore> OrchestrationOperations<T> {
     /// Put an administrator's emergency low-level run control through the durable inbox. The
     /// control itself remains deliberately out of band, but its immutable event is reduced in
     /// sequence with adapter and operator intents so the timeline cannot hide the bypass.
@@ -480,6 +480,12 @@ impl<T: OrchestrationStore + IngressStore> OrchestrationOperations<T> {
             {
                 return Ok(binding);
             }
+            let ingress = crate::repository::resolve_ingress_policy_settings(
+                self.store.as_ref(),
+                admission.org_id,
+                &ingress,
+            )
+            .await?;
             binding = self.reduce_event(binding, owner, &ingress, &event).await?;
         }
 

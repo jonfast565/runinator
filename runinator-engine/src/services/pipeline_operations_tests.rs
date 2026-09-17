@@ -3,19 +3,22 @@ use std::{path::PathBuf, sync::Arc};
 use runinator_broker_core::{UiEventPublisher, in_memory::InMemoryBroker};
 use runinator_database::sqlite::SqliteDb;
 use runinator_models::{
+    bundles::{SettingBundleEntry, SettingsBundle},
     json,
+    orchestration::{IngressAction, IngressLifecycle, IngressPolicy},
     pipelines::{
         PIPELINE_GRAPH_VERSION, Pipeline, PipelineBundle, PipelineDefaults, PipelineGraph,
         PipelineMember, PipelineSpec, PipelineTriggerSpec,
     },
     schedules::WorkflowConcurrency,
     semver::SemVer,
+    settings::SettingKind,
     types::RuninatorType,
     value::Value,
     workflows::{WorkflowDefinition, WorkflowGraph, WorkflowTriggerKind},
 };
 use runinator_store::{
-    DatabaseImpl,
+    DatabaseImpl, RuntimeStore,
     roles::{DefinitionStore, ScheduleStore},
 };
 
@@ -74,6 +77,201 @@ fn pipeline() -> Pipeline {
         created_at: None,
         updated_at: None,
     }
+}
+
+#[tokio::test]
+async fn pack_pipeline_import_binds_and_live_resolves_admission_label() {
+    let (db, path) = test_db().await;
+    let workflow = db.upsert_workflow(&member_workflow()).await.unwrap();
+    let settings = crate::services::SettingOperations::new(db.clone());
+    let bundle = SettingsBundle {
+        version: 1,
+        settings: vec![SettingBundleEntry {
+            scope: "sdlc".into(),
+            name: "admission_label".into(),
+            value: Value::String("autodev".into()),
+            schema: Some(json!({ "type": "string" })),
+            kind: SettingKind::Config,
+            updated_at: None,
+            expires_at: None,
+        }],
+        execution_profiles: Vec::new(),
+    };
+    settings.import(None, &bundle, true).await.unwrap();
+    let setting = db
+        .fetch_setting(
+            None,
+            SettingKind::Config,
+            "sdlc".into(),
+            "admission_label".into(),
+        )
+        .await
+        .unwrap()
+        .expect("imported admission label");
+    let pipeline_bundle = runinator_rexrap::parse_pipeline_str(
+        r#"
+pipeline "SDLC" {
+    key sdlc
+    namespace runinator.tests
+    ingress scope "mission.sdlc" {
+        on "issue_updated" when unbound
+            if "/issue/fields/labels" contains config.sdlc.admission_label
+            -> start
+        on "issue_updated" when active
+            if "/issue/fields/labels" contains config.sdlc.admission_label
+            -> record
+    }
+    workflow "runinator.tests.pipeline_member"
+}
+"#,
+    )
+    .unwrap();
+    let saved = crate::repository::import_pipeline_bundle_with(db.as_ref(), &pipeline_bundle, None)
+        .await
+        .unwrap()
+        .pop()
+        .unwrap();
+    assert_eq!(saved.graph.members[0].workflow_id, workflow.id.unwrap());
+    let policy: IngressPolicy =
+        serde_json::from_value(saved.metadata.get("ingress").unwrap().clone().into()).unwrap();
+    assert_eq!(policy.setting_bindings.len(), 1);
+    assert_eq!(policy.setting_bindings[0].reference.id, setting.id);
+
+    let event = json!({ "issue": { "fields": { "labels": ["autodev"] } } });
+    let resolved = crate::repository::resolve_ingress_policy_settings(db.as_ref(), None, &policy)
+        .await
+        .unwrap();
+    assert_eq!(
+        resolved.action_for_payload("issue_updated", IngressLifecycle::Unbound, &event),
+        Some(IngressAction::Start)
+    );
+    assert_eq!(
+        serde_json::to_value(&resolved).unwrap()["routes"][0]["predicates"][0]["value"],
+        serde_json::json!({ "$ref": { "config": ["sdlc", "admission_label"] } })
+    );
+
+    let broker = Arc::new(InMemoryBroker::new());
+    let service = PipelineOperations::new(
+        db.clone(),
+        broker.clone(),
+        UiEventPublisher::new(broker),
+        None,
+    );
+    let pipeline_id = saved.id.unwrap();
+    let started = service
+        .process_ingress(
+            pipeline_id,
+            None,
+            crate::services::PipelineIngressRequest {
+                source: "jira".into(),
+                event_id: "updated-1".into(),
+                event_type: "issue_updated".into(),
+                correlation_key: "EXAMPLE-42".into(),
+                payload: event.clone(),
+                provenance: Value::Null,
+                occurred_at: None,
+            },
+            None,
+        )
+        .await
+        .expect("matching Jira label starts a generation");
+    assert_eq!(started.disposition, "started");
+
+    let moved = settings
+        .move_setting(
+            setting.id,
+            None,
+            SettingKind::Config,
+            "sdlc_live".into(),
+            "admission_label".into(),
+        )
+        .await
+        .unwrap()
+        .expect("the UUID-bound setting moves");
+    assert_eq!(moved.id, setting.id);
+
+    settings
+        .configure(crate::services::SettingConfiguration {
+            org_id: None,
+            kind: SettingKind::Config,
+            scope: "sdlc_live".into(),
+            name: "admission_label".into(),
+            value: Value::String("manual".into()),
+            schema: None,
+            expires_at: None,
+        })
+        .await
+        .unwrap();
+    let snapshot: IngressPolicy =
+        serde_json::from_value(serde_json::to_value(&resolved).unwrap()).unwrap();
+    let resolved = crate::repository::resolve_ingress_policy_settings(db.as_ref(), None, &snapshot)
+        .await
+        .unwrap();
+    assert_eq!(
+        resolved.action_for_payload("issue_updated", IngressLifecycle::Unbound, &event),
+        None
+    );
+    assert_eq!(
+        resolved.action_for_payload(
+            "issue_updated",
+            IngressLifecycle::Unbound,
+            &json!({ "issue": { "fields": { "labels": ["manual"] } } }),
+        ),
+        Some(IngressAction::Start)
+    );
+    let rejected = service
+        .process_ingress(
+            pipeline_id,
+            None,
+            crate::services::PipelineIngressRequest {
+                source: "jira".into(),
+                event_id: "updated-2".into(),
+                event_type: "issue_updated".into(),
+                correlation_key: "EXAMPLE-42".into(),
+                payload: event,
+                provenance: Value::Null,
+                occurred_at: None,
+            },
+            None,
+        )
+        .await
+        .expect_err("an active mission rejects a Jira update with the old label");
+    assert!(matches!(
+        rejected,
+        crate::services::PipelineIngressError::Conflict(_)
+    ));
+    let recorded = service
+        .process_approved_ingress(
+            pipeline_id,
+            None,
+            crate::services::PipelineIngressRequest {
+                source: "jira".into(),
+                event_id: "updated-3".into(),
+                event_type: "issue_updated".into(),
+                correlation_key: "EXAMPLE-42".into(),
+                payload: json!({ "issue": { "fields": { "labels": ["manual"] } } }),
+                provenance: Value::Null,
+                occurred_at: None,
+            },
+            None,
+        )
+        .await
+        .expect("an active mission records a Jira update with the new label");
+    assert_eq!(recorded.disposition, "recorded");
+    assert!(
+        !settings
+            .delete(
+                None,
+                SettingKind::Config,
+                "sdlc_live".into(),
+                "admission_label".into(),
+            )
+            .await
+            .unwrap()
+            .is_empty(),
+        "the pipeline binding prevents deleting the live setting"
+    );
+    let _ = std::fs::remove_file(path);
 }
 
 #[tokio::test]

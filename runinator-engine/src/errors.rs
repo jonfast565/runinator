@@ -150,6 +150,11 @@ pub const PIPELINE_MEMBER_NOT_RETRYABLE: ErrorDescriptor = ErrorDescriptor::new(
 );
 pub const PIPELINE_DISABLED: ErrorDescriptor =
     ErrorDescriptor::new("RUNI187", "pipeline.run.disabled", "Pipeline is disabled");
+pub const INGRESS_CONFIG_BINDING_INVALID: ErrorDescriptor = ErrorDescriptor::new(
+    "RUNI190",
+    "pipeline.ingress.config_binding_invalid",
+    "Pipeline ingress config binding is invalid",
+);
 pub const REPLAY_NOT_FOUND: ErrorDescriptor = ErrorDescriptor::new(
     "RUNI139",
     "workflow.replay.not_found",
@@ -299,6 +304,7 @@ pub const DICTIONARY: &[ErrorDescriptor] = &[
     PIPELINE_CONCURRENCY_REJECTED,
     PIPELINE_MEMBER_NOT_RETRYABLE,
     PIPELINE_DISABLED,
+    INGRESS_CONFIG_BINDING_INVALID,
     REPLAY_NOT_FOUND,
     REPLAY_MISSING_STEP,
     REPLAY_CONTROL_FLOW,

@@ -1,5 +1,5 @@
 use super::*;
-use runinator_models::artifacts::ArtifactPath;
+use runinator_models::artifacts::{ArtifactKind, ArtifactPath, ArtifactRef};
 use runinator_models::orchestration::{IngressPolicy, OrchestrationPolicy};
 use runinator_models::pipelines::{
     PIPELINE_GRAPH_VERSION, PipelineBundle, PipelineExecutionContext, PipelineGraph, PipelineJoin,
@@ -8,6 +8,7 @@ use runinator_models::pipelines::{
 };
 use runinator_models::replicas::{TriggerActorType, TriggerSourceKind, WorkflowRunProvenance};
 use runinator_models::revisions::{PipelineRevision, RevisionAuthor, RevisionSource};
+use runinator_models::settings::{SettingBinding, SettingKind};
 use uuid::Uuid;
 
 pub async fn upsert_pipeline<T: DefinitionStore>(
@@ -15,6 +16,152 @@ pub async fn upsert_pipeline<T: DefinitionStore>(
     pipeline: &Pipeline,
 ) -> Result<Pipeline, SendableError> {
     upsert_pipeline_with_author(db, pipeline, &RevisionAuthor::system(RevisionSource::Api)).await
+}
+
+pub(crate) async fn bind_pipeline_ingress_settings<T: RuntimeStore>(
+    db: &T,
+    pipeline: &mut Pipeline,
+    prior: Option<&Pipeline>,
+) -> Result<(), SendableError> {
+    let Some(raw_policy) = pipeline.metadata.get("ingress") else {
+        return Ok(());
+    };
+    let mut policy: IngressPolicy = serde_json::from_value(raw_policy.clone().into())
+        .map_err(|error| invalid_pipeline(format!("invalid pipeline ingress policy: {error}")))?;
+    let prior_policy = prior
+        .and_then(|pipeline| pipeline.metadata.get("ingress"))
+        .map(|value| serde_json::from_value::<IngressPolicy>(value.clone().into()))
+        .transpose()
+        .map_err(|error| {
+            invalid_pipeline(format!("invalid prior pipeline ingress policy: {error}"))
+        })?;
+    bind_ingress_policy_settings(db, pipeline.org_id, &mut policy, prior_policy.as_ref()).await?;
+    let metadata = pipeline
+        .metadata
+        .as_object_mut()
+        .ok_or_else(|| invalid_pipeline("pipeline metadata must be an object"))?;
+    metadata.insert(
+        "ingress".into(),
+        serde_json::to_value(policy)
+            .map_err(|error| invalid_pipeline(format!("invalid pipeline ingress policy: {error}")))?
+            .into(),
+    );
+    Ok(())
+}
+
+async fn bind_ingress_policy_settings<T: RuntimeStore>(
+    db: &T,
+    org_id: Option<Uuid>,
+    policy: &mut IngressPolicy,
+    prior: Option<&IngressPolicy>,
+) -> Result<(), SendableError> {
+    let mut bindings = Vec::new();
+    for predicate in policy
+        .routes
+        .iter()
+        .flat_map(|route| route.predicates.iter())
+    {
+        let Some((scope, name)) = predicate.config_reference() else {
+            continue;
+        };
+        let authored_path = ArtifactPath::new(Some(scope.to_string()), name);
+        let prior = prior.and_then(|policy| {
+            policy.setting_bindings.iter().find(|binding| {
+                binding.kind == SettingKind::Config
+                    && binding.reference.authored_path.as_ref() == Some(&authored_path)
+            })
+        });
+        let record = match prior.filter(|binding| !binding.reference.id.is_nil()) {
+            Some(binding) => db
+                .fetch_setting_by_id(org_id, binding.reference.id)
+                .await?
+                .filter(|record| record.org_id == org_id && record.kind == SettingKind::Config),
+            None => {
+                db.fetch_setting(
+                    org_id,
+                    SettingKind::Config,
+                    scope.to_string(),
+                    name.to_string(),
+                )
+                .await?
+            }
+        }
+        .ok_or_else(|| {
+            crate::errors::INGRESS_CONFIG_BINDING_INVALID.error(format!(
+                "ingress config setting '{}' was not found",
+                authored_path.qualified()
+            ))
+        })?;
+        if bindings
+            .iter()
+            .any(|binding: &SettingBinding| binding.reference.id == record.id)
+        {
+            continue;
+        }
+        bindings.push(SettingBinding {
+            kind: SettingKind::Config,
+            reference: ArtifactRef::current(ArtifactKind::Setting, record.id, Some(authored_path)),
+        });
+    }
+    policy.setting_bindings = bindings;
+    Ok(())
+}
+
+/// Read every config-bound predicate against its current UUID-targeted value without rewriting the
+/// policy's source reference. The temporary values are skipped by serde, preserving live lookup in
+/// active admission snapshots.
+pub(crate) async fn resolve_ingress_policy_settings<T: RuntimeStore>(
+    db: &T,
+    org_id: Option<Uuid>,
+    policy: &IngressPolicy,
+) -> Result<IngressPolicy, SendableError> {
+    let mut values = std::collections::HashMap::new();
+    for binding in &policy.setting_bindings {
+        let path = binding.reference.authored_path.as_ref().ok_or_else(|| {
+            crate::errors::INGRESS_CONFIG_BINDING_INVALID
+                .error("ingress config binding is missing its authored path")
+        })?;
+        values.insert(
+            path.clone(),
+            crate::settings::config_value_for_binding(db, org_id, binding).await?,
+        );
+    }
+    let mut resolved = policy.clone();
+    for predicate in resolved
+        .routes
+        .iter_mut()
+        .flat_map(|route| route.predicates.iter_mut())
+    {
+        let Some((scope, name)) = predicate.config_reference() else {
+            continue;
+        };
+        let path = ArtifactPath::new(Some(scope.to_string()), name);
+        let value = values.get(&path).cloned().ok_or_else(|| {
+            crate::errors::INGRESS_CONFIG_BINDING_INVALID.error(format!(
+                "ingress config setting '{}' is not bound",
+                path.qualified()
+            ))
+        })?;
+        match predicate.operator {
+            runinator_models::orchestration::IngressPredicateOperator::In if !value.is_array() => {
+                return Err(crate::errors::INGRESS_CONFIG_BINDING_INVALID.error(format!(
+                    "ingress config setting '{}' must be an array for an 'in' predicate",
+                    path.qualified()
+                )));
+            }
+            runinator_models::orchestration::IngressPredicateOperator::Contains
+                if !value.is_string() || value.as_str().is_some_and(str::is_empty) =>
+            {
+                return Err(crate::errors::INGRESS_CONFIG_BINDING_INVALID.error(format!(
+                    "ingress config setting '{}' must be a non-empty string for a 'contains' predicate",
+                    path.qualified()
+                )));
+            }
+            _ => {}
+        }
+        predicate.resolved_value = Some(value);
+    }
+    Ok(resolved)
 }
 
 pub async fn upsert_pipeline_with_author<T: DefinitionStore>(
@@ -456,6 +603,7 @@ pub async fn update_pipeline_from_rexrap<T: DefinitionStore + RuntimeStore + Sch
     let workflows = db.fetch_workflows().await?;
     let mut pipeline = pipeline_from_spec(spec, existing.org_id, Some(&existing), &workflows)?;
     pipeline.metadata = source_pipeline_metadata(&spec.metadata)?;
+    bind_pipeline_ingress_settings(db, &mut pipeline, Some(&existing)).await?;
     validate_pipeline(&pipeline)?;
     let saved = upsert_pipeline(db, &pipeline).await?;
     let pipelines = db.fetch_pipelines().await?;
@@ -561,7 +709,8 @@ async fn import_pipeline_spec<T: DefinitionStore + RuntimeStore + ScheduleStore>
     let prior = existing
         .iter()
         .find(|pipeline| pipeline.org_id == import_org && pipeline.artifact_key() == stable_key);
-    let pipeline = pipeline_from_spec(spec, import_org, prior, workflows)?;
+    let mut pipeline = pipeline_from_spec(spec, import_org, prior, workflows)?;
+    bind_pipeline_ingress_settings(db, &mut pipeline, prior).await?;
     let saved =
         upsert_pipeline_with_author(db, &pipeline, &RevisionAuthor::system(RevisionSource::Pack))
             .await?;

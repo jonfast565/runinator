@@ -113,6 +113,13 @@ pub trait IngressStore: Send + Sync + 'static {
         correlation_key: String,
     ) -> impl Future<Output = Result<Option<IngressAdmission>, SendableError>> + Send;
 
+    /// List the live admissions owned by one organization. Settings use this to protect config
+    /// UUIDs that must continue resolving an active policy snapshot.
+    fn fetch_active_ingress_admissions(
+        &self,
+        org_id: Option<Uuid>,
+    ) -> impl Future<Output = Result<Vec<IngressAdmission>, SendableError>> + Send;
+
     /// Insert the event once and return the original row on a durable deduplication hit.
     fn record_ingress_event(
         &self,

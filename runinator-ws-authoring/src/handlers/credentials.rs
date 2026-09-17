@@ -13,7 +13,7 @@ use runinator_models::{
 use runinator_secrets::secret_cipher::SecretCipher;
 use runinator_store::{
     RuntimeStore,
-    roles::{DefinitionStore, SettingStore},
+    roles::{DefinitionStore, IngressStore, SettingStore},
 };
 
 use crate::settings::{decode_config_schema, decode_config_value, decode_secret};
@@ -416,7 +416,7 @@ pub async fn reencrypt_settings<T: AuthorizationStore + SettingStore + RuntimeSt
 }
 
 pub async fn delete_credential<
-    T: AuthorizationStore + DefinitionStore + SettingStore + RuntimeStore,
+    T: AuthorizationStore + DefinitionStore + IngressStore + SettingStore + RuntimeStore,
 >(
     Extension(db): Extension<Arc<T>>,
     Extension(ctx): Extension<AuthContext>,
@@ -529,7 +529,9 @@ pub async fn move_credential<
 }
 
 /// the `credentials` endpoints.
-pub fn routes<T: AuthorizationStore + DefinitionStore + SettingStore + RuntimeStore>(
+pub fn routes<
+    T: AuthorizationStore + DefinitionStore + IngressStore + SettingStore + RuntimeStore,
+>(
     pool: std::sync::Arc<T>,
 ) -> axum::Router {
     use axum::Extension;

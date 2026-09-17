@@ -386,6 +386,7 @@ fn lower_ingress_metadata(ingress: Option<&crate::ast::IngressDecl>) -> Result<V
             .predicates
             .iter()
             .map(|predicate| {
+                let span = predicate.span;
                 let operator = match predicate.operator.as_str() {
                     "==" => IngressPredicateOperator::Equal,
                     "!=" => IngressPredicateOperator::NotEqual,
@@ -404,17 +405,24 @@ fn lower_ingress_metadata(ingress: Option<&crate::ast::IngressDecl>) -> Result<V
                         )
                     })
                     .transpose()?;
-                if value.as_ref().is_some_and(contains_dynamic_expression) {
-                    return Err(RexRapError::syntax(
-                        predicate.span,
-                        "ingress predicate values must be literals",
-                    ));
-                }
-                Ok(IngressPredicate {
+                let predicate = IngressPredicate {
                     pointer: predicate.pointer.clone(),
                     operator,
                     value,
-                })
+                    resolved_value: None,
+                };
+                if predicate
+                    .value
+                    .as_ref()
+                    .is_some_and(contains_dynamic_expression)
+                    && predicate.config_reference().is_none()
+                {
+                    return Err(RexRapError::syntax(
+                        span,
+                        "ingress predicate values must be literals or one direct config setting",
+                    ));
+                }
+                Ok(predicate)
             })
             .collect::<Result<Vec<_>, RexRapError>>()?;
         routes.push(IngressRoute {
@@ -428,6 +436,7 @@ fn lower_ingress_metadata(ingress: Option<&crate::ast::IngressDecl>) -> Result<V
     let policy = IngressPolicy {
         scope: ingress.scope.clone(),
         routes,
+        setting_bindings: vec![],
     };
     policy
         .validate()

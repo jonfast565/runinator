@@ -362,6 +362,7 @@ mod ingress_policy_tests {
                 predicates: vec![],
                 intent: None,
             }],
+            setting_bindings: vec![],
         };
         assert_eq!(
             policy.action_for("changed", IngressLifecycle::Active),
@@ -384,6 +385,7 @@ mod ingress_policy_tests {
                 predicates: vec![],
                 intent: None,
             }],
+            setting_bindings: vec![],
         };
         assert!(policy.validate().is_err());
     }
@@ -417,9 +419,11 @@ mod ingress_policy_tests {
                     pointer: "/labels".into(),
                     operator: IngressPredicateOperator::Contains,
                     value: Some(Value::String("auto".into())),
+                    resolved_value: None,
                 }],
                 intent: None,
             }],
+            setting_bindings: vec![],
         };
         assert_eq!(
             policy.action_for_payload(
@@ -450,6 +454,7 @@ mod ingress_policy_tests {
                 predicates: vec![],
                 intent: Some("refresh".into()),
             }],
+            setting_bindings: vec![],
         };
         assert!(policy.validate_dispatches(None).is_err());
 

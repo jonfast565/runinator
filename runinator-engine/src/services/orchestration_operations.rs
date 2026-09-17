@@ -294,6 +294,7 @@ mod tests {
                     intent: Some("stop".into()),
                 },
             ],
+            setting_bindings: vec![],
         };
         let now = Utc::now();
         let admission = match db

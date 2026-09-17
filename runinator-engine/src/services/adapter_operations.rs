@@ -27,6 +27,7 @@ use runinator_store::{
 use uuid::Uuid;
 
 use super::choose_intent;
+use crate::repository;
 
 #[derive(Clone)]
 pub struct AdapterOperations<T> {
@@ -174,7 +175,7 @@ impl<T: RuntimeStore> AdapterOperations<T> {
     }
 }
 
-impl<T: DefinitionStore + IngressStore> AdapterOperations<T> {
+impl<T: DefinitionStore + IngressStore + RuntimeStore> AdapterOperations<T> {
     pub async fn pipeline_for_event(
         &self,
         adapter: &AdapterDefinition,
@@ -217,6 +218,13 @@ impl<T: DefinitionStore + IngressStore> AdapterOperations<T> {
                         pipeline.name
                     ))
                 })?;
+            let policy = repository::resolve_ingress_policy_settings(
+                self.store.as_ref(),
+                pipeline.org_id,
+                &policy,
+            )
+            .await
+            .map_err(|error| AdapterRoutingError::Rejected(error.to_string()))?;
             if policy.scope == event.scope
                 && policy.action_for_payload(
                     &event.event_type,
@@ -415,6 +423,23 @@ impl<T: DefinitionStore + IngressStore + OrchestrationStore + RuntimeStore> Adap
             };
             let Some(ingress) = ingress else {
                 continue;
+            };
+            let ingress = match repository::resolve_ingress_policy_settings(
+                self.store.as_ref(),
+                admission
+                    .as_ref()
+                    .filter(|admission| admission.target.id == pipeline_id)
+                    .and_then(|admission| admission.org_id)
+                    .or(pipeline.org_id),
+                &ingress,
+            )
+            .await
+            {
+                Ok(ingress) => ingress,
+                Err(error) => {
+                    validation_errors.push(error.to_string());
+                    continue;
+                }
             };
             if ingress.scope != event.scope {
                 continue;

@@ -7,6 +7,9 @@ pub struct IngressPolicy {
     pub scope: String,
     #[serde(default)]
     pub routes: Vec<IngressRoute>,
+    /// UUID-bound config values used by direct config references in ingress predicates.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub setting_bindings: Vec<crate::settings::SettingBinding>,
 }
 
 impl IngressPolicy {

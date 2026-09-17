@@ -434,6 +434,7 @@ fn lower_workflow(
                         pointer: predicate.pointer.clone(),
                         operator,
                         value,
+                        resolved_value: None,
                     })
                 })
                 .collect::<Result<Vec<_>, RexRapError>>()?;
@@ -461,6 +462,7 @@ fn lower_workflow(
         let policy = IngressPolicy {
             scope: ingress.scope.clone(),
             routes,
+            setting_bindings: vec![],
         };
         policy
             .validate_dispatches(None)
