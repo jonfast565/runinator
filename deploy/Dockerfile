@@ -89,9 +89,12 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked \
 
 # ---- shared runtime base ----
 FROM alpine:${ALPINE_VERSION} AS runtime-base
-ARG RUNINATOR_VERSION
+# only the constant labels belong here. a version label would put `ARG RUNINATOR_VERSION` above
+# every layer in every derived stage, and a metadata instruction still forms part of the cache key
+# its children inherit, so each build number would rebuild this apk layer and, far more expensively,
+# the worker's tooling layers. each leaf stage stamps the version just above its binary COPY, which
+# already changes whenever the binary does.
 LABEL org.opencontainers.image.title="Runinator" \
-      org.opencontainers.image.version="${RUNINATOR_VERSION}" \
       org.opencontainers.image.vendor="Runinator"
 RUN apk add --no-cache ca-certificates \
     && addgroup -S runinator \
@@ -102,6 +105,8 @@ ENV RUNINATOR_LOG=info \
 
 # ---- ws ----
 FROM runtime-base AS ws
+ARG RUNINATOR_VERSION
+LABEL org.opencontainers.image.version="${RUNINATOR_VERSION}"
 COPY --from=builder --chown=root:root --chmod=755 /out/runinator-ws /usr/local/bin/runinator-ws
 EXPOSE 8080
 USER runinator
@@ -110,12 +115,16 @@ ENTRYPOINT ["/usr/local/bin/runinator-ws"]
 # ---- engine-worker: standalone durable orchestration engine (ws with RUNINATOR_WS_RUN_ENGINE=false
 #      offloads its engine here so HTTP replicas and engine replicas scale independently) ----
 FROM runtime-base AS engine-worker
+ARG RUNINATOR_VERSION
+LABEL org.opencontainers.image.version="${RUNINATOR_VERSION}"
 COPY --from=builder --chown=root:root --chmod=755 /out/runinator-engine-worker /usr/local/bin/runinator-engine-worker
 USER runinator
 ENTRYPOINT ["/usr/local/bin/runinator-engine-worker"]
 
 # ---- waker ----
 FROM runtime-base AS waker
+ARG RUNINATOR_VERSION
+LABEL org.opencontainers.image.version="${RUNINATOR_VERSION}"
 COPY --from=builder --chown=root:root --chmod=755 /out/runinator-waker /usr/local/bin/runinator-waker
 USER runinator
 ENTRYPOINT ["/usr/local/bin/runinator-waker"]
@@ -161,6 +170,8 @@ ENV USE_BUILTIN_RIPGREP=0 \
     DOTNET_CLI_TELEMETRY_OPTOUT=1 \
     DOTNET_SKIP_FIRST_TIME_EXPERIENCE=1 \
     DOTNET_NOLOGO=1
+ARG RUNINATOR_VERSION
+LABEL org.opencontainers.image.version="${RUNINATOR_VERSION}"
 COPY --from=builder --chown=root:root --chmod=755 /out/runinator-worker /usr/local/bin/runinator-worker
 COPY --from=builder --chown=root:root --chmod=755 /out/runinator-adapter-host /usr/local/bin/runinator-adapter-host
 COPY --from=builder --chown=root:root --chmod=755 /out/runinatorctl /usr/local/bin/runinatorctl
@@ -171,6 +182,8 @@ ENTRYPOINT ["/usr/local/bin/runinator-worker"]
 # ---- archiver ----
 FROM runtime-base AS archiver
 RUN mkdir -p /var/lib/runinator/archive && chown -R runinator:runinator /var/lib/runinator
+ARG RUNINATOR_VERSION
+LABEL org.opencontainers.image.version="${RUNINATOR_VERSION}"
 COPY --from=builder --chown=root:root --chmod=755 /out/runinator-archiver /usr/local/bin/runinator-archiver
 VOLUME ["/var/lib/runinator/archive"]
 USER runinator
@@ -178,6 +191,8 @@ ENTRYPOINT ["/usr/local/bin/runinator-archiver"]
 
 # ---- broker: standalone tcp broker for single-host deployments that skip rabbitmq ----
 FROM runtime-base AS broker
+ARG RUNINATOR_VERSION
+LABEL org.opencontainers.image.version="${RUNINATOR_VERSION}"
 COPY --from=builder --chown=root:root --chmod=755 /out/runinator-broker /usr/local/bin/runinator-broker
 ENV RUNINATOR_BROKER_TRANSPORT=tcp \
     RUNINATOR_BROKER_ADDR=0.0.0.0:7070
@@ -188,6 +203,8 @@ ENTRYPOINT ["/usr/local/bin/runinator-broker"]
 # ---- blob: s3-compatible object store over the container filesystem ----
 FROM runtime-base AS blob
 RUN mkdir -p /var/lib/runinator/blobs && chown -R runinator:runinator /var/lib/runinator
+ARG RUNINATOR_VERSION
+LABEL org.opencontainers.image.version="${RUNINATOR_VERSION}"
 COPY --from=builder --chown=root:root --chmod=755 /out/runinator-blob /usr/local/bin/runinator-blob
 ENV RUNINATOR_BLOB_ADDR=0.0.0.0:9000 \
     RUNINATOR_BLOB_DATA_DIR=/var/lib/runinator/blobs
@@ -203,6 +220,8 @@ ENTRYPOINT ["/usr/local/bin/runinator-blob"]
 FROM runtime-base AS adapter-host
 RUN apk add --no-cache github-cli \
     && gh --version
+ARG RUNINATOR_VERSION
+LABEL org.opencontainers.image.version="${RUNINATOR_VERSION}"
 COPY --from=builder --chown=root:root --chmod=755 /out/runinator-adapter-host /usr/local/bin/runinator-adapter-host
 ENV RUNINATOR_ADAPTER_HOST_PORT=8790
 USER runinator
@@ -210,6 +229,8 @@ ENTRYPOINT ["/usr/local/bin/runinator-adapter-host"]
 
 # ---- bootstrap ----
 FROM runtime-base AS bootstrap
+ARG RUNINATOR_VERSION
+LABEL org.opencontainers.image.version="${RUNINATOR_VERSION}"
 COPY --from=builder --chown=root:root --chmod=755 /out/runinator-bootstrap /usr/local/bin/runinator-bootstrap
 USER runinator
 ENTRYPOINT ["/usr/local/bin/runinator-bootstrap"]
