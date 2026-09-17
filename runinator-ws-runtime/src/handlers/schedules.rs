@@ -11,7 +11,7 @@ use runinator_models::{
     auth::PrincipalKind,
     auth::ResourceType,
     auth::{AuthContext, Permission},
-    rbac::{Action, Role, ScopeKind, ScopeRef},
+    rbac::{Action, ScopeKind, ScopeRef, strongest_platform_role},
     schedules::{
         BackfillRequest, CalendarSubscriptionSecret, NewCalendarSubscriptionRecord, NewFreezeWindow,
     },
@@ -172,12 +172,7 @@ pub async fn subscribed_calendar<
         Ok(values) => values,
         Err(_) => return StatusCode::INTERNAL_SERVER_ERROR.into_response(),
     };
-    let platform_role = assignments
-        .iter()
-        .find_map(|assignment| match assignment.role {
-            Role::Platform(role) => Some(role),
-            _ => None,
-        });
+    let platform_role = strongest_platform_role(&assignments);
     let ctx = AuthContext {
         principal_id: user.id,
         session_id: None,

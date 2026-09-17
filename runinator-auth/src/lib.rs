@@ -12,7 +12,9 @@ use jsonwebtoken::{Algorithm, DecodingKey, EncodingKey, Header, Validation, deco
 use runinator_models::auth::{
     ApiKeyRecord, AuthContext, AuthSession, Claims, PrincipalKind, ReplicaClaims, User,
 };
-use runinator_models::rbac::{PlatformRole, Role, RoleAssignment, ServiceAccount};
+use runinator_models::rbac::{
+    PlatformRole, RoleAssignment, ServiceAccount, strongest_platform_role,
+};
 use std::future::Future;
 use uuid::Uuid;
 
@@ -268,7 +270,7 @@ pub async fn resolve_credential<S: CredentialStore>(
         let assignments = store
             .role_assignments(PrincipalKind::User, principal_id)
             .await?;
-        let platform_role = platform_role(&assignments);
+        let platform_role = strongest_platform_role(&assignments);
         let org_id = claims.org.as_deref().and_then(|id| id.parse::<Uuid>().ok());
         if let Some(org_id) = org_id
             && platform_role != Some(PlatformRole::Admin)
@@ -337,22 +339,12 @@ pub async fn resolve_credential<S: CredentialStore>(
         principal_id: Some(record.key.principal_id),
         session_id: None,
         kind: record.key.principal_kind,
-        platform_role: platform_role(&assignments),
+        platform_role: strongest_platform_role(&assignments),
         assignments,
         system_role: record.key.system_role,
         action_ceiling: record.key.action_ceiling,
         org_id: record.key.org_id,
     })
-}
-
-fn platform_role(assignments: &[RoleAssignment]) -> Option<PlatformRole> {
-    assignments
-        .iter()
-        .filter_map(|assignment| match assignment.role {
-            Role::Platform(role) => Some(role),
-            _ => None,
-        })
-        .max()
 }
 
 #[cfg(test)]

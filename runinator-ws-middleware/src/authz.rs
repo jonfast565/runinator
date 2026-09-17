@@ -304,25 +304,6 @@ fn role_allows(role: Role, action: Action) -> bool {
     }
 }
 
-fn scope_permission(ctx: &AuthContext, scope: ScopeRef) -> Option<Permission> {
-    if scope.kind == ScopeKind::User && scope.id == ctx.principal_id {
-        return Some(Permission::Own);
-    }
-    (scope.kind == ScopeKind::Platform)
-        .then_some(ctx.platform_role)
-        .flatten()
-        .map(Role::Platform)
-        .into_iter()
-        .chain(
-            ctx.assignments
-                .iter()
-                .filter(|assignment| assignment.scope == scope)
-                .map(|assignment| assignment.role),
-        )
-        .map(Role::default_permission)
-        .max()
-}
-
 fn permission_action(permission: Permission) -> Action {
     match permission {
         Permission::View => Action::View,
@@ -374,6 +355,32 @@ impl<'a, T: AuthorizationStore> AuthzChecker<'a, T> {
                 Err(forbidden())
             }
         }
+    }
+
+    /// Whether the caller may act on a scope, including organization inheritance for team scopes.
+    pub async fn authorize_scope_with_ancestry(
+        &self,
+        action: Action,
+        scope: ScopeRef,
+    ) -> Result<bool, Reply> {
+        if self.ctx.authorize_scope(action, scope) {
+            return Ok(true);
+        }
+        if scope.kind != ScopeKind::Team {
+            return Ok(false);
+        }
+        let Some(team_id) = scope.id else {
+            return Ok(false);
+        };
+        let Some(team) = self
+            .db
+            .fetch_team(team_id)
+            .await
+            .map_err(|_| authorization_error())?
+        else {
+            return Ok(false);
+        };
+        Ok(self.ctx.authorize_scope(action, team.scope))
     }
 
     /// the caller's effective permission on a workflow, or `None` when they have no access.
@@ -535,44 +542,25 @@ impl<'a, T: AuthorizationStore> AuthzChecker<'a, T> {
             .await
     }
 
+    /// require at least `needed` permission on an orchestration adapter.
+    pub async fn require_adapter(&self, adapter_id: Uuid, needed: Permission) -> Result<(), Reply> {
+        self.require_resource(ResourceType::OrchestrationAdapter, adapter_id, needed)
+            .await
+    }
+
     pub async fn resource_permission(
         &self,
         resource_type: ResourceType,
         resource_id: Uuid,
     ) -> Result<Option<Permission>, Reply> {
-        if self.ctx.is_platform_admin() {
-            return Ok(Some(Permission::Own));
-        }
-        let ownership = self
-            .db
-            .fetch_resource_ownership(resource_type, resource_id)
-            .await
-            .map_err(|_| authorization_error())?;
-        let Some(ownership) = ownership else {
-            return Ok(None);
-        };
-        if ownership.tenant.kind == ScopeKind::Organization
-            && !self.ctx.authorize_scope(Action::View, ownership.tenant)
-        {
-            return Ok(None);
-        }
-
-        // The tenant is an isolation boundary, not an implicit grant. Organization-owned
-        // resources inherit the organization role because owner == tenant; team- and user-owned
-        // resources are discoverable only through that owner scope or an explicit grant.
-        let inherited = scope_permission(self.ctx, ownership.owner);
-        let direct = if let Some(principal_id) = self.ctx.principal_id {
-            self.db
-                .list_effective_resource_grants(resource_type, resource_id, principal_id)
-                .await
-                .map_err(|_| authorization_error())?
-                .into_iter()
-                .map(|grant| grant.permission)
-                .max()
-        } else {
-            None
-        };
-        Ok(inherited.into_iter().chain(direct).max())
+        runinator_store::resource_access::effective_resource_permission(
+            self.db,
+            self.ctx,
+            resource_type,
+            resource_id,
+        )
+        .await
+        .map_err(|_| authorization_error())
     }
 
     /// the pipeline ids the caller can see, or `None` meaning "all" (admin / auth disabled).

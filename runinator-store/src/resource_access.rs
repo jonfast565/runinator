@@ -1,13 +1,77 @@
 //! Ownership-aware reusable-resource dependency checks shared by authoring and runtime admission.
 
 use runinator_models::{
-    auth::{Permission, PrincipalType, ResourceType},
+    auth::{AuthContext, Permission, PrincipalType, ResourceType},
     errors::SendableError,
-    rbac::{ScopeKind, ScopeRef},
+    rbac::{Role, ScopeKind, ScopeRef},
 };
 use uuid::Uuid;
 
 use crate::roles::{AuthStore, RbacStore};
+
+/// Resolve the strongest permission a request context holds on an owned resource.
+///
+/// This is the canonical store-backed RBAC calculation used by both HTTP authorization and
+/// engine-owned interaction handling. Transport layers remain responsible for mapping a missing
+/// permission to their own denial response and for enforcing action ceilings.
+pub async fn effective_resource_permission<T: RbacStore>(
+    db: &T,
+    ctx: &AuthContext,
+    resource_type: ResourceType,
+    resource_id: Uuid,
+) -> Result<Option<Permission>, SendableError> {
+    if ctx.is_platform_admin() {
+        return Ok(Some(Permission::Own));
+    }
+    let Some(ownership) = db
+        .fetch_resource_ownership(resource_type, resource_id)
+        .await?
+    else {
+        return Ok(None);
+    };
+    if ownership.tenant.kind == ScopeKind::Organization
+        && (!(ctx.action_ceiling.is_empty()
+            || ctx
+                .action_ceiling
+                .contains(&runinator_models::rbac::Action::View))
+            || !scope_permission(ctx, ownership.tenant)
+                .is_some_and(|permission| permission.allows(Permission::View)))
+    {
+        return Ok(None);
+    }
+
+    let inherited = scope_permission(ctx, ownership.owner);
+    let direct = if let Some(principal_id) = ctx.principal_id {
+        db.list_effective_resource_grants(resource_type, resource_id, principal_id)
+            .await?
+            .into_iter()
+            .map(|grant| grant.permission)
+            .max()
+    } else {
+        None
+    };
+    Ok(inherited.into_iter().chain(direct).max())
+}
+
+/// Resolve the permission inherited from a platform, organization, team, or user scope.
+pub fn scope_permission(ctx: &AuthContext, scope: ScopeRef) -> Option<Permission> {
+    if scope.kind == ScopeKind::User && scope.id == ctx.principal_id {
+        return Some(Permission::Own);
+    }
+    (scope.kind == ScopeKind::Platform)
+        .then_some(ctx.platform_role)
+        .flatten()
+        .map(Role::Platform)
+        .into_iter()
+        .chain(
+            ctx.assignments
+                .iter()
+                .filter(|assignment| assignment.scope == scope)
+                .map(|assignment| assignment.role),
+        )
+        .map(Role::default_permission)
+        .max()
+}
 
 /// Return whether an owned consumer may use an owned reusable dependency.
 pub async fn resource_can_consume<T: AuthStore + RbacStore>(

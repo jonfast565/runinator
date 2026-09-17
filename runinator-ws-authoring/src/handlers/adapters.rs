@@ -101,7 +101,7 @@ async fn authorized_adapter<T: OrchestrationStore + AuthorizationStore>(
         _ => Permission::Edit,
     };
     AuthzChecker::new(db, ctx)
-        .require_resource(ResourceType::OrchestrationAdapter, adapter_id, permission)
+        .require_adapter(adapter_id, permission)
         .await?;
     match operations.fetch(adapter_id).await {
         Ok(Some(adapter)) => Ok(adapter),

@@ -5,13 +5,13 @@ use std::sync::Arc;
 use chrono::Utc;
 use runinator_broker_core::{Broker, ControlCommand};
 use runinator_models::{
-    auth::{Permission, PrincipalKind, ResourceType},
+    auth::{AuthContext, Permission, PrincipalKind, ResourceType},
     notifications::{
         ConversationReceipt, ExternalInteractionResponse, NotificationInteraction,
         NotificationInteractionAction, NotificationInteractionInput, NotificationInteractionState,
         NotificationInteractionTarget,
     },
-    rbac::{PlatformRole, Role, RoleAssignment, ScopeKind, ScopeRef},
+    rbac::strongest_platform_role,
     runs::ProviderTerminalControl,
     value::Value,
     workflow_vm::{WorkflowEffectRequest, WorkflowEffectStatus},
@@ -376,44 +376,28 @@ where
             .list_principal_role_assignments(PrincipalKind::User, user_id)
             .await
             .map_err(|error| error.to_string())?;
-        let platform_role = assignments
-            .iter()
-            .filter_map(|assignment| match assignment.role {
-                Role::Platform(role) => Some(role),
-                _ => None,
-            })
-            .max();
-        if platform_role == Some(PlatformRole::Admin) {
-            return Ok(true);
-        }
-        let Some(ownership) = self
-            .store
-            .fetch_resource_ownership(ResourceType::Workflow, run.workflow_id)
-            .await
-            .map_err(|error| error.to_string())?
-        else {
-            return Ok(false);
+        let platform_role = strongest_platform_role(&assignments);
+        let ctx = AuthContext {
+            principal_id: Some(user_id),
+            session_id: None,
+            kind: PrincipalKind::User,
+            platform_role,
+            assignments,
+            system_role: None,
+            action_ceiling: Vec::new(),
+            org_id: None,
         };
-        if ownership.tenant.kind == ScopeKind::Organization
-            && !scope_permission(user_id, platform_role, &assignments, ownership.tenant)
-                .is_some_and(|permission| permission.allows(Permission::View))
-        {
-            return Ok(false);
-        }
-        let inherited = scope_permission(user_id, platform_role, &assignments, ownership.owner);
-        let direct = self
-            .store
-            .list_effective_resource_grants(ResourceType::Workflow, run.workflow_id, user_id)
+        Ok(
+            runinator_store::resource_access::effective_resource_permission(
+                self.store.as_ref(),
+                &ctx,
+                ResourceType::Workflow,
+                run.workflow_id,
+            )
             .await
             .map_err(|error| error.to_string())?
-            .into_iter()
-            .map(|grant| grant.permission)
-            .max();
-        Ok(inherited
-            .into_iter()
-            .chain(direct)
-            .max()
-            .is_some_and(|permission| permission.allows(Permission::Run)))
+            .is_some_and(|permission| permission.allows(Permission::Run)),
+        )
     }
 }
 
@@ -511,28 +495,4 @@ fn validate_action_input(
         }
         _ => Ok(()),
     }
-}
-
-fn scope_permission(
-    user_id: Uuid,
-    platform_role: Option<PlatformRole>,
-    assignments: &[RoleAssignment],
-    scope: ScopeRef,
-) -> Option<Permission> {
-    if scope.kind == ScopeKind::User && scope.id == Some(user_id) {
-        return Some(Permission::Own);
-    }
-    (scope.kind == ScopeKind::Platform)
-        .then_some(platform_role)
-        .flatten()
-        .map(Role::Platform)
-        .into_iter()
-        .chain(
-            assignments
-                .iter()
-                .filter(|assignment| assignment.scope == scope)
-                .map(|assignment| assignment.role),
-        )
-        .map(Role::default_permission)
-        .max()
 }

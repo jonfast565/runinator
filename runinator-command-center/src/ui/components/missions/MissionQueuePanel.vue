@@ -86,6 +86,7 @@
 
 <script setup lang="ts">
 import type { OrchestrationBinding } from "../../../core/domain/models";
+import { formatRelativeTime } from "../../../core/utils/time";
 import Button from "../shared/Button.vue";
 import EmptyState from "../shared/EmptyState.vue";
 import Icon from "../shared/Icon.vue";
@@ -138,31 +139,7 @@ function statusLabel(status: string): string {
 }
 
 function relativeDate(value: string): string {
-  const timestamp = new Date(value).getTime();
-
-  if (Number.isNaN(timestamp)) {
-    return value;
-  }
-
-  const seconds = Math.max(0, Math.round((Date.now() - timestamp) / 1_000));
-
-  if (seconds < 60) {
-    return "Updated now";
-  }
-
-  const minutes = Math.floor(seconds / 60);
-
-  if (minutes < 60) {
-    return `Updated ${String(minutes)}m ago`;
-  }
-
-  const hours = Math.floor(minutes / 60);
-
-  if (hours < 24) {
-    return `Updated ${String(hours)}h ago`;
-  }
-
-  return `Updated ${String(Math.floor(hours / 24))}d ago`;
+  return formatRelativeTime(value, { prefix: "Updated ", nowLabel: "Updated now" });
 }
 </script>
 

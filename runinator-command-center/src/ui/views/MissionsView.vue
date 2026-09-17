@@ -318,6 +318,7 @@ import type {
 } from "../../core/domain/models";
 import type { MissionRecipeDraft, StartMissionInput } from "../../core/services";
 import { missionRecipeFromPipeline, saveMissionRecipe } from "../../core/services";
+import { formatRelativeTime } from "../../core/utils/time";
 import { useMissionsStore } from "../adapters/pinia/missions";
 import { useProvidersStore } from "../adapters/pinia/providers";
 import MissionQueuePanel from "../components/missions/MissionQueuePanel.vue";
@@ -600,31 +601,7 @@ function truncate(value: string, maximum: number): string {
 }
 
 function relativeDate(value: string): string {
-  const timestamp = new Date(value).getTime();
-
-  if (Number.isNaN(timestamp)) {
-    return value;
-  }
-
-  const seconds = Math.max(0, Math.round((Date.now() - timestamp) / 1_000));
-
-  if (seconds < 60) {
-    return "Just now";
-  }
-
-  const minutes = Math.floor(seconds / 60);
-
-  if (minutes < 60) {
-    return `${String(minutes)}m ago`;
-  }
-
-  const hours = Math.floor(minutes / 60);
-
-  if (hours < 24) {
-    return `${String(hours)}h ago`;
-  }
-
-  return `${String(Math.floor(hours / 24))}d ago`;
+  return formatRelativeTime(value, { nowLabel: "Just now" });
 }
 
 function formatDate(value: string): string {
