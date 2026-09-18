@@ -65,7 +65,10 @@ fn from_error(text: &str, error: &RexRapError) -> Diagnostic {
     let (range, code) = match error {
         RexRapError::Syntax { span, .. } => (span_to_range(text, *span), "REXRAP002"),
         RexRapError::Semantic { span, .. } => (span_to_range(text, *span), "REXRAP003"),
-        RexRapError::Parse(_) => (whole_document_range(text), "REXRAP001"),
+        // REXRAP001 now carries the position pest rejected at, so the most common authoring error
+        // underlines the offending token instead of the whole document.
+        RexRapError::Parse { span: Some(span), .. } => (span_to_range(text, *span), "REXRAP001"),
+        RexRapError::Parse { span: None, .. } => (whole_document_range(text), "REXRAP001"),
         RexRapError::Lower(_) => (whole_document_range(text), "REXRAP004"),
         RexRapError::Validation(_) => (whole_document_range(text), "REXRAP005"),
         RexRapError::Decompile(_) => (whole_document_range(text), "REXRAP006"),

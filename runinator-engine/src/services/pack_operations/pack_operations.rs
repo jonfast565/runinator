@@ -453,11 +453,18 @@ impl<
                 .map_err(|error| PackImportError::internal(error.to_string()))?;
             }
 
+            // a pack may legitimately reference settings the organization provisions afterwards,
+            // so an unresolved slot does not fail the apply. it is reported instead, because the
+            // alternative first notice is a worker failure in phase one of a billable mission.
+            let unresolved_settings =
+                unresolved_setting_slots(transaction.as_ref(), import_org, &workflows.workflows)
+                    .await;
             Ok(PackImportResult {
                 workflows,
                 settings,
                 execution_profiles: execution_profiles.into_iter().map(Into::into).collect(),
                 pipelines,
+                unresolved_settings,
             })
         }
         .await;
@@ -486,4 +493,33 @@ impl<
             }
         }
     }
+}
+
+/// The setting slots a pack's workflows reference that this organization has not provisioned.
+///
+/// The paths come from the same walk that binds settings at save, so what is reported here is
+/// exactly what a run will look for. A store failure yields no findings rather than a false
+/// report: this is a diagnostic beside a successful apply, and it must not invent one.
+async fn unresolved_setting_slots<T: runinator_store::RuntimeStore>(
+    db: &T,
+    org_id: Option<Uuid>,
+    workflows: &[runinator_models::workflows::WorkflowDefinition],
+) -> Vec<String> {
+    let mut paths = std::collections::BTreeSet::new();
+    for workflow in workflows {
+        let Ok(graph) = serde_json::to_value(&workflow.definition) else {
+            continue;
+        };
+        crate::repository::collect_setting_paths(&graph, &mut paths);
+    }
+    let mut unresolved = Vec::new();
+    for (kind, scope, name) in paths {
+        if let Ok(None) = db
+            .fetch_setting(org_id, kind, scope.clone(), name.clone())
+            .await
+        {
+            unresolved.push(format!("{} {scope}/{name}", kind.as_str()));
+        }
+    }
+    unresolved
 }

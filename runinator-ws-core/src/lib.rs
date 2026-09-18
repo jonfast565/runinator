@@ -5,6 +5,7 @@
 //! it, the `runinator-ws-{identity,authoring,runtime}` crates build handlers on both, and
 //! `runinator-ws` merges the result into a served router.
 
+pub mod errors;
 pub mod events;
 pub mod json;
 pub mod models;

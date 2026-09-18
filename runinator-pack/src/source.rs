@@ -160,32 +160,40 @@ pub fn load_pack_pipelines(path: &Path) -> Result<Option<PipelineBundle>> {
             continue;
         }
 
-        let bundle = runinator_rexrap::parse_pipeline_str(&blocks.pipelines).map_err(|e| {
-            PackError::compile(format!(
-                "failed to parse {} pipelines:\n{}",
-                source_path.display(),
-                e.render(&blocks.pipelines)
-            ))
-        })?;
-        for pipeline in &bundle.pipelines {
-            if pipeline.key.is_none() {
-                return Err(PackError::compile(format!(
-                    "pipeline '{}' in {} must declare a stable `key`",
-                    pipeline.name,
-                    source_path.display()
-                )));
-            }
-            if pipeline.namespace.is_none() {
-                return Err(PackError::compile(format!(
-                    "pipeline '{}' in {} must declare a `namespace`",
-                    pipeline.name,
-                    source_path.display()
-                )));
-            }
-        }
-        pipelines.extend(bundle.pipelines);
+        pipelines.extend(compile_pipeline_block(&source_path, &blocks.pipelines)?.pipelines);
     }
     Ok((!pipelines.is_empty()).then_some(PipelineBundle { pipelines }))
+}
+
+/// parse and validate one source's `pipelines { }` block, applying exactly the requirements apply
+/// enforces. it is separated from [`load_pack_pipelines`] so an offline check can reach it: a
+/// pipeline that parses only at apply time means a green local check followed by a server refusal,
+/// which is worse than no check at all.
+pub fn compile_pipeline_block(source_path: &Path, block: &str) -> Result<PipelineBundle> {
+    let bundle = runinator_rexrap::parse_pipeline_str(block).map_err(|e| {
+        PackError::compile(format!(
+            "failed to parse {} pipelines:\n{}",
+            source_path.display(),
+            e.render(block)
+        ))
+    })?;
+    for pipeline in &bundle.pipelines {
+        if pipeline.key.is_none() {
+            return Err(PackError::compile(format!(
+                "pipeline '{}' in {} must declare a stable `key`",
+                pipeline.name,
+                source_path.display()
+            )));
+        }
+        if pipeline.namespace.is_none() {
+            return Err(PackError::compile(format!(
+                "pipeline '{}' in {} must declare a `namespace`",
+                pipeline.name,
+                source_path.display()
+            )));
+        }
+    }
+    Ok(bundle)
 }
 
 // resolve the pipeline file paths for a pack source: a directory pack's `*.rexrapp` files, or a `.rexrapm`

@@ -87,3 +87,6 @@ pub use adapter_poll_response::AdapterPollResponse;
 
 mod adapter_metadata_envelope;
 pub use adapter_metadata_envelope::AdapterMetadataEnvelope;
+
+mod stream_checkpoints;
+pub use stream_checkpoints::{StreamCheckpoints, StreamScope};

@@ -13,6 +13,24 @@ pub trait AuthContextExt {
     fn require_system_role(&self, roles: &[SystemRole]) -> Result<(), AuthorizationDenied>;
     fn actor_kind(&self) -> &'static str;
     fn revision_author(&self) -> RevisionAuthor;
+
+    /// Whether a record owned by `owner_org` may be read by this caller.
+    ///
+    /// Platform-owned records (`None`) are deployment-wide shared infrastructure and stay readable
+    /// from inside an organization; another organization's record does not. This is the same rule
+    /// `runinator_store::resource_access::owner_can_access` applies to the ownership registry,
+    /// named so a handler picks a policy instead of writing a comparison. Thirteen handlers wrote
+    /// their own, and they did not agree: some admitted a platform record, some did not, and the
+    /// difference was invisible at each call site.
+    fn visible_for_read(&self, owner_org: Option<Uuid>) -> bool;
+
+    /// Whether a record owned by `owner_org` may be modified by this caller.
+    ///
+    /// Stricter than [`AuthContextExt::visible_for_read`]: a record has to be in the caller's own
+    /// tenant. A platform-owned record is shared, so editing it from inside one organization would
+    /// change it for every other one; only a caller who is already at platform scope, or a
+    /// platform administrator, may.
+    fn visible_for_write(&self, owner_org: Option<Uuid>) -> bool;
 }
 
 impl AuthContextExt for AuthContext {
@@ -88,6 +106,14 @@ impl AuthContextExt for AuthContext {
     /// The source is inferred from the principal kind. A user token is classified as `UI`, and a
     /// service key is classified as `API`. This is only a hint: a person using curl still gets the
     /// `UI` label. The import path records whether the write came from a pack or a hand edit.
+    fn visible_for_read(&self, owner_org: Option<Uuid>) -> bool {
+        self.is_platform_admin() || owner_org.is_none() || owner_org == self.org_id
+    }
+
+    fn visible_for_write(&self, owner_org: Option<Uuid>) -> bool {
+        self.is_platform_admin() || owner_org == self.org_id
+    }
+
     fn revision_author(&self) -> RevisionAuthor {
         RevisionAuthor {
             contract_override_reason: None,

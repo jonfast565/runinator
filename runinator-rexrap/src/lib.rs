@@ -157,7 +157,7 @@ pub fn compile_str_with_diagnostics(
 ) -> Result<(WorkflowDefinition, Vec<Diagnostic>), RexRapError> {
     let (mut definitions, diagnostics) = compile_all_str_with_diagnostics(src, options)?;
     if definitions.len() != 1 {
-        return Err(RexRapError::Parse(format!(
+        return Err(RexRapError::parse(format!(
             "expected exactly one workflow, found {}",
             definitions.len()
         )));
@@ -516,7 +516,7 @@ pub fn compile_unchecked(
     desugar::desugar(&mut desugared)?;
     let mut definitions = lower::lower_document(&document, options)?;
     if definitions.len() != 1 {
-        return Err(RexRapError::Parse(format!(
+        return Err(RexRapError::parse(format!(
             "expected exactly one workflow, found {}",
             definitions.len()
         )));

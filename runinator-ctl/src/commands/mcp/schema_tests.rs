@@ -220,7 +220,7 @@ fn execution_profile_status_has_a_callable_schema() {
 fn positionals_keep_their_declared_order() {
     let built = line(
         "runinator_settings_set",
-        json!({ "name": "token", "scope": "github" }),
+        json!({ "name": "token", "scope": "github", "kind": "secret" }),
     );
     let scope = built.iter().position(|word| word == "github").unwrap();
     let name = built.iter().position(|word| word == "token").unwrap();
@@ -357,13 +357,18 @@ fn a_closed_set_is_advertised_as_an_enum() {
         .and_then(Value::as_array)
         .expect("--kind has a closed set");
     assert!(kinds.contains(&Value::from("secret")), "{kinds:?}");
-    // a clap default is a default in the schema too, so a client need not guess.
-    assert_eq!(
+    // `--kind` carries no clap default, so the schema offers none and the caller has to choose.
+    assert!(
         definition
             .pointer("/inputSchema/properties/kind/default")
-            .and_then(Value::as_str),
-        Some("secret")
+            .is_none(),
+        "{definition:?}"
     );
+    let required = definition
+        .pointer("/inputSchema/required")
+        .and_then(Value::as_array)
+        .expect("settings set has required arguments");
+    assert!(required.contains(&Value::from("kind")), "{required:?}");
 }
 
 // a boolean's `true, false` possible values say nothing, and offering them as an enum would make

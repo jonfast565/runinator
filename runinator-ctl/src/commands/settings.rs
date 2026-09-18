@@ -144,6 +144,9 @@ fn resolve_set_value(inline: Option<&str>, file: Option<&Path>) -> Result<String
 }
 
 fn print_settings(entries: &[runinator_models::settings::SettingSummary]) {
+    // an orchestration adapter binds its secrets by id while every other settings verb addresses a
+    // slot by scope and name, so the id has to be readable here or an operator has to reach for
+    // `--json` to wire an adapter at all.
     let rows = entries
         .iter()
         .map(|entry| {
@@ -151,8 +154,9 @@ fn print_settings(entries: &[runinator_models::settings::SettingSummary]) {
                 entry.kind.as_str().to_string(),
                 output::truncate(&entry.scope, 20),
                 entry.name.clone(),
+                entry.id.to_string(),
             ]
         })
         .collect::<Vec<_>>();
-    print!("{}", output::table(&["kind", "scope", "name"], &rows));
+    print!("{}", output::table(&["kind", "scope", "name", "id"], &rows));
 }

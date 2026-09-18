@@ -79,6 +79,7 @@ pub async fn upsert_workflow<
 >(
     Extension(db): Extension<Arc<T>>,
     Extension(authoring): Extension<Arc<WorkflowAuthoring<T>>>,
+    Extension(host): Extension<Arc<dyn runinator_adapter_client::AdapterHostClient>>,
     Extension(ctx): Extension<AuthContext>,
     Query(options): Query<WorkflowPublishOptions>,
     ValidatedJson(mut workflow): ValidatedJson<WorkflowDefinition>,
@@ -110,6 +111,12 @@ pub async fn upsert_workflow<
         metadata.remove("artifact_refs");
     }
     if let Some(error) = rexrap_boundary_error(&workflow) {
+        return bad_request(error);
+    }
+    if let Some(error) =
+        super::adapters::ingress_scope_unreachable(host.as_ref(), &workflow.definition.metadata)
+            .await
+    {
         return bad_request(error);
     }
     let workflows = match authoring.list().await {
@@ -742,6 +749,11 @@ pub fn routes<
 ) -> axum::Router {
     use axum::Extension;
     use axum::routing::{get, post};
+    // the adapter host answers what scopes an event can carry, which is what makes an ingress
+    // scope checkable at apply time rather than only discoverable by a workflow never starting.
+    let host: std::sync::Arc<dyn runinator_adapter_client::AdapterHostClient> = std::sync::Arc::new(
+        runinator_adapter_client::HttpAdapterHostClient::from_env(),
+    );
     axum::Router::new()
         .route(
             runinator_models::api_routes::API_WORKFLOWS,
@@ -792,6 +804,8 @@ pub fn routes<
             "/workflows/{id}/revisions/{revision}/restore",
             post(restore_workflow_revision::<T>).layer(Extension(pool.clone())),
         )
+        // applied last so it wraps every route above it.
+        .layer(Extension(host))
 }
 
 /// the openapi entries for the routes above.

@@ -9,11 +9,24 @@ pub struct PollPage<T, C> {
 /// Why a bounded poll could not safely reach its end.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum PollLimit {
+    /// The source handed back a cursor it had already issued, so following it would loop.
+    ///
+    /// This compares cursor *values*, so it catches an opaque cursor that repeats and nothing
+    /// else. A page-number cursor increments on every page by construction and can never repeat,
+    /// so a source that ignores the page parameter and returns the same body forever is not caught
+    /// here — it walks the full budget and surfaces as [`PollLimit::PageBudget`], a hard error.
+    /// A caller paging by number owes its own check that the request it builds honours the
+    /// parameter; see `GitHubOperation::paginates`.
     RepeatedCursor,
+    /// The walk reached `max_pages` with the source still offering more.
     PageBudget { max_pages: usize },
 }
 
 /// Repeatedly invoke a blocking page function until it reports no next cursor.
+///
+/// Bounded twice: by `max_pages`, and by a repeated cursor. See [`PollLimit::RepeatedCursor`] for
+/// what the second bound does and does not cover — it is not protection against a source that
+/// ignores the cursor it is handed.
 pub fn poll_pages<T, C, E>(
     initial_cursor: Option<C>,
     max_pages: usize,
@@ -48,6 +61,10 @@ where
 }
 
 /// Repeatedly invoke an async page function until it reports no next cursor.
+///
+/// Bounded twice: by `max_pages`, and by a repeated cursor. See [`PollLimit::RepeatedCursor`] for
+/// what the second bound does and does not cover — it is not protection against a source that
+/// ignores the cursor it is handed.
 pub async fn poll_pages_async<T, C, E, F, Fut>(
     initial_cursor: Option<C>,
     max_pages: usize,

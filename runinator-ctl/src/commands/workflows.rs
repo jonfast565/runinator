@@ -296,15 +296,24 @@ async fn apply_workflow_source(
                 )
                 .await?
         };
-        let summary = WorkflowApplySummary {
-            message: format!(
-                "imported {} workflows, {} triggers, {} settings, and {} pipelines",
-                result.workflows.workflows.len(),
-                result.workflows.triggers.len(),
-                result.settings.settings.len(),
-                result.pipelines.len()
-            ),
-        };
+        let mut message = format!(
+            "imported {} workflows, {} triggers, {} settings, and {} pipelines",
+            result.workflows.workflows.len(),
+            result.workflows.triggers.len(),
+            result.settings.settings.len(),
+            result.pipelines.len()
+        );
+        // the apply succeeded: these slots are provisioned separately and may simply not exist
+        // yet. saying so here is the difference between learning it now and learning it when a
+        // mission fails on its first step.
+        if !result.unresolved_settings.is_empty() {
+            message.push_str(&format!(
+                "\n\nwarning: {} setting slot(s) this pack references are not set in this organization:\n  {}\nset each with `runinatorctl settings set <scope> <name> --kind <secret|config> ...` before running.",
+                result.unresolved_settings.len(),
+                result.unresolved_settings.join("\n  ")
+            ));
+        }
+        let summary = WorkflowApplySummary { message };
         if json_output {
             output::json(&result)?;
         }
@@ -507,4 +516,4 @@ pub use workflow_tests::workflows_test;
 mod workflow_evals;
 use workflow_evals::workflows_eval;
 mod rexrap;
-pub(super) use rexrap::rexrap;
+pub(crate) use rexrap::rexrap;

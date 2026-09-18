@@ -136,6 +136,7 @@ pub async fn create_pipeline<
 >(
     Extension(db): Extension<Arc<T>>,
     Extension(service): Extension<Arc<PipelineOperations<T>>>,
+    Extension(host): Extension<Arc<dyn runinator_adapter_client::AdapterHostClient>>,
     Extension(ctx): Extension<AuthContext>,
     ValidatedJson(mut pipeline): ValidatedJson<Pipeline>,
 ) -> (StatusCode, Json<ApiResponse>) {
@@ -145,6 +146,11 @@ pub async fn create_pipeline<
     if let Some(metadata) = pipeline.metadata.as_object_mut() {
         metadata.remove("managed_by");
         metadata.remove("requires_reimport");
+    }
+    if let Some(error) =
+        super::adapters::ingress_scope_unreachable(host.as_ref(), &pipeline.metadata).await
+    {
+        return bad_request(error);
     }
     match service.save(&pipeline).await {
         Ok(pipeline) => {
@@ -166,6 +172,7 @@ pub async fn update_pipeline<
 >(
     Extension(db): Extension<Arc<T>>,
     Extension(service): Extension<Arc<PipelineOperations<T>>>,
+    Extension(host): Extension<Arc<dyn runinator_adapter_client::AdapterHostClient>>,
     Extension(ctx): Extension<AuthContext>,
     Path(pipeline_id): Path<Uuid>,
     ValidatedJson(pipeline): ValidatedJson<Pipeline>,
@@ -175,6 +182,11 @@ pub async fn update_pipeline<
         .await
     {
         return reply;
+    }
+    if let Some(error) =
+        super::adapters::ingress_scope_unreachable(host.as_ref(), &pipeline.metadata).await
+    {
+        return bad_request(error);
     }
     match service.update(pipeline_id, pipeline).await {
         Ok(Some(pipeline)) => (StatusCode::OK, Json(ApiResponse::Pipeline(pipeline))),
@@ -239,6 +251,7 @@ pub async fn set_enabled<
 >(
     Extension(db): Extension<Arc<T>>,
     Extension(service): Extension<Arc<PipelineOperations<T>>>,
+    Extension(host): Extension<Arc<dyn runinator_adapter_client::AdapterHostClient>>,
     Extension(ctx): Extension<AuthContext>,
     Path(pipeline_id): Path<Uuid>,
     ValidatedJson(request): ValidatedJson<PipelineEnableRequest>,
@@ -248,6 +261,15 @@ pub async fn set_enabled<
         .await
     {
         return reply;
+    }
+    // enabling is the moment the pipeline starts waiting for events, so it is the last honest
+    // place to say that no adapter can produce the scope it waits on.
+    if request.enabled
+        && let Ok(Some(pipeline)) = service.fetch(pipeline_id).await
+        && let Some(error) =
+            super::adapters::ingress_scope_unreachable(host.as_ref(), &pipeline.metadata).await
+    {
+        return bad_request(error);
     }
     match service.set_enabled(pipeline_id, request.enabled).await {
         Ok(Some(pipeline)) => (StatusCode::OK, Json(ApiResponse::Pipeline(pipeline))),
@@ -1005,6 +1027,12 @@ pub fn routes<
             "/pipeline_runs/{id}/members/{member_key}/retry",
             post(retry_pipeline_member::<T>).layer(Extension(pool.clone())),
         )
+        // applied last so it wraps every route above it. the adapter host answers what scopes an
+        // event can carry, which is what makes an ingress scope checkable before it is waited on.
+        .layer(Extension(std::sync::Arc::new(
+            runinator_adapter_client::HttpAdapterHostClient::from_env(),
+        )
+            as std::sync::Arc<dyn runinator_adapter_client::AdapterHostClient>))
 }
 
 mod pipeline_revision_list_query;

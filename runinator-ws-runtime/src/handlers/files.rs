@@ -177,7 +177,8 @@ pub async fn download_workflow_file<T: AuthorizationStore + FileStore + RuntimeS
     }
     let file = match service.fetch(id).await {
         Ok(Some(file))
-            if file.org_id == ctx.org_id && (!file.archived || file.workflow_run_id.is_some()) =>
+            if ctx.visible_for_read(file.org_id)
+                && (!file.archived || file.workflow_run_id.is_some()) =>
         {
             file
         }

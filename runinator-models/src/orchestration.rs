@@ -478,6 +478,77 @@ mod ingress_policy_tests {
         assert!(policy.validate_dispatches(Some(&orchestration)).is_err());
     }
 
+    fn kind(kind: &str, scope_template: Option<&str>) -> AdapterKindMetadata {
+        AdapterKindMetadata {
+            kind: kind.into(),
+            version: "1".into(),
+            display_name: kind.into(),
+            description: None,
+            fields: vec![],
+            polling_fields: vec![],
+            event_names: vec![],
+            canonical_pointers: vec![],
+            capabilities: vec![],
+            polling_authentication: vec![],
+            polling_secret_fields: vec![],
+            execution_profile_scopes: vec![],
+            execution_profile_required_labels: Default::default(),
+            identity_fields: vec![],
+            scope_template: scope_template.map(str::to_owned),
+            setup_instructions: vec![],
+        }
+    }
+
+    fn scoped(scope: &str) -> IngressPolicy {
+        IngressPolicy {
+            scope: scope.into(),
+            routes: vec![],
+            setting_bindings: vec![],
+        }
+    }
+
+    #[test]
+    fn an_ingress_scope_no_adapter_can_emit_is_refused() {
+        // the three cases that cost the harness bring-up a day: a mission-shaped scope against a
+        // kind that only ever emits repository scopes, the repository scope that does reach, and a
+        // kind whose whole scope is a placeholder and therefore reaches anything.
+        let github = kind("github", Some("github:repository:{repository_id}"));
+        let error = scoped("mission.flint.review")
+            .validate_reachability(&[github.clone()])
+            .expect_err("a mission scope is not a repository scope");
+        assert!(error.contains("mission.flint.review"), "{error}");
+        assert!(error.contains("github:repository:"), "{error}");
+
+        assert!(
+            scoped("github:repository:1242743236")
+                .validate_reachability(&[github.clone()])
+                .is_ok()
+        );
+        // the placeholder has to consume something: the bare prefix names no repository.
+        assert!(
+            scoped("github:repository:")
+                .validate_reachability(&[github.clone()])
+                .is_err()
+        );
+        assert!(
+            scoped("mission.flint.review")
+                .validate_reachability(&[github, kind("jira", Some("{routing_scope}"))])
+                .is_ok()
+        );
+    }
+
+    #[test]
+    fn a_kind_that_declares_no_scope_template_never_blocks_an_apply() {
+        // reachability is a guard, not a gate: a kind that has not described its scope says
+        // nothing about what is reachable, and must not turn an apply into a refusal.
+        assert!(
+            scoped("anything at all")
+                .validate_reachability(&[kind("generic_webhook", None)])
+                .is_ok()
+        );
+        assert!(scoped("anything at all").validate_reachability(&[]).is_ok());
+    }
+
     #[test]
     fn correlation_alias_identity_matches_the_cross_database_key_limits() {
         assert!(validate_correlation_alias_identity("github", "issues", "owner/repo#42").is_ok());

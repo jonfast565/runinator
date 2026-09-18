@@ -177,7 +177,7 @@ pub async fn get_credential_by_id<T: AuthorizationStore + SettingStore + Runtime
         Ok(None) => return not_found("credential not found"),
         Err(err) => return api_error(err.to_string()),
     };
-    if record.org_id != ctx.org_id || ctx.system_role.is_some() {
+    if !ctx.visible_for_write(record.org_id) || ctx.system_role.is_some() {
         return not_found("credential not found");
     }
     if let Err(reply) = ctx.require_scope_action(
@@ -237,7 +237,7 @@ pub async fn resolve_runtime_secret<T: SettingStore + RuntimeStore>(
         return not_found("credential not found");
     }
     let record = match db.fetch_setting_by_id(ctx.org_id, setting_id).await {
-        Ok(Some(record)) if record.org_id == ctx.org_id && record.kind == SettingKind::Secret => {
+        Ok(Some(record)) if ctx.visible_for_write(record.org_id) && record.kind == SettingKind::Secret => {
             record
         }
         Ok(_) => return not_found("credential not found"),
@@ -485,7 +485,7 @@ pub async fn move_credential<
         return bad_request("setting scope and name must not be empty");
     }
     let existing = match db.fetch_setting_by_id(ctx.org_id, setting_id).await {
-        Ok(Some(record)) if record.org_id == ctx.org_id => record,
+        Ok(Some(record)) if ctx.visible_for_write(record.org_id) => record,
         Ok(Some(_)) => return not_found("setting not found"),
         Ok(None) => return not_found("setting not found"),
         Err(err) => return api_error(err.to_string()),

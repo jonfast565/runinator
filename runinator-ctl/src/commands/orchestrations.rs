@@ -253,6 +253,25 @@ async fn orchestration_adapters(
             if json_output {
                 return output::json(&status);
             }
+            // a profile-backed adapter that no worker can serve reports no error of its own: the
+            // dispatch simply never runs. `worker_diagnostic` is the only account of that, so it
+            // takes the error cell rather than staying behind `--json`, which is where an operator
+            // reads a stalled adapter as unexplained silence.
+            let workers = if status.required_labels.is_empty() {
+                "-".to_owned()
+            } else {
+                let selector = status
+                    .required_labels
+                    .iter()
+                    .map(|(key, value)| format!("{key}={value}"))
+                    .collect::<Vec<_>>()
+                    .join(",");
+                format!("{} live for {selector}", status.matching_worker_count)
+            };
+            let diagnosis = status
+                .last_error
+                .or(status.worker_diagnostic)
+                .unwrap_or_else(|| "-".into());
             let rows = vec![vec![
                 status.adapter_id.to_string(),
                 status.revision.to_string(),
@@ -265,7 +284,8 @@ async fn orchestration_adapters(
                     .last_success_at
                     .map(|value| value.to_rfc3339())
                     .unwrap_or_else(|| "-".into()),
-                status.last_error.unwrap_or_else(|| "-".into()),
+                workers,
+                diagnosis,
                 status.checkpoint.to_string(),
             ]];
             print!(
@@ -277,6 +297,7 @@ async fn orchestration_adapters(
                         "NEXT POLL",
                         "LAST ATTEMPT",
                         "LAST SUCCESS",
+                        "WORKERS",
                         "LAST ERROR",
                         "CHECKPOINT",
                     ],

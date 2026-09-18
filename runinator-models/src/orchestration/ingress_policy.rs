@@ -142,4 +142,67 @@ impl IngressPolicy {
         }
         Ok(())
     }
+
+    /// Check that some installed adapter kind could emit an event carrying this policy's scope.
+    ///
+    /// The scope is the join between what an adapter emits and what a workflow listens for, and it
+    /// is the one part of that join nothing validated: a scope no kind can produce was accepted,
+    /// persisted, and hashed into the revision digest, after which the workflow simply never
+    /// started. Kinds that declare no template are ignored rather than treated as unreachable, so
+    /// an adapter kind that has not described its scope never blocks an apply.
+    pub fn validate_reachability(&self, kinds: &[AdapterKindMetadata]) -> Result<(), String> {
+        let templates: Vec<&str> = kinds
+            .iter()
+            .filter_map(|kind| kind.scope_template.as_deref())
+            .filter(|template| !template.trim().is_empty())
+            .collect();
+        if templates.is_empty() {
+            return Ok(());
+        }
+        let scope = self.scope.trim();
+        if templates
+            .iter()
+            .any(|template| scope_matches(template, scope))
+        {
+            return Ok(());
+        }
+        Err(format!(
+            "ingress scope '{scope}' cannot be emitted by any installed adapter kind; the installed kinds emit {}",
+            templates.join(", ")
+        ))
+    }
+}
+
+/// Whether a concrete scope could have been produced by a kind's scope template. A `{placeholder}`
+/// stands for one non-empty run of characters; the literal text around it has to match exactly.
+fn scope_matches(template: &str, scope: &str) -> bool {
+    let mut rest = scope;
+    let mut remaining = template;
+    let mut after_placeholder = false;
+    while let Some(open) = remaining.find('{') {
+        let Some(close) = remaining[open..].find('}') else {
+            // an unbalanced template is not a pattern; compare it literally.
+            return template == scope;
+        };
+        let literal = &remaining[..open];
+        if after_placeholder {
+            // the placeholder before this literal must consume at least one character.
+            let Some(found) = rest.get(1..).and_then(|tail| tail.find(literal)) else {
+                return false;
+            };
+            rest = &rest[found + 1 + literal.len()..];
+        } else {
+            let Some(stripped) = rest.strip_prefix(literal) else {
+                return false;
+            };
+            rest = stripped;
+        }
+        remaining = &remaining[open + close + 1..];
+        after_placeholder = true;
+    }
+    if after_placeholder {
+        // a trailing placeholder has to consume something, then the tail literal must close it out.
+        return rest.len() > remaining.len() && rest.ends_with(remaining);
+    }
+    rest == remaining
 }

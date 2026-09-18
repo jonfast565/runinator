@@ -1203,6 +1203,16 @@ where
         Ok(result.affected() != 0)
     }
 
+    async fn defer_orchestration_adapter_poll(
+        &self,
+        adapter_id: Uuid,
+        instance_id: String,
+        next_poll_at: DateTime<Utc>,
+    ) -> Result<bool, SendableError> {
+        Ok(sqlx::query(&self.render("UPDATE orchestration_adapter_polls SET next_poll_at = ? WHERE adapter_id = ? AND claimed_by = ?"))
+            .bind(next_poll_at.timestamp()).bind(adapter_id).bind(instance_id).execute(self.pool()).await?.affected() != 0)
+    }
+
     async fn complete_orchestration_adapter_poll(
         &self,
         adapter_id: Uuid,

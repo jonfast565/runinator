@@ -7,6 +7,9 @@ pub fn workflows_test(
     json_output: bool,
 ) -> Result<()> {
     let bundle = pack::load_workflow_bundle(file).map_err(|e| err(e.to_string()))?;
+    // pipelines are part of what a pack applies, and nothing offline parsed them until now: a
+    // suite could run green against a pack that apply would reject outright.
+    runinator_pack::source::load_pack_pipelines(file).map_err(|e| err(e.to_string()))?;
     if bundle.workflows.is_empty() {
         return Err(err(format!(
             "no workflows compiled from {}",

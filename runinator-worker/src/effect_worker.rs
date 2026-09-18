@@ -60,7 +60,11 @@ async fn execute_adapter_poll(
     )
     .await
     .map_err(|error| error.to_string())?;
+    // the override is filtered like the two fallbacks below it. an env var naming a path that no
+    // longer exists used to win anyway, and the spawn then failed with a bare "no such file"
+    // rather than falling through to the binary that shipped beside this worker.
     let executable = env::path("RUNINATOR_ADAPTER_RUNNER_PATH")
+        .filter(|path| path.is_file())
         .or_else(|| {
             std::env::current_exe()
                 .ok()
@@ -81,6 +85,10 @@ async fn execute_adapter_poll(
                 .filter(|path| path.is_file())
         })
         .unwrap_or_else(|| std::path::PathBuf::from("runinator-adapter-host"));
+    // which binary answered decides which event streams a poll can produce, and three resolution
+    // steps mean it is not always the one that shipped with the engine. naming it at spawn is what
+    // makes a stale host visible in the worker log instead of only in a short batch.
+    tracing::debug!(kind, runner = %executable.display(), "spawning the adapter host");
     let mut command = tokio::process::Command::new(executable);
     command
         .arg("--poll-once")

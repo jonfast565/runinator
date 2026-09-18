@@ -63,9 +63,12 @@ pub fn render_snippet(src: &str, span: Span, label: &str, message: &str) -> Stri
 /// errors produced while compiling or decompiling rexrap.
 #[derive(Debug, Error)]
 pub enum RexRapError {
-    /// the grammar rejected the source. carries pest's rendered message.
-    #[error("REXRAP001 - parse error:\n{0}")]
-    Parse(String),
+    /// the grammar rejected the source. carries pest's rendered message, and the position it
+    /// rejected at when the parser could report one. without the span the caret renderer had
+    /// nothing to anchor to, so the single most common authoring error was the one diagnostic that
+    /// underlined the whole file instead of the offending token.
+    #[error("REXRAP001 - parse error:\n{message}")]
+    Parse { span: Option<Span>, message: String },
 
     /// the parse tree was structurally valid but semantically malformed.
     #[error("REXRAP002 - syntax error at {}..{}: {message}", span.start, span.end)]
@@ -128,11 +131,44 @@ impl RexRapError {
         Self::Lower(message.into())
     }
 
-    /// render this error against the source. span-carrying variants (`Syntax`, `Semantic`)
-    /// become caret snippets; `Parse` keeps pest's already-rich rendering; the rest fall back
-    /// to their `Display`.
+    /// a parse failure with no position: the parser could not say where.
+    pub fn parse(message: impl Into<String>) -> Self {
+        Self::Parse {
+            span: None,
+            message: message.into(),
+        }
+    }
+
+    /// a parse failure anchored at the position the grammar rejected.
+    pub fn parse_at(span: Span, message: impl Into<String>) -> Self {
+        Self::Parse {
+            span: Some(span),
+            message: message.into(),
+        }
+    }
+
+    /// the source position this error points at, for callers that anchor their own diagnostics.
+    pub fn span(&self) -> Option<Span> {
+        match self {
+            Self::Syntax { span, .. } | Self::Semantic { span, .. } => Some(*span),
+            Self::Parse { span, .. } => *span,
+            _ => None,
+        }
+    }
+
+    /// render this error against the source. span-carrying variants become caret snippets; the
+    /// rest fall back to their `Display`.
     pub fn render(&self, src: &str) -> String {
         match self {
+            Self::Parse {
+                span: Some(span),
+                message,
+            } => render_snippet(
+                src,
+                *span,
+                "error",
+                &format!("{} - {}", PARSE.code, parse_summary(message)),
+            ),
             Self::Syntax { span, message } => {
                 render_snippet(src, *span, "error", &format!("{} - {message}", SYNTAX.code))
             }
@@ -145,4 +181,22 @@ impl RexRapError {
             other => other.to_string(),
         }
     }
+}
+
+/// pest renders its own multi-line caret block, which would sit oddly inside another one. keep
+/// the expectation line, which is the part that says what the grammar wanted; the position it also
+/// reports is already carried by the span.
+fn parse_summary(message: &str) -> &str {
+    message
+        .lines()
+        .map(str::trim)
+        .find_map(|line| line.strip_prefix("= "))
+        .or_else(|| {
+            message
+                .lines()
+                .map(str::trim)
+                .filter(|line| !line.is_empty() && !line.starts_with("-->") && !line.starts_with('|'))
+                .next_back()
+        })
+        .unwrap_or(message)
 }

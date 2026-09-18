@@ -214,7 +214,7 @@ pub async fn list_notification_policies<
                             .resource_permission(ResourceType::Workflow, workflow_id)
                             .await
                     }
-                    None if policy.org_id == ctx.org_id => {
+                    None if ctx.visible_for_read(policy.org_id) => {
                         AuthzChecker::new(db.as_ref(), &ctx)
                             .resource_permission(ResourceType::NotificationPolicy, policy.id)
                             .await

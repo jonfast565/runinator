@@ -70,6 +70,8 @@ fn event() -> NormalizedAdapterEvent {
 }
 fn response() -> AdapterPollResponse {
     AdapterPollResponse {
+host_version: None,
+kind_version: None,
         events: vec![event()],
         checkpoint: serde_json::json!({"cursor":2}),
         retry_after_seconds: None,
@@ -100,6 +102,7 @@ async fn adapter_delivery_is_durable_before_checkpoint_even_when_routing_fails()
             request: request(),
             claim_owner: "claim".into(),
             dry_run: false,
+            deadline_at: now + Duration::seconds(300),
         },
     )
     .await
@@ -191,6 +194,7 @@ async fn profile_dry_run_returns_preview_without_admission_or_checkpoint_change(
             request: request(),
             claim_owner: "dry-run".into(),
             dry_run: true,
+            deadline_at: Utc::now() + Duration::seconds(300),
         },
     )
     .await

@@ -44,6 +44,11 @@ async fn run_process() -> commands::Result<()> {
         Commands::Functions {
             command: FunctionCommands::Validate { path },
         } => commands::functions_validate(path, cli.json),
+        // every `rexrap` verb is a local text transform over a file on disk; `workflows::rexrap`
+        // takes no client at all. authenticating first meant a new operator could not syntax-check
+        // a pack until a web service was running, and the failure named `auth/config` rather than
+        // the missing server.
+        Commands::RexRap { command } => commands::rexrap(command, cli.json),
         // The MCP server can start before the web service; see `build_client_or_offline`.
         Commands::Mcp { .. } => {
             let client = auth::build_client_or_offline(&cli).await?;

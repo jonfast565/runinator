@@ -73,3 +73,28 @@ fn blocking_poll_rejects_a_cursor_cycle() {
     .unwrap_err();
     assert_eq!(error, PollLimit::RepeatedCursor);
 }
+
+#[test]
+fn a_page_number_walk_is_bounded_only_by_its_budget() {
+    // the cursor guard compares cursor values, and a page number increments on every page, so a
+    // source that ignores `page` and answers with the same body forever is never caught as a
+    // cycle. it walks the whole budget and fails hard. this is the documented limit of the guard,
+    // and the reason a caller paging by number has to check that its request honours the
+    // parameter before it starts walking.
+    let mut pages = 0;
+    let error = poll_pages(
+        Some(1u32),
+        10,
+        |page| {
+            pages += 1;
+            Ok::<_, PollLimit>(PollPage {
+                items: vec![7u8; 100],
+                next_cursor: Some(page.unwrap_or(1) + 1),
+            })
+        },
+        |limit| limit,
+    )
+    .unwrap_err();
+    assert_eq!(error, PollLimit::PageBudget { max_pages: 10 });
+    assert_eq!(pages, 10, "every page in the budget was requested");
+}

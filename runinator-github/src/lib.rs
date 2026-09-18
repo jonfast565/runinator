@@ -137,6 +137,48 @@ pub enum GitHubOperation {
 }
 
 impl GitHubOperation {
+    /// Whether the operation's request carries a `page` parameter, and so can be walked page by
+    /// page. An operation that ignores `page` returns the same body for every page number, which a
+    /// generic page walk reads as a full page and keeps requesting: identical items repeat until
+    /// the page budget trips, and the budget surfaces as a hard error that retains the checkpoint.
+    /// Declaring it here keeps the answer with the request that decides it.
+    pub fn paginates(&self) -> bool {
+        use GitHubOperation::*;
+        matches!(
+            self,
+            PullRequests { .. }
+                | IssueComments { .. }
+                | RepositoryIssueComments { .. }
+                | CheckRuns { .. }
+                | WorkflowRuns { .. }
+                | Commits { .. }
+        )
+    }
+
+    /// The operation's variant name, for diagnostics that have to say which call was refused.
+    pub fn name(&self) -> &'static str {
+        use GitHubOperation::*;
+        match self {
+            Repository { .. } => "Repository",
+            PullRequests { .. } => "PullRequests",
+            CreatePull { .. } => "CreatePull",
+            UpdatePull { .. } => "UpdatePull",
+            Reviews { .. } => "Reviews",
+            MergePull { .. } => "MergePull",
+            IssueComments { .. } => "IssueComments",
+            RepositoryIssueComments { .. } => "RepositoryIssueComments",
+            AddComment { .. } => "AddComment",
+            RequestReviewers { .. } => "RequestReviewers",
+            AddAssignees { .. } => "AddAssignees",
+            CheckRuns { .. } => "CheckRuns",
+            DispatchWorkflow { .. } => "DispatchWorkflow",
+            WorkflowRuns { .. } => "WorkflowRuns",
+            RerunWorkflow { .. } => "RerunWorkflow",
+            RerequestCheck { .. } => "RerequestCheck",
+            Commits { .. } => "Commits",
+        }
+    }
+
     fn request(self) -> RequestSpec {
         use GitHubOperation::*;
         match self {

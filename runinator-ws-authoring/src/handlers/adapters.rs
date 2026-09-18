@@ -55,6 +55,33 @@ async fn catalog(
 ) -> Result<Vec<runinator_models::orchestration::AdapterKindCatalogEntry>, String> {
     host.kinds().await.map_err(|error| error.to_string())
 }
+/// Refuse an ingress scope no installed adapter kind can emit.
+///
+/// A scope is the join between what an adapter stamps on an event and what a workflow or pipeline
+/// listens for, and nothing checked it: an unreachable scope was validated, persisted, and hashed
+/// into the revision digest, after which the thing simply never started. The adapter host is asked
+/// rather than trusted to be reachable — if it cannot be consulted the apply proceeds, because a
+/// guard that turns an unavailable host into a failed apply is worse than the gap it closes.
+pub(crate) async fn ingress_scope_unreachable(
+    host: &dyn AdapterHostClient,
+    metadata: &runinator_models::value::Value,
+) -> Option<String> {
+    let value = metadata.get("ingress")?;
+    let policy: runinator_models::orchestration::IngressPolicy =
+        serde_json::from_value(value.clone().into()).ok()?;
+    let Ok(kinds) = host.kinds().await else {
+        return None;
+    };
+    policy
+        .validate_reachability(
+            &kinds
+                .into_iter()
+                .map(|entry| entry.metadata)
+                .collect::<Vec<_>>(),
+        )
+        .err()
+}
+
 fn org_id(ctx: &AuthContext) -> Result<Uuid, GuardError> {
     ctx.org_id
         .ok_or_else(|| bad_request("an organization must be selected").into())
@@ -335,6 +362,28 @@ fn validate_definition(
             return Err(format!(
                 "configuration field '{}' cannot be empty",
                 field.name
+            ));
+        }
+    }
+    // the loop above walks the kind's declared schema, so it never sees a submitted key the kind
+    // does not declare. such a key was accepted, persisted, and hashed into the revision digest
+    // while doing nothing at all — a `routing_scope` on a GitHub adapter is the case that cost a
+    // day. it reads as configured and is inert, which is the worst of both.
+    if let Some(submitted) = request.configuration.as_object() {
+        let declared: std::collections::BTreeSet<&str> = fields
+            .iter()
+            .chain(kind.polling_secret_fields.iter())
+            .map(|field| field.name.as_str())
+            .collect();
+        if let Some(unknown) = submitted
+            .keys()
+            .map(String::as_str)
+            .find(|key| !declared.contains(key))
+        {
+            return Err(format!(
+                "adapter kind '{}' does not declare a configuration field '{unknown}'; it accepts {}",
+                kind.kind,
+                declared.into_iter().collect::<Vec<_>>().join(", ")
             ));
         }
     }
@@ -1224,6 +1273,8 @@ pub async fn test<
                 request: input,
                 claim_owner: Uuid::now_v7().to_string(),
                 dry_run: true,
+                deadline_at: chrono::Utc::now()
+                    + chrono::TimeDelta::seconds(runinator_engine::adapter_polling::LEASE_SECONDS),
             },
         )
         .await

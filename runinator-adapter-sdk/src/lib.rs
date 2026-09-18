@@ -16,6 +16,8 @@ pub trait Adapter: Default {
     /// Polling is optional for webhook-only adapters; ABI v2 validation remains required.
     fn poll(&self, _request: AdapterPollRequest) -> AdapterPollResponse {
         AdapterPollResponse {
+host_version: None,
+kind_version: None,
             events: Vec::new(),
             checkpoint: serde_json::Value::Null,
             retry_after_seconds: None,

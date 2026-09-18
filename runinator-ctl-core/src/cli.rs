@@ -570,8 +570,10 @@ pub enum SettingsCommands {
         /// read the value from a file instead of the VALUE argument.
         #[arg(long, value_name = "PATH", conflicts_with = "value")]
         value_file: Option<PathBuf>,
-        /// Which store the slot lives in.
-        #[arg(long, value_enum, default_value_t = CliSettingKind::Secret)]
+        /// Which store the slot lives in. Required: a config value written into the secret store
+        /// is accepted silently and then never resolves as config, so the kind is chosen rather
+        /// than defaulted.
+        #[arg(long, value_enum)]
         kind: CliSettingKind,
         /// JSON-schema for a config value (json text), required on first write of a config slot.
         #[arg(long)]

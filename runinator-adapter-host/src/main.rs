@@ -17,8 +17,8 @@ use runinator_adapter_contract::{
     ADAPTER_ABI_VERSION, AdapterImmediateResponse, AdapterMetadataEnvelope, AdapterPollRequest,
     AdapterPollResponse, AdapterRequest, AdapterResponse, AdapterValidationRequest,
     AdapterValidationResponse, FileOperationFn, HANDLE_SYMBOL, MARKER_SYMBOL, METADATA_SYMBOL,
-    MarkerFn, NAME_SYMBOL, NameFn, POLL_SYMBOL, VALIDATE_SYMBOL, call_symbol, cstr_to_rust_string,
-    find_marker, invoke_file_operation, verify_bearer, verify_hmac_sha256,
+    MarkerFn, NAME_SYMBOL, NameFn, POLL_SYMBOL, VALIDATE_SYMBOL, StreamCheckpoints, call_symbol,
+    cstr_to_rust_string, find_marker, invoke_file_operation, verify_bearer, verify_hmac_sha256,
 };
 use runinator_github::{AsyncGitHubClient, GitHubOperation};
 use runinator_jira::{AsyncJiraClient, JiraCredentials, JiraOperation};
@@ -190,12 +190,16 @@ async fn poll_once(
             Some(path) => invoke_dynamic_poll(&path, &request, limits)
                 .await
                 .unwrap_or_else(|error| AdapterPollResponse {
+host_version: None,
+kind_version: None,
                     events: Vec::new(),
                     checkpoint: request.checkpoint,
                     retry_after_seconds: None,
                     error: Some(error),
                 }),
             None => AdapterPollResponse {
+host_version: None,
+kind_version: None,
                 events: Vec::new(),
                 checkpoint: request.checkpoint,
                 retry_after_seconds: None,
@@ -205,8 +209,19 @@ async fn poll_once(
             },
         }
     };
+    let response = stamp_host_identity(kind, response);
     std::fs::write(response_path, serde_json::to_vec(&response)?)?;
     Ok(())
+}
+
+/// Name the host that answered. Both fields are stamped here rather than at each poller so no
+/// response — including the ones built on the error paths — can leave without them.
+fn stamp_host_identity(kind: &str, mut response: AdapterPollResponse) -> AdapterPollResponse {
+    response.host_version = Some(env!("CARGO_PKG_VERSION").to_owned());
+    response.kind_version = builtin_catalog()
+        .get(kind)
+        .map(|entry| entry.metadata.version.clone());
+    response
 }
 
 fn required_arg(args: &[String], index: usize) -> Result<&str, Box<dyn std::error::Error>> {
@@ -336,6 +351,8 @@ async fn poll(
         invoke_dynamic_poll(Path::new(&entry.origin), &request.request, state.limits)
             .await
             .unwrap_or_else(|error| AdapterPollResponse {
+host_version: None,
+kind_version: None,
                 events: Vec::new(),
                 checkpoint,
                 retry_after_seconds: None,
@@ -718,6 +735,7 @@ fn placeholder_metadata(path: &Path) -> AdapterKindMetadata {
         polling_secret_fields: vec![],
         execution_profile_scopes: vec![],
         execution_profile_required_labels: BTreeMap::new(),
+        scope_template: None,
         identity_fields: vec![],
         setup_instructions: vec![],
     }
@@ -896,6 +914,7 @@ fn generic_metadata() -> AdapterKindMetadata {
         polling_secret_fields: vec![],
         execution_profile_scopes: vec![],
         execution_profile_required_labels: BTreeMap::new(),
+        scope_template: None,
         identity_fields: vec![
             "delivery_id_pointer".into(),
             "scope_pointer".into(),
@@ -977,6 +996,7 @@ fn jira_metadata() -> AdapterKindMetadata {
         )],
         execution_profile_scopes: vec![],
         execution_profile_required_labels: BTreeMap::new(),
+        scope_template: Some("{routing_scope}".into()),
         identity_fields: vec!["instance_id".into(), "routing_scope".into()],
         setup_instructions: vec![
             "Choose webhook delivery or polling when creating the adapter.".into(),
@@ -1027,6 +1047,7 @@ fn slack_ingress_metadata() -> AdapterKindMetadata {
         polling_secret_fields: vec![],
         execution_profile_scopes: vec![],
         execution_profile_required_labels: BTreeMap::new(),
+        scope_template: Some("{channel}".into()),
         identity_fields: vec!["team_id".into()],
         setup_instructions: vec![
             "Create a Slack app, enable Events API, and subscribe to message.channels and message.groups as needed.".into(),
@@ -1083,6 +1104,7 @@ fn github_metadata() -> AdapterKindMetadata {
         )],
         execution_profile_scopes: vec!["github".into()],
         execution_profile_required_labels: BTreeMap::from([("runner".into(), "desktop".into())]),
+        scope_template: Some("github:repository:{repository_id}".into()),
         identity_fields: vec!["repositories".into()],
         setup_instructions: vec![
             "Choose webhook delivery or polling when creating the adapter.".into(),
@@ -1125,41 +1147,6 @@ fn poll_secret<'a>(request: &'a AdapterPollRequest, name: &str) -> Result<&'a st
         .or_else(|_| configured_string(&request.configuration, name))
 }
 
-/// Read one stream's high-water mark. Checkpoints are per stream rather than per adapter: pull
-/// requests, workflow runs, and check runs advance independently, and a single shared mark would
-/// let a busy stream drag the watermark past events a quiet one had not emitted yet. The legacy
-/// flat `{"updated_at": ...}` form seeds every stream so an in-flight adapter keeps its position.
-fn stream_checkpoint(checkpoint: &Value, stream: &str) -> Option<String> {
-    checkpoint
-        .get("streams")
-        .and_then(|streams| streams.get(stream))
-        .and_then(Value::as_str)
-        .or_else(|| checkpoint.get("updated_at").and_then(Value::as_str))
-        .map(str::to_owned)
-}
-
-fn stream_checkpoints(marks: BTreeMap<String, String>) -> Value {
-    json!({ "streams": marks })
-}
-
-/// Seed the next checkpoint with every mark the current one carries. A stream that reports nothing
-/// new this pass must keep its position; rebuilding the map from only the streams that produced
-/// events would reset the quiet ones to a cold start on the very next poll.
-fn existing_streams(checkpoint: &Value) -> BTreeMap<String, String> {
-    checkpoint
-        .get("streams")
-        .and_then(Value::as_object)
-        .map(|streams| {
-            streams
-                .iter()
-                .filter_map(|(name, value)| {
-                    value.as_str().map(|value| (name.clone(), value.to_owned()))
-                })
-                .collect()
-        })
-        .unwrap_or_default()
-}
-
 fn canonical_poll_timestamp(value: &str) -> String {
     chrono::DateTime::parse_from_rfc3339(value)
         .or_else(|_| chrono::DateTime::parse_from_str(value, "%Y-%m-%dT%H:%M:%S%.f%z"))
@@ -1169,6 +1156,8 @@ fn canonical_poll_timestamp(value: &str) -> String {
 
 fn poll_response(events: Vec<NormalizedAdapterEvent>, checkpoint: Value) -> AdapterPollResponse {
     AdapterPollResponse {
+host_version: None,
+kind_version: None,
         events,
         checkpoint,
         retry_after_seconds: None,
@@ -1201,6 +1190,20 @@ async fn github_collect(
     since: Option<&str>,
     timestamp_of: impl Fn(&Value) -> String + Copy,
 ) -> Result<Vec<Value>, PollError> {
+    // an operation that ignores `page` answers every page number with the same body, which this
+    // walk reads as a full page and requests again: ten identical pages, a thousand duplicate
+    // items, and then a hard page-budget failure that retains the checkpoint and stalls the
+    // adapter for good. refusing it here is a bug report at the call site instead.
+    let probe = operation(1);
+    if !probe.paginates() {
+        return Err(PollError {
+            message: format!(
+                "GitHub operation {} is not paginated and cannot be collected page by page; call it directly",
+                probe.name()
+            ),
+            retry_after_seconds: None,
+        });
+    }
     poll_pages_async(
         Some(1u32),
         GITHUB_MAX_PAGES,
@@ -1315,23 +1318,6 @@ fn github_comment_pull_number(value: &Value) -> Option<String> {
     Some(number.to_owned())
 }
 
-/// Event kinds this repository has no checkpoint mark for. A stream an existing adapter has never
-/// marked establishes its boundary the same way a first poll does: without this, adding an event
-/// kind makes the next poll of every already-running adapter replay the repository's entire
-/// history for that kind, which for reviews means one call per pull request ever opened and a
-/// certain rate-limit failure.
-fn unmarked_streams<'a>(
-    checkpoint: &Value,
-    repository_id: &str,
-    kinds: &[&'a str],
-) -> std::collections::BTreeSet<&'a str> {
-    kinds
-        .iter()
-        .copied()
-        .filter(|kind| stream_checkpoint(checkpoint, &format!("{repository_id}:{kind}")).is_none())
-        .collect()
-}
-
 fn github_review_stamp(value: &Value) -> String {
     canonical_poll_timestamp(
         value
@@ -1339,19 +1325,6 @@ fn github_review_stamp(value: &Value) -> String {
             .and_then(Value::as_str)
             .unwrap_or_default(),
     )
-}
-
-/// Advance a stream's mark only for an event that was actually emitted. Advancing before the
-/// caller decides to skip a malformed item would carry the watermark past events that were never
-/// reported, and they would never be enumerated again.
-fn advance(marks: &mut BTreeMap<String, String>, stream: &str, stamp: &str) {
-    if stamp.is_empty() {
-        return;
-    }
-    let entry = marks.entry(stream.to_owned()).or_default();
-    if stamp > entry.as_str() {
-        *entry = stamp.to_owned();
-    }
 }
 
 fn github_updated_at(value: &Value) -> String {
@@ -1389,6 +1362,8 @@ where
     match poll(&request).await {
         Ok(response) => response,
         Err(error) => AdapterPollResponse {
+host_version: None,
+kind_version: None,
             events: Vec::new(),
             checkpoint: fallback_checkpoint,
             retry_after_seconds: error.retry_after_seconds,
@@ -1403,7 +1378,7 @@ async fn poll_github_inner(request: &AdapterPollRequest) -> Result<AdapterPollRe
         .get("repositories")
         .and_then(Value::as_array)
         .ok_or_else(|| "GitHub polling requires configuration.repositories".to_string())?;
-    let mut marks = existing_streams(&request.checkpoint);
+    let mut checkpoints = StreamCheckpoints::open(request);
     let mut events = Vec::new();
     let access_token = request
         .secrets
@@ -1432,28 +1407,19 @@ async fn poll_github_inner(request: &AdapterPollRequest) -> Result<AdapterPollRe
             "pull_request_review",
         ];
         let now = chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, true);
-        if request.initialize {
-            // initialization deliberately establishes the boundary without scanning old history.
-            for kind in kinds {
-                advance(&mut marks, &format!("{repository_id}:{kind}"), &now);
-            }
-            continue;
-        }
-        let seeded = unmarked_streams(&request.checkpoint, &repository_id, &kinds);
-        for kind in &seeded {
-            advance(&mut marks, &format!("{repository_id}:{kind}"), &now);
-        }
+        // declaring the repository's streams also seeds the ones it has no mark for, which covers
+        // both a first poll and a kind added to an adapter that has been running for weeks.
+        let seeded = checkpoints.declare(&repository_id, &kinds, &now);
 
         for (event_type, array_key) in [
             ("pull_request", None),
             ("workflow_run", Some("workflow_runs")),
             ("issue_comment", None),
         ] {
-            if seeded.contains(event_type) {
+            if seeded.is_seeded(event_type) {
                 continue;
             }
-            let stream = format!("{repository_id}:{event_type}");
-            let since = stream_checkpoint(&request.checkpoint, &stream);
+            let since = checkpoints.mark(&seeded, event_type);
             for value in github_collect(
                 &client,
                 |page| match event_type {
@@ -1504,7 +1470,7 @@ async fn poll_github_inner(request: &AdapterPollRequest) -> Result<AdapterPollRe
                     object.insert("repository".into(), repository_info.clone());
                     object.insert(event_type.into(), value.clone());
                 }
-                advance(&mut marks, &stream, &updated);
+                checkpoints.advance(&seeded, event_type, &updated);
                 events.push(NormalizedAdapterEvent {
                     source: "github".into(),
                     delivery_id: format!("github:{repository_id}:{event_type}:{id}:{updated}"),
@@ -1526,9 +1492,8 @@ async fn poll_github_inner(request: &AdapterPollRequest) -> Result<AdapterPollRe
         // reviews have no repository-wide endpoint, so they are collected per pull request. the
         // outer list is bounded by this stream's own mark, which keeps the fan-out to the pull
         // requests that actually moved since the last poll.
-        let stream = format!("{repository_id}:pull_request_review");
-        let since = stream_checkpoint(&request.checkpoint, &stream);
-        let reviewed_pulls = if seeded.contains("pull_request_review") {
+        let since = checkpoints.mark(&seeded, "pull_request_review");
+        let reviewed_pulls = if seeded.is_seeded("pull_request_review") {
             Vec::new()
         } else {
             github_collect(
@@ -1581,7 +1546,7 @@ async fn poll_github_inner(request: &AdapterPollRequest) -> Result<AdapterPollRe
                     object.insert("pull_request".into(), pull.clone());
                     object.insert("pull_request_review".into(), review.clone());
                 }
-                advance(&mut marks, &stream, &submitted);
+                checkpoints.advance(&seeded, "pull_request_review", &submitted);
                 events.push(NormalizedAdapterEvent {
                     source: "github".into(),
                     delivery_id: format!(
@@ -1601,11 +1566,10 @@ async fn poll_github_inner(request: &AdapterPollRequest) -> Result<AdapterPollRe
             }
         }
 
-        if seeded.contains("check_run") {
+        if seeded.is_seeded("check_run") {
             continue;
         }
-        let stream = format!("{repository_id}:check_run");
-        let since = stream_checkpoint(&request.checkpoint, &stream);
+        let since = checkpoints.mark(&seeded, "check_run");
         let commits = client
             .execute(GitHubOperation::Commits {
                 repository: repository.into(),
@@ -1649,7 +1613,7 @@ async fn poll_github_inner(request: &AdapterPollRequest) -> Result<AdapterPollRe
                 if id.is_empty() {
                     continue;
                 }
-                advance(&mut marks, &stream, &updated);
+                checkpoints.advance(&seeded, "check_run", &updated);
                 events.push(NormalizedAdapterEvent {
                     source: "github".into(),
                     delivery_id: format!("github:{repository_id}:check_run:{id}:{updated}"),
@@ -1673,7 +1637,7 @@ async fn poll_github_inner(request: &AdapterPollRequest) -> Result<AdapterPollRe
         // that reported anything is stamped at its newest item and no event is emitted.
         events.clear();
     }
-    Ok(poll_response(events, stream_checkpoints(marks)))
+    Ok(poll_response(events, checkpoints.into_checkpoint()))
 }
 
 /// Bound a JQL query by how long ago the checkpoint was, not by an absolute timestamp.
@@ -1709,10 +1673,11 @@ async fn poll_jira_inner(request: &AdapterPollRequest) -> Result<AdapterPollResp
     let jql = configured_string(&request.configuration, "jql")?;
     let routing_scope = configured_routing_scope(&request.configuration);
 
-    let issue_stream = format!("{instance_id}:issue");
-    let comment_stream = format!("{instance_id}:comment");
-    let previous = stream_checkpoint(&request.checkpoint, &issue_stream);
-    let comment_previous = stream_checkpoint(&request.checkpoint, &comment_stream);
+    let now = chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, true);
+    let mut checkpoints = StreamCheckpoints::open(request);
+    let streams = checkpoints.declare(instance_id, &["issue", "comment"], &now);
+    let previous = checkpoints.mark(&streams, "issue");
+    let comment_previous = checkpoints.mark(&streams, "comment");
     let query = match previous.as_deref().and_then(jira_relative_bound) {
         Some(bound) => format!("({jql}) AND updated >= \"{bound}\""),
         None => jql.to_owned(),
@@ -1743,7 +1708,6 @@ async fn poll_jira_inner(request: &AdapterPollRequest) -> Result<AdapterPollResp
         }
     }, |limit| incomplete_poll("Jira", limit)).await?;
 
-    let mut marks = existing_streams(&request.checkpoint);
     let mut events = Vec::new();
     for issue in issues {
         let updated = canonical_poll_timestamp(
@@ -1760,14 +1724,15 @@ async fn poll_jira_inner(request: &AdapterPollRequest) -> Result<AdapterPollResp
         if issue_id.is_empty() || project.is_empty() {
             continue;
         }
-        advance(&mut marks, &issue_stream, &updated);
         let (scope, correlation_key) = jira_routing_identity(
             routing_scope,
             instance_id,
             project.as_str(),
             issue_id.as_str(),
         );
-        events.push(NormalizedAdapterEvent {
+        if !streams.is_seeded("issue") {
+            checkpoints.advance(&streams, "issue", &updated);
+            events.push(NormalizedAdapterEvent {
             source: "jira".into(),
             delivery_id: format!("jira:{instance_id}:issue:{issue_id}:{updated}"),
             event_type: "issue_updated".into(),
@@ -1781,7 +1746,11 @@ async fn poll_jira_inner(request: &AdapterPollRequest) -> Result<AdapterPollResp
                 &request.configuration,
             )
             .into(),
-        });
+            });
+        }
+        if streams.is_seeded("comment") {
+            continue;
+        }
         for comment in issue
             .pointer("/fields/comment/comments")
             .and_then(Value::as_array)
@@ -1800,7 +1769,7 @@ async fn poll_jira_inner(request: &AdapterPollRequest) -> Result<AdapterPollResp
             {
                 continue;
             }
-            advance(&mut marks, &comment_stream, &comment_updated);
+            checkpoints.advance(&streams, "comment", &comment_updated);
             events.push(NormalizedAdapterEvent {
                 source: "jira".into(),
                 delivery_id: format!(
@@ -1824,7 +1793,7 @@ async fn poll_jira_inner(request: &AdapterPollRequest) -> Result<AdapterPollResp
     if request.initialize {
         events.clear();
     }
-    Ok(poll_response(events, stream_checkpoints(marks)))
+    Ok(poll_response(events, checkpoints.into_checkpoint()))
 }
 
 fn decode_body(request: &AdapterRequest, body_limit: usize) -> Result<(Vec<u8>, Value), String> {
@@ -2577,41 +2546,74 @@ mod tests {
         );
     }
 
+    #[tokio::test]
+    async fn a_non_paginating_operation_is_refused_rather_than_walked() {
+        // `Reviews` ignores `page`, so walking it returned ten identical pages, about a thousand
+        // duplicate items, and then a page-budget failure that retained the checkpoint and stalled
+        // the adapter permanently. the refusal costs one request and names the operation.
+        let client = AsyncGitHubClient::cli(None, Duration::from_secs(1), DEFAULT_OUTPUT_LIMIT);
+        let error = github_collect(
+            &client,
+            |_page| GitHubOperation::Reviews {
+                repository: "owner/repo".into(),
+                pull_number: "1".into(),
+            },
+            None,
+            None,
+            github_review_stamp,
+        )
+        .await
+        .expect_err("an unpaginated operation must not be collected");
+        assert!(error.message.contains("Reviews"), "{}", error.message);
+        assert!(error.message.contains("not paginated"), "{}", error.message);
+    }
+
     #[test]
-    fn an_unmarked_stream_is_seeded_rather_than_replayed() {
-        let kinds = [
-            "pull_request",
-            "workflow_run",
-            "check_run",
-            "issue_comment",
-            "pull_request_review",
-        ];
-        // an adapter polling since before reviews and comments were collected keeps its three
-        // marks, so exactly the two new streams are seeded and nothing replays.
-        let established = json!({ "streams": {
-            "1242743236:pull_request": "2026-09-17T07:42:52Z",
-            "1242743236:workflow_run": "2026-09-17T07:42:52Z",
-            "1242743236:check_run": "2026-09-17T07:42:52Z"
-        } });
-        assert_eq!(
-            unmarked_streams(&established, "1242743236", &kinds),
-            std::collections::BTreeSet::from(["issue_comment", "pull_request_review"])
-        );
-        // a different repository in the same adapter shares no marks with this one.
-        assert_eq!(
-            unmarked_streams(&established, "999", &kinds),
-            std::collections::BTreeSet::from(kinds)
-        );
+    fn a_paginated_operation_is_accepted_by_the_collector() {
+        // the guard has to stay honest about the operations the poller actually walks.
+        for operation in [
+            GitHubOperation::PullRequests {
+                repository: "owner/repo".into(),
+                state: "all".into(),
+                head: None,
+                per_page: 100,
+                page: 1,
+            },
+            GitHubOperation::RepositoryIssueComments {
+                repository: "owner/repo".into(),
+                per_page: 100,
+                page: 1,
+            },
+            GitHubOperation::WorkflowRuns {
+                repository: "owner/repo".into(),
+                workflow_id: None,
+                branch: None,
+                event: None,
+                status: None,
+                per_page: Some(100),
+                page: Some(1),
+            },
+            GitHubOperation::CheckRuns {
+                repository: "owner/repo".into(),
+                git_ref: "sha".into(),
+                per_page: Some(100),
+                page: Some(1),
+            },
+            GitHubOperation::Commits {
+                repository: "owner/repo".into(),
+                since: None,
+                per_page: 100,
+                page: 1,
+            },
+        ] {
+            assert!(operation.paginates(), "{} must paginate", operation.name());
+        }
         assert!(
-            unmarked_streams(
-                &json!({ "streams": kinds
-                    .iter()
-                    .map(|kind| (format!("1242743236:{kind}"), "2026-09-17T07:42:52Z"))
-                    .collect::<std::collections::BTreeMap<_, _>>() }),
-                "1242743236",
-                &kinds,
-            )
-            .is_empty()
+            !GitHubOperation::Reviews {
+                repository: "owner/repo".into(),
+                pull_number: "1".into(),
+            }
+            .paginates()
         );
     }
 
@@ -2691,58 +2693,6 @@ mod tests {
                 "liveness must not disclose {leaked}; it is served without authentication"
             );
         }
-    }
-
-    #[test]
-    fn each_stream_keeps_its_own_high_water_mark() {
-        // one shared mark let a busy stream drag the watermark past events a quiet one had not
-        // emitted yet, silently dropping them. the marks must move independently.
-        let mut marks = BTreeMap::new();
-        advance(&mut marks, "7:pull_request", "2026-08-27T10:00:00+00:00");
-        advance(&mut marks, "7:workflow_run", "2026-08-27T12:00:00+00:00");
-        advance(&mut marks, "7:pull_request", "2026-08-27T09:00:00+00:00");
-
-        let checkpoint = stream_checkpoints(marks);
-        assert_eq!(
-            stream_checkpoint(&checkpoint, "7:pull_request").as_deref(),
-            Some("2026-08-27T10:00:00+00:00"),
-            "a later mark on another stream must not drag this one forward, and a mark never moves back"
-        );
-        assert_eq!(
-            stream_checkpoint(&checkpoint, "7:workflow_run").as_deref(),
-            Some("2026-08-27T12:00:00+00:00")
-        );
-        assert_eq!(stream_checkpoint(&checkpoint, "7:check_run"), None);
-    }
-
-    #[test]
-    fn a_quiet_stream_keeps_its_position_across_a_poll() {
-        // rebuilding the map from only the streams that produced events would reset every quiet
-        // stream to a cold start, replaying its whole history on the next poll.
-        let checkpoint = json!({ "streams": { "7:check_run": "2026-08-27T08:00:00+00:00" } });
-        let mut marks = existing_streams(&checkpoint.clone());
-        advance(&mut marks, "7:pull_request", "2026-08-27T10:00:00+00:00");
-
-        let next = stream_checkpoints(marks);
-        assert_eq!(
-            stream_checkpoint(&next, "7:check_run").as_deref(),
-            Some("2026-08-27T08:00:00+00:00")
-        );
-    }
-
-    #[test]
-    fn a_legacy_flat_checkpoint_seeds_every_stream() {
-        // adapters already in flight carry the old single-mark shape; it must keep its position
-        // rather than reading as a cold start.
-        let legacy: Value = json!({ "updated_at": "2026-08-27T08:00:00+00:00" });
-        assert_eq!(
-            stream_checkpoint(&legacy, "7:pull_request").as_deref(),
-            Some("2026-08-27T08:00:00+00:00")
-        );
-        assert_eq!(
-            stream_checkpoint(&legacy, "7:check_run").as_deref(),
-            Some("2026-08-27T08:00:00+00:00")
-        );
     }
 
     #[tokio::test]

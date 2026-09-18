@@ -1,4 +1,9 @@
 use runinator_models::errors::{EngineErrors, ErrorDescriptor};
+pub use runinator_ws_core::errors::{
+    PROFILE_EXPIRED, PROFILE_INTEGRITY, PROFILE_NOT_ADMITTED, PROFILE_NOT_VISIBLE,
+    PROFILE_REVISION_MISSING, PROFILE_ROLE_REFUSED, PROFILE_STORAGE_UNREADABLE,
+    PROFILE_STORAGE_URI, PROFILE_UNDECRYPTABLE,
+};
 pub use runinator_ws_middleware::errors::{RATE_LIMIT_BURST, RATE_LIMIT_QUOTA, RATE_LIMIT_RPS};
 
 // numbered error dictionary for the web service HTTP surface (RUNI17x). the pack-import, debug,
@@ -78,6 +83,15 @@ pub const DICTIONARY: &[ErrorDescriptor] = &[
     RATE_LIMIT_RPS,
     RATE_LIMIT_BURST,
     RATE_LIMIT_QUOTA,
+    PROFILE_ROLE_REFUSED,
+    PROFILE_NOT_ADMITTED,
+    PROFILE_NOT_VISIBLE,
+    PROFILE_EXPIRED,
+    PROFILE_REVISION_MISSING,
+    PROFILE_STORAGE_UNREADABLE,
+    PROFILE_UNDECRYPTABLE,
+    PROFILE_INTEGRITY,
+    PROFILE_STORAGE_URI,
 ];
 
 /// web service engine error dictionary.

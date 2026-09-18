@@ -292,6 +292,16 @@ pub trait OrchestrationStore: super::super::AdapterControlStore + Send + Sync + 
         now: DateTime<Utc>,
     ) -> impl Future<Output = Result<bool, SendableError>> + Send;
 
+    /// pushes the next poll out without releasing the claim, for an attempt that has been handed
+    /// to a worker and will settle later. without it a dispatched adapter keeps `next_poll_at` in
+    /// the past and re-claims as soon as its lease lapses, whether or not a worker ever answered.
+    fn defer_orchestration_adapter_poll(
+        &self,
+        adapter_id: Uuid,
+        instance_id: String,
+        next_poll_at: DateTime<Utc>,
+    ) -> impl Future<Output = Result<bool, SendableError>> + Send;
+
     fn complete_orchestration_adapter_poll(
         &self,
         adapter_id: Uuid,

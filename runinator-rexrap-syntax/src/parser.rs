@@ -32,13 +32,28 @@ fn require_active<'a>(
     })
 }
 
+/// Turn a pest failure into a positioned REXRAP001.
+///
+/// pest reports where it stopped; carrying that through is what lets the caret renderer and the
+/// LSP point at the offending token rather than squiggling the whole file, which is what the one
+/// diagnostic authors hit most used to do.
+fn pest_parse_error(src: &str, err: pest::error::Error<Rule>) -> RexRapError {
+    let span = match err.location {
+        pest::error::InputLocation::Pos(start) => {
+            Span::new(start, (start + 1).min(src.len().max(start + 1)))
+        }
+        pest::error::InputLocation::Span((start, end)) => Span::new(start, end),
+    };
+    RexRapError::parse_at(span, err.to_string())
+}
+
 /// Parse a RexRap source document into an AST.
 pub fn parse_document(src: &str) -> Result<Document, RexRapError> {
     let mut pairs = RexRapParser::parse(Rule::document, src)
-        .map_err(|err| RexRapError::Parse(err.to_string()))?;
+        .map_err(|err| pest_parse_error(src, err))?;
     let document = pairs
         .next()
-        .ok_or_else(|| RexRapError::Parse("empty input".into()))?;
+        .ok_or_else(|| RexRapError::parse("empty input"))?;
     let mut functions = Vec::new();
     let mut modules = Vec::new();
     let mut workflows = Vec::new();
@@ -232,8 +247,8 @@ pub fn parse_document(src: &str) -> Result<Document, RexRapError> {
         workflows.push(workflow);
     }
     if workflows.is_empty() && modules.is_empty() {
-        return Err(RexRapError::Parse(
-            "missing workflow or source module".into(),
+        return Err(RexRapError::parse(
+            "missing workflow or source module",
         ));
     }
     let mut document = Document {
@@ -281,10 +296,10 @@ fn parse_source_module(pair: Pair<Rule>) -> Result<SourceModule, RexRapError> {
 
 pub fn parse_console_module(src: &str) -> Result<ConsoleModule, RexRapError> {
     let mut pairs = RexRapParser::parse(Rule::console_module_document, src)
-        .map_err(|err| RexRapError::Parse(err.to_string()))?;
+        .map_err(|err| pest_parse_error(src, err))?;
     let module = pairs
         .next()
-        .ok_or_else(|| RexRapError::Parse("empty input".into()))?;
+        .ok_or_else(|| RexRapError::parse("empty input"))?;
     let mut language_header = false;
     let mut functions = Vec::new();
     let mut run_block_span = None;
@@ -310,7 +325,7 @@ pub fn parse_console_module(src: &str) -> Result<ConsoleModule, RexRapError> {
         }
     }
     if functions.is_empty() && run_block_span.is_none() {
-        return Err(RexRapError::Parse("missing console module content".into()));
+        return Err(RexRapError::parse("missing console module content"));
     }
     Ok(ConsoleModule {
         language_header,
@@ -325,7 +340,7 @@ pub fn parse_expression_fragment(src: &str) -> Result<Expr, RexRapError> {
     let expr = pair
         .into_inner()
         .find(|inner| inner.as_rule() == Rule::expr)
-        .ok_or_else(|| RexRapError::Parse("missing expression".into()))?;
+        .ok_or_else(|| RexRapError::parse("missing expression"))?;
     parse_expr(expr)
 }
 
@@ -335,7 +350,7 @@ pub fn parse_condition_fragment(src: &str) -> Result<Cond, RexRapError> {
     let cond = pair
         .into_inner()
         .find(|inner| inner.as_rule() == Rule::cond)
-        .ok_or_else(|| RexRapError::Parse("missing condition".into()))?;
+        .ok_or_else(|| RexRapError::parse("missing condition"))?;
     parse_cond(cond)
 }
 
@@ -345,15 +360,15 @@ pub fn parse_do_fragment(src: &str) -> Result<Vec<ComputeLine>, RexRapError> {
     let block = pair
         .into_inner()
         .find(|inner| inner.as_rule() == Rule::compute_block)
-        .ok_or_else(|| RexRapError::Parse("missing compute block".into()))?;
+        .ok_or_else(|| RexRapError::parse("missing compute block"))?;
     parse_compute_block(block)
 }
 
 fn parse_fragment_rule(src: &str, rule: Rule) -> Result<Pair<'_, Rule>, RexRapError> {
     RexRapParser::parse(rule, src)
-        .map_err(|err| RexRapError::Parse(err.to_string()))?
+        .map_err(|err| pest_parse_error(src, err))?
         .next()
-        .ok_or_else(|| RexRapError::Parse("empty input".into()))
+        .ok_or_else(|| RexRapError::parse("empty input"))
 }
 
 fn parse_func_def(pair: Pair<Rule>) -> Result<FunctionDef, RexRapError> {
@@ -489,10 +504,10 @@ fn span_of(pair: &Pair<Rule>) -> Span {
 /// parse a `.rexraps` secrets/config document into its declarations.
 pub fn parse_settings_document(src: &str) -> Result<SettingsDocument, RexRapError> {
     let mut pairs = RexRapParser::parse(Rule::secrets_document, src)
-        .map_err(|err| RexRapError::Parse(err.to_string()))?;
+        .map_err(|err| pest_parse_error(src, err))?;
     let document = pairs
         .next()
-        .ok_or_else(|| RexRapError::Parse("empty input".into()))?;
+        .ok_or_else(|| RexRapError::parse("empty input"))?;
     let mut document_out = SettingsDocument::default();
     for inner in document.into_inner() {
         if inner.as_rule() != Rule::setting_item {
@@ -592,10 +607,10 @@ fn parse_profile_decl(pair: Pair<Rule>) -> Result<ProfileDecl, RexRapError> {
 
 pub fn parse_pipeline_document(src: &str) -> Result<Vec<PipelineDecl>, RexRapError> {
     let mut pairs = RexRapParser::parse(Rule::pipeline_document, src)
-        .map_err(|err| RexRapError::Parse(err.to_string()))?;
+        .map_err(|err| pest_parse_error(src, err))?;
     let document = pairs
         .next()
-        .ok_or_else(|| RexRapError::Parse("empty input".into()))?;
+        .ok_or_else(|| RexRapError::parse("empty input"))?;
     let mut decls = Vec::new();
     for inner in document.into_inner() {
         if inner.as_rule() == Rule::pipeline_decl {

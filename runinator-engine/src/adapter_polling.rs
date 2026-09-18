@@ -28,7 +28,7 @@ use crate::{
 /// A claim must outlive the worst case for the poll it covers: the adapter-host request budget
 /// plus ingesting the batch it returns. A claim is taken immediately before its poll starts, so
 /// this is measured from the right instant rather than from the head of a batch.
-const LEASE_SECONDS: i64 = 300;
+pub const LEASE_SECONDS: i64 = 300;
 
 /// How many adapters one pass will service before returning to the top of the loop. This bounds
 /// how long a shutdown waits, not how many adapters can exist.
@@ -86,6 +86,9 @@ async fn poll_one<T: BackgroundEngineStore>(
             request: poll_request,
             claim_owner: instance.into(),
             dry_run: false,
+            deadline_at: status
+                .claimed_until
+                .unwrap_or_else(|| Utc::now() + TimeDelta::seconds(LEASE_SECONDS)),
         },
     )
     .await
@@ -94,6 +97,22 @@ async fn poll_one<T: BackgroundEngineStore>(
         revision.authentication,
         AdapterAuthentication::ExecutionProfile { .. }
     ) {
+        // the poll itself runs on a worker and settles through the effect-result path, so nothing
+        // more happens here. the schedule still has to move: leaving `next_poll_at` in the past
+        // meant a profile-backed adapter with no matching worker re-claimed on every lease lapse,
+        // wrote a fresh dispatch each time, and reported neither an error nor a later poll.
+        let deferred = Utc::now() + TimeDelta::seconds(interval_seconds(&revision.configuration));
+        if let Err(error) = store
+            .defer_orchestration_adapter_poll(adapter.id, instance.into(), deferred)
+            .await
+        {
+            warn!(adapter_id = %adapter.id, "failed to defer a dispatched adapter poll: {error}");
+        }
+        debug!(
+            adapter_id = %adapter.id,
+            dispatch_id = %attempt_id,
+            "adapter poll dispatched to a worker; next poll deferred to {deferred}"
+        );
         return Ok(BatchSummary::default());
     }
     let secret_bindings = revision
@@ -240,6 +259,29 @@ async fn finish_poll_response<T: BackgroundEngineStore>(
                 .clamp(MIN_INTERVAL_SECONDS, MAX_INTERVAL_SECONDS),
         });
     }
+    // a host that implements a different version of the kind than the revision pinned produces a
+    // batch whose shape nobody here validated: the events it omits look exactly like a quiet
+    // source. reject the batch and say so, rather than recording a short poll as a successful one.
+    // a host old enough to report no version at all is left alone, since it cannot be distinguished
+    // from one that matches.
+    if let Some(host_kind_version) = response.kind_version.as_deref()
+        && host_kind_version != revision.kind_version
+    {
+        return Err(PollFailure {
+            message: format!(
+                "adapter host implements {} version {host_kind_version}, but this adapter pinned version {} (host build {})",
+                adapter.kind,
+                revision.kind_version,
+                response.host_version.as_deref().unwrap_or("unknown"),
+            ),
+            retry_after_seconds: MAX_INTERVAL_SECONDS,
+        });
+    }
+    debug!(
+        adapter_id = %adapter.id,
+        host_version = response.host_version.as_deref().unwrap_or("unknown"),
+        "adapter poll answered"
+    );
     let mut summary = BatchSummary::default();
     for event in response.events {
         adapters
@@ -358,6 +400,7 @@ pub async fn create_poll_attempt<
         mut request,
         claim_owner,
         dry_run,
+        deadline_at,
     } = input;
     let (profile, required_labels, required_scopes) = match &revision.authentication {
         AdapterAuthentication::ExecutionProfile {
@@ -436,7 +479,7 @@ pub async fn create_poll_attempt<
             command,
             state: state.into(),
             dry_run,
-            deadline_at: now + TimeDelta::seconds(LEASE_SECONDS),
+            deadline_at,
             created_at: now,
             updated_at: now,
         })

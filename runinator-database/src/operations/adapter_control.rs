@@ -368,7 +368,11 @@ where
         Ok(())
     }
     async fn expire_adapter_poll_attempts(&self, now: DateTime<Utc>) -> Result<(), SendableError> {
-        sqlx::query(&self.render("UPDATE orchestration_adapter_polls SET last_error = 'poll attempt expired before worker completion', claimed_by = NULL, claimed_until = NULL WHERE claimed_until <= ? AND claimed_by IN (SELECT claim_owner FROM orchestration_adapter_poll_dispatches WHERE dry_run = ? AND state NOT IN ('succeeded', 'failed', 'expired') AND deadline_at <= ?)"))
+        // matched by adapter rather than by claim owner: the owner recorded on the poll row is
+        // whoever claimed it last, so an attempt that expired after the row was re-claimed left the
+        // subquery matching nothing and the adapter reporting no error at all. an expired
+        // `claimed_until` already means no live poll owns the row, so identity adds nothing.
+        sqlx::query(&self.render("UPDATE orchestration_adapter_polls SET last_error = 'poll attempt expired before worker completion', claimed_by = NULL, claimed_until = NULL WHERE claimed_until <= ? AND adapter_id IN (SELECT adapter_id FROM orchestration_adapter_poll_dispatches WHERE dry_run = ? AND state NOT IN ('succeeded', 'failed', 'expired') AND deadline_at <= ?)"))
             .bind(now.timestamp()).bind(false).bind(now.timestamp()).execute(self.pool()).await?;
         sqlx::query(&self.render("UPDATE orchestration_adapter_poll_dispatches SET state = 'expired', last_error = 'poll attempt expired before worker completion', updated_at = ? WHERE deadline_at <= ? AND state NOT IN ('succeeded', 'failed', 'expired')"))
             .bind(now.timestamp()).bind(now.timestamp()).execute(self.pool()).await?;

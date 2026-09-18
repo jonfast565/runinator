@@ -144,6 +144,7 @@ mod nodes;
 mod orgs;
 mod status;
 mod workflows;
+pub(crate) use workflows::rexrap;
 pub use workflows::workflows_test;
 mod approvals;
 mod artifacts;

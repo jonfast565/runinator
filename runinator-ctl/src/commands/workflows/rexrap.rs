@@ -79,9 +79,16 @@ pub(crate) fn rexrap(command: &RexRapCommands, json_output: bool) -> Result<()> 
         }
         RexRapCommands::Check { file, typing } => {
             let source = fs::read_to_string(file)?;
-            let workflow_source = runinator_rexrap::parse_rrx_blocks(&source)
-                .map_err(|e| err(e.render(&source)))?
-                .workflows;
+            let blocks =
+                runinator_rexrap::parse_rrx_blocks(&source).map_err(|e| err(e.render(&source)))?;
+            // the pipelines block used to be read only by `workflows apply`, so a well-braced but
+            // invalid pipeline passed every offline check and was refused by the server. a green
+            // check a later step rejects is worse than no check.
+            if !blocks.pipelines.trim().is_empty() {
+                runinator_pack::source::compile_pipeline_block(file, &blocks.pipelines)
+                    .map_err(|e| err(e.to_string()))?;
+            }
+            let workflow_source = blocks.workflows;
             // analyze first so every error and warning is reported, not just the first.
             let providers = runinator_provider_catalog::metadata();
             let type_policy = (*typing).into();

@@ -34,6 +34,16 @@ pub struct AdapterKindMetadata {
     /// Configuration keys whose values form the adapter's durable identity.
     #[serde(default)]
     pub identity_fields: Vec<String>,
+    /// The shape of the `scope` this kind stamps on the events it emits, with `{placeholder}`
+    /// standing for a value taken from the adapter's configuration or its payload — GitHub emits
+    /// `github:repository:{repository_id}`, Jira emits `{routing_scope}`.
+    ///
+    /// It exists so an ingress scope can be checked against what any installed kind could actually
+    /// produce. An unreachable scope is otherwise accepted, stored, hashed into the revision
+    /// digest, and silently never matched: the workflow simply never starts, with nothing anywhere
+    /// saying why.
+    #[serde(default)]
+    pub scope_template: Option<String>,
     /// Human-readable provider setup steps. The command center renders these verbatim so dynamic
     /// adapter kinds can explain their installation without frontend-specific branching.
     #[serde(default)]

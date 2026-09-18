@@ -74,6 +74,46 @@ async fn audit<T: AuthorizationStore>(
     .await;
 }
 
+/// Refuse a bundle fetch, naming the rule that refused it.
+///
+/// The body stays the same vague sentence for every cause: the caller has not proved it may know
+/// whether this profile exists, so the response must not distinguish "no such profile" from "not
+/// yours" from "disabled". The cost used to be that nobody else could distinguish them either —
+/// nine causes, one sentence, and `audit()` ran only on success, so a refusal left no record at
+/// all. The descriptor goes to the log and the audit trail; the caller still learns nothing.
+async fn refuse_bundle<T: AuthorizationStore>(
+    db: &T,
+    ctx: &AuthContext,
+    id: Uuid,
+    revision: i64,
+    cause: runinator_models::errors::ErrorDescriptor,
+    status: StatusCode,
+    body: &'static str,
+) -> Response {
+    log::warn!(
+        "execution profile bundle refused for {id} revision {revision}: {} - {}",
+        cause.code,
+        cause.summary
+    );
+    runinator_engine::audit::record_audit(
+        db,
+        runinator_engine::audit::AuditEntry::new(
+            ctx.principal_id,
+            ctx.actor_kind(),
+            "execution_profile.retrieve_denied",
+            runinator_engine::audit::AuditOutcome::Denied,
+            Some("execution_profile"),
+            Some(id),
+            Some(&format!(
+                "revision={revision} code={} reason={}",
+                cause.code, cause.key
+            )),
+        ),
+    )
+    .await;
+    (status, body).into_response()
+}
+
 #[derive(Debug, Deserialize)]
 pub struct ProfileLookup {
     pub name: Option<String>,
@@ -239,7 +279,8 @@ pub async fn report_agent_status<T: AuthorizationStore + ExecutionProfileStore>(
     };
     let profile = match service.fetch(id).await {
         Ok(Some(profile))
-            if profile.org_id == ctx.org_id && profile.config_digest == request.config_digest =>
+            if ctx.visible_for_write(profile.org_id)
+                && profile.config_digest == request.config_digest =>
         {
             profile
         }
@@ -290,7 +331,7 @@ pub async fn claim_operation<T: AuthorizationStore + ExecutionProfileStore>(
         return not_found("execution profile operation not found");
     }
     let profile = match service.fetch(operation.profile_id).await {
-        Ok(Some(profile)) if profile.org_id == ctx.org_id => effective_health(profile),
+        Ok(Some(profile)) if ctx.visible_for_read(profile.org_id) => effective_health(profile),
         Ok(_) => return not_found("execution profile operation not found"),
         Err(error) => return api_error(error.to_string()),
     };
@@ -380,7 +421,7 @@ pub async fn get_profile<
     // active. this mirrors the same rule in `content`; another organization's profile remains
     // invisible, and the authorization checks above still gate non-system callers.
     match service.fetch(id).await {
-        Ok(Some(value)) if value.org_id.is_none() || value.org_id == ctx.org_id => (
+        Ok(Some(value)) if ctx.visible_for_read(value.org_id) => (
             StatusCode::OK,
             Json(ApiResponse::ExecutionProfile(effective_health(value))),
         ),
@@ -512,7 +553,7 @@ pub async fn publish<T: AuthorizationStore + ExecutionProfileStore>(
         return bad_request("execution profile bundle exceeds 10 MiB");
     }
     let profile = match service.fetch(id).await {
-        Ok(Some(value)) if value.org_id == ctx.org_id && value.enabled => value,
+        Ok(Some(value)) if ctx.visible_for_write(value.org_id) && value.enabled => value,
         Ok(_) => return not_found("execution profile not found"),
         Err(error) => return api_error(error.to_string()),
     };
@@ -641,14 +682,33 @@ pub async fn content<
     // performs. `get_profile` already admits both roles, so refusing the bundle here left a desktop
     // worker able to read a profile it could never use. admission is unchanged: every caller must
     // still pass `consumer_admitted_profile` below.
+    const MISSING: &str = "execution profile bundle not found";
     if ctx
         .require_system_role(&[SystemRole::Worker, SystemRole::Agent])
         .is_err()
     {
-        return (StatusCode::NOT_FOUND, "execution profile bundle not found").into_response();
+        return refuse_bundle(
+            db.as_ref(),
+            &ctx,
+            id,
+            revision,
+            runinator_ws_core::errors::PROFILE_ROLE_REFUSED,
+            StatusCode::NOT_FOUND,
+            MISSING,
+        )
+        .await;
     }
     if !consumer_admitted_profile(service.as_ref(), db.as_ref(), &query, id).await {
-        return (StatusCode::NOT_FOUND, "execution profile bundle not found").into_response();
+        return refuse_bundle(
+            db.as_ref(),
+            &ctx,
+            id,
+            revision,
+            runinator_ws_core::errors::PROFILE_NOT_ADMITTED,
+            StatusCode::NOT_FOUND,
+            MISSING,
+        )
+        .await;
     }
     // a platform-scoped profile (`org_id` is `None`) is deployment-wide shared infrastructure, so a
     // worker running an organization's effect can still fetch its bundle. an orchestration adapter
@@ -657,54 +717,118 @@ pub async fn content<
     // profile, both checked above. another organization's profile remains invisible.
     let profile = match service.fetch(id).await {
         Ok(Some(value))
-            if (value.org_id.is_none() || value.org_id == ctx.org_id)
+            if ctx.visible_for_read(value.org_id)
                 && value.enabled
                 && value.current_revision == Some(revision) =>
         {
             value
         }
-        _ => return (StatusCode::NOT_FOUND, "execution profile bundle not found").into_response(),
+        _ => {
+            return refuse_bundle(
+                db.as_ref(),
+                &ctx,
+                id,
+                revision,
+                runinator_ws_core::errors::PROFILE_NOT_VISIBLE,
+                StatusCode::NOT_FOUND,
+                MISSING,
+            )
+            .await;
+        }
     };
     if profile
         .expires_at
         .is_some_and(|expiry| expiry <= Utc::now())
     {
-        return (StatusCode::GONE, "execution profile has expired").into_response();
+        return refuse_bundle(
+            db.as_ref(),
+            &ctx,
+            id,
+            revision,
+            runinator_ws_core::errors::PROFILE_EXPIRED,
+            StatusCode::GONE,
+            "execution profile has expired",
+        )
+        .await;
     }
     let stored = match service.fetch_revision(id, revision).await {
         Ok(Some(value)) => value,
-        _ => return (StatusCode::NOT_FOUND, "execution profile bundle not found").into_response(),
+        _ => {
+            return refuse_bundle(
+                db.as_ref(),
+                &ctx,
+                id,
+                revision,
+                runinator_ws_core::errors::PROFILE_REVISION_MISSING,
+                StatusCode::NOT_FOUND,
+                MISSING,
+            )
+            .await;
+        }
     };
     let Some((bucket, key)) = parse_blob_uri(&stored.uri) else {
-        return (
+        return refuse_bundle(
+            db.as_ref(),
+            &ctx,
+            id,
+            revision,
+            runinator_ws_core::errors::PROFILE_STORAGE_URI,
             StatusCode::INTERNAL_SERVER_ERROR,
             "invalid bundle storage URI",
         )
-            .into_response();
+        .await;
     };
     let mut reader = match blobs.open(&bucket, &key, None).await {
         Ok(value) => value.body,
         Err(_) => {
-            return (StatusCode::NOT_FOUND, "execution profile bundle not found").into_response();
+            return refuse_bundle(
+                db.as_ref(),
+                &ctx,
+                id,
+                revision,
+                runinator_ws_core::errors::PROFILE_STORAGE_UNREADABLE,
+                StatusCode::NOT_FOUND,
+                MISSING,
+            )
+            .await;
         }
     };
     let mut ciphertext = Vec::new();
     if reader.read_to_end(&mut ciphertext).await.is_err() {
-        return (StatusCode::INTERNAL_SERVER_ERROR, "failed to read bundle").into_response();
+        return refuse_bundle(
+            db.as_ref(),
+            &ctx,
+            id,
+            revision,
+            runinator_ws_core::errors::PROFILE_STORAGE_UNREADABLE,
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "failed to read bundle",
+        )
+        .await;
     }
     let Some(plaintext) = SecretCipher::from_env().try_decrypt(&ciphertext) else {
-        return (
+        return refuse_bundle(
+            db.as_ref(),
+            &ctx,
+            id,
+            revision,
+            runinator_ws_core::errors::PROFILE_UNDECRYPTABLE,
             StatusCode::INTERNAL_SERVER_ERROR,
             "failed to decrypt bundle",
         )
-            .into_response();
+        .await;
     };
     if sha256_hex(&plaintext) != stored.digest {
-        return (
+        return refuse_bundle(
+            db.as_ref(),
+            &ctx,
+            id,
+            revision,
+            runinator_ws_core::errors::PROFILE_INTEGRITY,
             StatusCode::INTERNAL_SERVER_ERROR,
             "bundle integrity check failed",
         )
-            .into_response();
+        .await;
     }
     audit(
         db.as_ref(),
@@ -744,7 +868,7 @@ pub async fn remove<
         return reply.into_reply();
     }
     let profile = match service.fetch(id).await {
-        Ok(Some(profile)) if profile.org_id == ctx.org_id => profile,
+        Ok(Some(profile)) if ctx.visible_for_write(profile.org_id) => profile,
         Ok(_) => return not_found("execution profile not found"),
         Err(error) => return api_error(error.to_string()),
     };
@@ -835,7 +959,7 @@ pub async fn rotate<T: AuthorizationStore + ExecutionProfileStore>(
         return reply.into_reply();
     }
     let profile = match service.fetch(id).await {
-        Ok(Some(profile)) if profile.org_id == ctx.org_id && profile.enabled => profile,
+        Ok(Some(profile)) if ctx.visible_for_write(profile.org_id) && profile.enabled => profile,
         Ok(_) => return not_found("enabled execution profile not found"),
         Err(error) => return api_error(error.to_string()),
     };
@@ -883,7 +1007,7 @@ pub async fn test_collection<T: AuthorizationStore + ExecutionProfileStore>(
         return reply.into_reply();
     }
     let profile = match service.fetch(id).await {
-        Ok(Some(profile)) if profile.org_id == ctx.org_id && profile.enabled => profile,
+        Ok(Some(profile)) if ctx.visible_for_write(profile.org_id) && profile.enabled => profile,
         Ok(_) => return not_found("enabled execution profile not found"),
         Err(error) => return api_error(error.to_string()),
     };
@@ -976,7 +1100,7 @@ pub async fn report_status<T: AuthorizationStore + ExecutionProfileStore>(
         return not_found("execution profile not found");
     }
     let profile = match service.fetch(id).await {
-        Ok(Some(profile)) if profile.org_id == ctx.org_id && profile.enabled => profile,
+        Ok(Some(profile)) if ctx.visible_for_write(profile.org_id) && profile.enabled => profile,
         Ok(_) => return not_found("execution profile not found"),
         Err(error) => return api_error(error.to_string()),
     };
