@@ -127,6 +127,12 @@ service crate, stop and redesign the boundary.
 - `runinator-github` and `runinator-jira` own typed third-party API calls, endpoint construction,
   response decoding, and client errors. Providers map those results into actions; adapters map them
   into inbound events. Do not construct GitHub or Jira requests in provider or adapter crates.
+- When adding a new external service, first create a purpose-named internal client crate that owns
+  its typed operations, authentication, endpoint construction, transport, response decoding, and
+  error dictionary. Expose blocking and async clients over the same operation contract, then use
+  that crate from every provider, adapter, and other consumer. Implement pagination or polling with
+  the generic `runinator-provider-support::polling` helpers over a supplied fetch function; do not
+  duplicate service-specific calling or polling loops in consumers.
 - Prefer one purpose-named context or request object when an operation needs several related inputs.
   Do not retain a long positional parameter list merely to avoid introducing a small domain type.
 
