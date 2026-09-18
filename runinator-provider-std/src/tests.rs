@@ -689,6 +689,12 @@ fn installed_language_runners_return_json() {
     ];
 
     for (language, executable, source) in cases {
+        // an interpreter that is not installed is not a contract violation. the compiled and shell
+        // runners above skip the same way, so this test stays meaningful on a machine that carries
+        // only some of the runtimes instead of failing on the first absent one.
+        if Command::new(executable).arg("--version").output().is_err() {
+            continue;
+        }
         assert_eq!(
             run_installed_language_contract(language, executable, source),
             json!({ "answer": 42 }),
