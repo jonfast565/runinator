@@ -40,6 +40,15 @@ fn lists_console_verbs_and_every_command_line_leaf() {
     assert!(names.contains(&"ingress dead-letters list".to_string()));
     assert!(names.contains(&"audit list".to_string()));
     assert!(names.contains(&"records events".to_string()));
+    assert!(names.contains(&"account sessions revoke-others".to_string()));
+    assert!(names.contains(&"admin users update".to_string()));
+    assert!(names.contains(&"admin api-keys rotate".to_string()));
+    assert!(names.contains(&"access grants grant".to_string()));
+    assert!(names.contains(&"orgs members update".to_string()));
+    assert!(names.contains(&"billing update-ai".to_string()));
+    assert!(names.contains(&"catalog node-kinds".to_string()));
+    assert!(names.contains(&"workflows transitions".to_string()));
+    assert!(names.contains(&"pipelines triggers apply".to_string()));
     assert!(entry("workspaces export").usage.contains("--filesystem"));
     assert!(entry("workspaces ls").usage.contains("--cursor"));
     assert!(names.contains(&"replicas list".to_string()));
@@ -124,4 +133,31 @@ fn every_console_verb_is_explained() {
             meta.path
         );
     }
+}
+
+#[test]
+fn command_center_parity_manifest_only_names_real_commands() {
+    let manifest: serde_json::Value =
+        serde_json::from_str(include_str!("../../parity/command-center.json"))
+            .expect("valid parity manifest");
+    let command_names = catalog()
+        .iter()
+        .map(CommandEntry::name)
+        .collect::<std::collections::HashSet<_>>();
+    let mappings = manifest["mappings"].as_array().expect("mapping array");
+    assert!(!mappings.is_empty());
+    for mapping in mappings {
+        let operation = mapping["operation"].as_str().expect("operation");
+        let command = mapping["command"].as_str().expect("command");
+        assert!(
+            command_names.contains(command),
+            "{operation} maps to missing command '{command}'"
+        );
+    }
+    assert!(
+        manifest["exclusions"]
+            .as_array()
+            .is_some_and(|items| !items.is_empty()),
+        "intentional exclusions remain explicit"
+    );
 }

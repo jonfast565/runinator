@@ -80,7 +80,7 @@ use runinator_models::{
         WorkflowBundle, WorkflowDefinition, WorkflowRun, WorkflowSimulateRequest, WorkflowStatus,
         WorkflowTrigger,
     },
-    workspaces::WorkspaceLease,
+    workspaces::{WorkspaceDownload, WorkspaceDownloadRequest, WorkspaceLease},
 };
 use runinator_platform::env;
 use serde::de::DeserializeOwned;

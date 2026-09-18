@@ -39,6 +39,7 @@ runinatorctl triggers delete TRIGGER_UUID
 runinatorctl freeze update WINDOW_UUID freeze-window.json
 runinatorctl freeze calendar subscribe --scope organization --org-id ORG_UUID
 runinatorctl freeze calendar unsubscribe SUBSCRIPTION_UUID
+runinatorctl freeze calendar url SUBSCRIPTION_TOKEN
 runinatorctl freeze calendar download --output schedule.ics --scope user
 ```
 
@@ -54,6 +55,7 @@ runinatorctl files archive FILE_UUID
 runinatorctl artifacts download --effect EFFECT_UUID --event EVENT_UUID --output artifact.bin
 runinatorctl workspaces delete WORKSPACE_UUID --version 3
 runinatorctl workspaces delete WORKSPACE_UUID
+runinatorctl workspaces download-object WORKSPACE_UUID 3 reports/final.pdf --output final.pdf
 
 runinatorctl notebooks sessions list
 runinatorctl notebooks sessions create investigation
@@ -114,3 +116,68 @@ runinatorctl records events
 
 Ingress decisions and orchestration operation resolutions remain subject to backend resource
 authorization. The CLI does not infer administrative access or bypass held-record state checks.
+
+## Accounts, authorization, and platform administration
+
+Sensitive mutations read JSON from files so passwords and generated-key inputs do not appear in
+shell history or process listings.
+
+```sh
+runinatorctl account show
+runinatorctl account update profile.json
+runinatorctl account password password-change.json
+runinatorctl account sessions list
+runinatorctl account sessions revoke SESSION_UUID
+runinatorctl account sessions revoke-others
+runinatorctl account keys scopes
+runinatorctl account keys create personal-key.json
+
+runinatorctl admin users create user.json
+runinatorctl admin users update USER_UUID user-update.json
+runinatorctl admin teams add-member TEAM_UUID USER_UUID operator
+runinatorctl admin api-keys create service-key.json
+runinatorctl admin api-keys rotate KEY_UUID
+runinatorctl admin auth-settings apply auth-settings.json
+runinatorctl admin server-settings apply server-settings.json
+runinatorctl admin runtimes apply python python-runtime.json
+```
+
+Generic authorization commands work across every owned resource type supported by the server:
+
+```sh
+runinatorctl access grants list workflow WORKFLOW_UUID
+runinatorctl access grants grant workflow WORKFLOW_UUID team TEAM_UUID run
+runinatorctl access grants revoke workflow WORKFLOW_UUID GRANT_UUID
+runinatorctl access owner show pipeline PIPELINE_UUID
+runinatorctl access owner transfer pipeline PIPELINE_UUID organization --scope-id ORG_UUID
+```
+
+Organization and billing administration is also scriptable:
+
+```sh
+runinatorctl orgs all
+runinatorctl orgs members add ORG_UUID USER_UUID member
+runinatorctl orgs quota ORG_UUID
+runinatorctl billing rate-card
+runinatorctl billing update-ai ai-rates.json
+```
+
+## Analytics, pipeline triggers, and catalogs
+
+```sh
+runinatorctl workflows usage WORKFLOW_UUID --since 2026-09-01T00:00:00Z
+runinatorctl workflows transitions WORKFLOW_UUID publish
+runinatorctl runs usage RUN_UUID
+runinatorctl pipelines owner set PIPELINE_UUID --org ORG_UUID
+runinatorctl pipelines triggers list PIPELINE_UUID
+runinatorctl pipelines triggers apply PIPELINE_UUID trigger.json
+runinatorctl pipelines ingress-status github:repository:1 pr:42
+runinatorctl pipelines ingress-timeline github:repository:1 pr:42
+runinatorctl catalog node-kinds
+runinatorctl catalog trigger-kinds
+runinatorctl catalog enums
+```
+
+The machine-readable parity contract lives at
+`runinator-ctl-core/parity/command-center.json`. A command-catalog test fails when a mapped command
+is removed or renamed; visual and data-plane exclusions are recorded beside the mappings.

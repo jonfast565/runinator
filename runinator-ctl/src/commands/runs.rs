@@ -68,6 +68,13 @@ pub(super) async fn runs(client: &Client, command: &RunCommands, json_output: bo
                 .await;
             }
         }
+        RunCommands::Usage { id } => {
+            let value = client.fetch_run_ai_usage(*id).await?;
+            if json_output {
+                return output::json(&value);
+            }
+            print!("{}", output::value_table(&value)?);
+        }
         RunCommands::Logs { effect_id } => {
             let chunks = client.fetch_workflow_effect_output(*effect_id).await?;
             if json_output {

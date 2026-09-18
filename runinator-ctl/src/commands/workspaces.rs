@@ -100,6 +100,34 @@ pub(super) async fn run(client: &Client, command: &WorkspaceCommands) -> Result<
             let _ = tokio::fs::remove_file(temporary).await;
             result
         }
+        WorkspaceCommands::DownloadObject {
+            workspace,
+            version,
+            path,
+            result,
+            output: destination,
+        } => {
+            let bytes = client
+                .download_workspace_object(*workspace, *version, path, *result)
+                .await?;
+            let temporary = destination.with_extension(format!("{}.partial", Uuid::new_v4()));
+            let result = async {
+                use tokio::io::AsyncWriteExt;
+                let mut file = tokio::fs::OpenOptions::new()
+                    .create_new(true)
+                    .write(true)
+                    .open(&temporary)
+                    .await?;
+                file.write_all(&bytes).await?;
+                file.sync_all().await?;
+                drop(file);
+                tokio::fs::hard_link(&temporary, destination).await?;
+                Ok::<_, Box<dyn Error + Send + Sync>>(())
+            }
+            .await;
+            let _ = tokio::fs::remove_file(temporary).await;
+            result
+        }
         WorkspaceCommands::Delete { workspace, version } => {
             client
                 .delete_durable_workspace(*workspace, *version)

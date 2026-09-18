@@ -2,7 +2,9 @@ use super::*;
 
 use runinator_models::pipelines::{Pipeline, PipelineRun};
 
-use runinator_ctl_core::cli::{CliTimelineFormat, PipelineCommands};
+use runinator_ctl_core::cli::{
+    CliTimelineFormat, PipelineCommands, PipelineOwnerCommands, PipelineTriggerCommands,
+};
 
 /// how often a followed pipeline run is re-read.
 const FOLLOW_INTERVAL: Duration = Duration::from_secs(2);
@@ -29,6 +31,58 @@ pub(super) async fn pipelines(
             }
             print_pipeline(&pipeline);
             Ok(())
+        }
+        PipelineCommands::Owner { command } => {
+            let (reference, org) = match command {
+                PipelineOwnerCommands::Show { pipeline } => (pipeline, None),
+                PipelineOwnerCommands::Set { pipeline, org } => (pipeline, Some(*org)),
+            };
+            let pipeline = resolve_pipeline(client, reference).await?;
+            let id = pipeline_id(&pipeline)?;
+            let value = match org {
+                None => client.fetch_resource_owner("pipeline", id).await?,
+                Some(org) => {
+                    client
+                        .transfer_resource_owner(
+                            "pipeline",
+                            id,
+                            if org.is_some() {
+                                "organization"
+                            } else {
+                                "platform"
+                            },
+                            org,
+                        )
+                        .await?
+                }
+            };
+            print_value(&value, json_output)
+        }
+        PipelineCommands::Triggers { command } => {
+            let value = match command {
+                PipelineTriggerCommands::List { pipeline } => {
+                    let pipeline = resolve_pipeline(client, pipeline).await?;
+                    client
+                        .fetch_pipeline_triggers(pipeline_id(&pipeline)?)
+                        .await?
+                }
+                PipelineTriggerCommands::Apply { pipeline, file } => {
+                    let pipeline = resolve_pipeline(client, pipeline).await?;
+                    let trigger = params::load_json_file(file)?;
+                    let trigger_id = trigger
+                        .get("id")
+                        .and_then(Value::as_str)
+                        .map(Uuid::parse_str)
+                        .transpose()?;
+                    client
+                        .apply_pipeline_trigger(pipeline_id(&pipeline)?, trigger_id, &trigger)
+                        .await?
+                }
+                PipelineTriggerCommands::Delete { id } => {
+                    client.delete_pipeline_trigger(*id).await?
+                }
+            };
+            print_value(&value, json_output)
         }
         PipelineCommands::Run {
             pipeline,
@@ -100,6 +154,14 @@ pub(super) async fn pipelines(
                     .unwrap_or_default(),
             );
             Ok(())
+        }
+        PipelineCommands::IngressStatus { scope, correlation } => {
+            let value = client.fetch_ingress_admission(scope, correlation).await?;
+            print_value(&value, json_output)
+        }
+        PipelineCommands::IngressTimeline { scope, correlation } => {
+            let value = client.fetch_ingress_timeline(scope, correlation).await?;
+            print_value(&value, json_output)
         }
         PipelineCommands::Revisions { pipeline, limit } => {
             let pipeline = resolve_pipeline(client, pipeline).await?;
@@ -462,4 +524,12 @@ fn print_runs(runs: &[PipelineRun]) {
         "{}",
         output::table(&["ID", "PIPELINE", "STATUS", "CREATED", "MESSAGE"], &rows)
     );
+}
+
+fn print_value(value: &Value, json_output: bool) -> Result<()> {
+    if json_output {
+        return output::json(value);
+    }
+    print!("{}", output::value_table(value)?);
+    Ok(())
 }

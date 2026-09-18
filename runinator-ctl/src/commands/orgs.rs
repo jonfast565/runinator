@@ -1,4 +1,5 @@
 use super::*;
+use runinator_ctl_core::cli::OrgMemberCommands;
 
 pub(super) async fn orgs(
     client: &Client,
@@ -15,6 +16,7 @@ pub(super) async fn orgs(
             print!("{}", output::value_table(&value)?);
             Ok(())
         }
+        OrgCommands::All => print_value(&client.list_all_orgs().await?, json_output),
         OrgCommands::Use { org } => {
             let context = client.switch_org(*org).await?;
             crate::auth::persist_active_scope(
@@ -58,6 +60,22 @@ pub(super) async fn orgs(
             }
             output::json(&value)
         }
+        OrgCommands::Delete { org } => print_value(&client.delete_org(*org).await?, json_output),
+        OrgCommands::Members { command } => {
+            let value = match command {
+                OrgMemberCommands::List { org } => client.fetch_org_members(*org).await?,
+                OrgMemberCommands::Add { org, user, role } => {
+                    client.add_org_member(*org, *user, role).await?
+                }
+                OrgMemberCommands::Update { org, user, role } => {
+                    client.update_org_member(*org, *user, role).await?
+                }
+                OrgMemberCommands::Remove { org, user } => {
+                    client.remove_org_member(*org, *user).await?
+                }
+            };
+            print_value(&value, json_output)
+        }
         OrgCommands::Nodes { org } => {
             let value = client.fetch_org_nodes(*org).await?;
             if json_output {
@@ -88,5 +106,16 @@ pub(super) async fn orgs(
             print!("{}", output::value_table(&value)?);
             Ok(())
         }
+        OrgCommands::Quota { org } => {
+            print_value(&client.fetch_org_quota(*org).await?, json_output)
+        }
     }
+}
+
+fn print_value(value: &Value, json_output: bool) -> Result<()> {
+    if json_output {
+        return output::json(value);
+    }
+    print!("{}", output::value_table(value)?);
+    Ok(())
 }

@@ -258,6 +258,7 @@ runinatorctl workspaces export WORKSPACE_UUID 1
 runinatorctl workspaces export WORKSPACE_UUID 1 --filesystem
 runinatorctl workspaces job TRANSFER_UUID
 runinatorctl workspaces download TRANSFER_UUID workspace.oci.tar
+runinatorctl workspaces download-object WORKSPACE_UUID 2 report.pdf --output report.pdf
 runinatorctl workspaces cancel TRANSFER_UUID
 runinatorctl workspaces delete WORKSPACE_UUID --version 2
 runinatorctl workspaces delete WORKSPACE_UUID

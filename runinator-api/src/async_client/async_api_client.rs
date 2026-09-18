@@ -734,6 +734,52 @@ where
         Ok(response.json::<Pipeline>().await?)
     }
 
+    pub async fn fetch_pipeline_triggers(&self, pipeline_id: Uuid) -> Result<Value> {
+        self.get_json_path(&format!("/pipelines/{pipeline_id}/triggers"))
+            .await
+    }
+
+    pub async fn apply_pipeline_trigger(
+        &self,
+        pipeline_id: Uuid,
+        trigger_id: Option<Uuid>,
+        trigger: &Value,
+    ) -> Result<Value> {
+        match trigger_id {
+            Some(id) => {
+                self.patch_json_value(&format!("/pipeline_triggers/{id}"), trigger)
+                    .await
+            }
+            None => {
+                self.post_json_value(&format!("/pipelines/{pipeline_id}/triggers"), trigger)
+                    .await
+            }
+        }
+    }
+
+    pub async fn delete_pipeline_trigger(&self, id: Uuid) -> Result<Value> {
+        self.delete_json_value(&format!("/pipeline_triggers/{id}"))
+            .await
+    }
+
+    pub async fn fetch_ingress_admission(&self, scope: &str, correlation: &str) -> Result<Value> {
+        let mut url = self.build_url("/ingress/admission").await?;
+        url.query_pairs_mut()
+            .append_pair("scope", scope)
+            .append_pair("correlation_key", correlation);
+        let response = self.send(self.http_get(url.clone())).await?;
+        Ok(Self::handle_response(url, response).await?.json().await?)
+    }
+
+    pub async fn fetch_ingress_timeline(&self, scope: &str, correlation: &str) -> Result<Value> {
+        let mut url = self.build_url("/ingress/admission/events").await?;
+        url.query_pairs_mut()
+            .append_pair("scope", scope)
+            .append_pair("correlation_key", correlation);
+        let response = self.send(self.http_get(url.clone())).await?;
+        Ok(Self::handle_response(url, response).await?.json().await?)
+    }
+
     pub async fn upsert_pipeline(&self, pipeline: &Pipeline) -> Result<Pipeline> {
         let url = match pipeline.id {
             Some(id) => self.build_url(&format!("/pipelines/{id}")).await?,
@@ -1248,6 +1294,76 @@ where
         Ok(response.json::<Value>().await?)
     }
 
+    pub async fn list_all_orgs(&self) -> Result<Value> {
+        self.get_json_path("/orgs").await
+    }
+
+    pub async fn delete_org(&self, org_id: Uuid) -> Result<Value> {
+        let url = self.build_url(&format!("/orgs/{org_id}")).await?;
+        let response = self
+            .send(
+                self.http_delete(url.clone())
+                    .header("x-org-id", org_id.to_string()),
+            )
+            .await?;
+        Ok(Self::handle_response(url, response).await?.json().await?)
+    }
+
+    pub async fn fetch_org_members(&self, org_id: Uuid) -> Result<Value> {
+        let url = self.build_url(&format!("/orgs/{org_id}/members")).await?;
+        let response = self
+            .send(
+                self.http_get(url.clone())
+                    .header("x-org-id", org_id.to_string()),
+            )
+            .await?;
+        Ok(Self::handle_response(url, response).await?.json().await?)
+    }
+
+    pub async fn add_org_member(&self, org_id: Uuid, user_id: Uuid, role: &str) -> Result<Value> {
+        let url = self.build_url(&format!("/orgs/{org_id}/members")).await?;
+        let response = self
+            .send(
+                self.http_post(url.clone())
+                    .header("x-org-id", org_id.to_string())
+                    .json(&json!({ "user_id": user_id, "role": role })),
+            )
+            .await?;
+        Ok(Self::handle_response(url, response).await?.json().await?)
+    }
+
+    pub async fn update_org_member(
+        &self,
+        org_id: Uuid,
+        user_id: Uuid,
+        role: &str,
+    ) -> Result<Value> {
+        let url = self
+            .build_url(&format!("/orgs/{org_id}/members/{user_id}"))
+            .await?;
+        let response = self
+            .send(
+                self.http_patch(url.clone())
+                    .header("x-org-id", org_id.to_string())
+                    .json(&json!({ "role": role })),
+            )
+            .await?;
+        Ok(Self::handle_response(url, response).await?.json().await?)
+    }
+
+    pub async fn remove_org_member(&self, org_id: Uuid, user_id: Uuid) -> Result<Value> {
+        let url = self
+            .build_url(&format!("/orgs/{org_id}/members/{user_id}"))
+            .await?;
+        let response = self
+            .send(
+                self.http_delete(url.clone())
+                    .header("x-org-id", org_id.to_string()),
+            )
+            .await?;
+        Ok(Self::handle_response(url, response).await?.json().await?)
+    }
+
     /// an org's dedicated node allocations and projected monthly cost.
     pub async fn fetch_org_nodes(&self, org_id: Uuid) -> Result<Value> {
         let url = self.build_url(&format!("/orgs/{org_id}/nodes")).await?;
@@ -1292,6 +1408,26 @@ where
             .await?;
         let response = Self::handle_response(url, response).await?;
         Ok(response.json::<Value>().await?)
+    }
+
+    pub async fn fetch_org_quota(&self, org_id: Uuid) -> Result<Value> {
+        let url = self.build_url(&format!("/orgs/{org_id}/quota")).await?;
+        let response = self
+            .send(
+                self.http_get(url.clone())
+                    .header("x-org-id", org_id.to_string()),
+            )
+            .await?;
+        Ok(Self::handle_response(url, response).await?.json().await?)
+    }
+
+    pub async fn fetch_rate_card(&self) -> Result<Value> {
+        self.get_json_path("/rate-card").await
+    }
+
+    pub async fn update_ai_rate_card(&self, entries: Value) -> Result<Value> {
+        self.put_json_value("/rate-card/ai", &json!({ "ai_entries": entries }))
+            .await
     }
 
     pub async fn fetch_workflow(&self, workflow_id: Uuid) -> Result<WorkflowDefinition> {
@@ -1607,6 +1743,38 @@ where
         let response = self.send(self.http_delete(url.clone())).await?;
         Self::handle_response(url, response).await?;
         Ok(())
+    }
+
+    pub async fn download_workspace_object(
+        &self,
+        id: Uuid,
+        version: i64,
+        path: &str,
+        result: bool,
+    ) -> Result<Vec<u8>> {
+        let url = self
+            .build_url(&format!("/workspaces/{id}/versions/{version}/downloads"))
+            .await?;
+        let response = self
+            .send(self.http_post(url.clone()).json(&WorkspaceDownloadRequest {
+                transfer_id: None,
+                path: Some(path.to_owned()),
+                result,
+            }))
+            .await?;
+        let ticket = Self::handle_response(url, response)
+            .await?
+            .json::<WorkspaceDownload>()
+            .await?;
+        let url = self
+            .build_url(&format!("/workspace-downloads/{}", ticket.id))
+            .await?;
+        let response = self.send(self.http_get(url.clone())).await?;
+        Ok(Self::handle_response(url, response)
+            .await?
+            .bytes()
+            .await?
+            .to_vec())
     }
     pub async fn workspace_object(
         &self,
@@ -2807,6 +2975,44 @@ where
             .await?)
     }
 
+    pub async fn fetch_workflow_ai_usage(
+        &self,
+        workflow_id: Uuid,
+        since: Option<DateTime<Utc>>,
+        until: Option<DateTime<Utc>>,
+    ) -> Result<Value> {
+        let mut url = self
+            .build_url(&format!("/workflows/{workflow_id}/ai-usage"))
+            .await?;
+        if let Some(value) = since {
+            url.query_pairs_mut()
+                .append_pair("since", &value.to_rfc3339());
+        }
+        if let Some(value) = until {
+            url.query_pairs_mut()
+                .append_pair("until", &value.to_rfc3339());
+        }
+        let response = self.send(self.http_get(url.clone())).await?;
+        Ok(Self::handle_response(url, response).await?.json().await?)
+    }
+
+    pub async fn fetch_workflow_node_transitions(
+        &self,
+        workflow_id: Uuid,
+        node: &str,
+    ) -> Result<Value> {
+        let node = url::form_urlencoded::byte_serialize(node.as_bytes()).collect::<String>();
+        self.get_json_path(&format!(
+            "/workflows/{workflow_id}/nodes/{node}/transitions"
+        ))
+        .await
+    }
+
+    pub async fn fetch_run_ai_usage(&self, workflow_run_id: Uuid) -> Result<Value> {
+        self.get_json_path(&format!("/workflow_runs/{workflow_run_id}/ai-usage"))
+            .await
+    }
+
     pub async fn debug_workflow_run(
         &self,
         workflow_run_id: Uuid,
@@ -3397,6 +3603,172 @@ where
 
     pub async fn fetch_record_collection(&self, collection: &str) -> Result<Value> {
         self.get_json_path(&format!("/{collection}")).await
+    }
+
+    pub async fn fetch_account(&self) -> Result<Value> {
+        self.get_json_path("/auth/me").await
+    }
+
+    pub async fn update_account(&self, request: &Value) -> Result<Value> {
+        self.patch_json_value("/auth/me", request).await
+    }
+
+    pub async fn change_account_password(&self, request: &Value) -> Result<Value> {
+        self.post_json_value("/auth/me/password", request).await
+    }
+
+    pub async fn fetch_account_sessions(&self) -> Result<Value> {
+        self.get_json_path("/auth/sessions").await
+    }
+
+    pub async fn revoke_account_session(&self, id: Uuid) -> Result<Value> {
+        self.delete_json_value(&format!("/auth/sessions/{id}"))
+            .await
+    }
+
+    pub async fn revoke_other_account_sessions(&self) -> Result<Value> {
+        self.post_json_value("/auth/sessions/revoke-others", &json!({}))
+            .await
+    }
+
+    pub async fn fetch_personal_api_keys(&self) -> Result<Value> {
+        self.get_json_path("/auth/me/api-keys").await
+    }
+
+    pub async fn fetch_personal_api_key_scopes(&self) -> Result<Value> {
+        self.get_json_path("/auth/me/api-key-scopes").await
+    }
+
+    pub async fn create_personal_api_key(&self, request: &Value) -> Result<Value> {
+        self.post_json_value("/auth/me/api-keys", request).await
+    }
+
+    pub async fn fetch_admin_collection(&self, collection: &str) -> Result<Value> {
+        self.get_json_path(&format!("/{collection}")).await
+    }
+
+    pub async fn create_admin_resource(&self, collection: &str, request: &Value) -> Result<Value> {
+        self.post_json_value(&format!("/{collection}"), request)
+            .await
+    }
+
+    pub async fn update_admin_resource(
+        &self,
+        collection: &str,
+        id: Uuid,
+        request: &Value,
+    ) -> Result<Value> {
+        self.patch_json_value(&format!("/{collection}/{id}"), request)
+            .await
+    }
+
+    pub async fn delete_admin_resource(&self, collection: &str, id: Uuid) -> Result<Value> {
+        self.delete_json_value(&format!("/{collection}/{id}")).await
+    }
+
+    pub async fn fetch_team_members(&self, id: Uuid) -> Result<Value> {
+        self.get_json_path(&format!("/teams/{id}/members")).await
+    }
+
+    pub async fn fetch_user_teams(&self, id: Uuid) -> Result<Value> {
+        self.get_json_path(&format!("/users/{id}/teams")).await
+    }
+
+    pub async fn add_team_member(&self, id: Uuid, user: Uuid, role: &str) -> Result<Value> {
+        self.post_json_value(
+            &format!("/teams/{id}/members"),
+            &json!({ "user_id": user, "role": role }),
+        )
+        .await
+    }
+
+    pub async fn remove_team_member(&self, id: Uuid, user: Uuid) -> Result<Value> {
+        self.delete_json_value(&format!("/teams/{id}/members/{user}"))
+            .await
+    }
+
+    pub async fn rotate_admin_api_key(&self, id: Uuid) -> Result<Value> {
+        self.post_json_value(&format!("/api_keys/{id}/rotate"), &json!({}))
+            .await
+    }
+
+    pub async fn fetch_policy(&self, path: &str) -> Result<Value> {
+        self.get_json_path(path).await
+    }
+
+    pub async fn apply_policy(&self, path: &str, policy: &Value) -> Result<Value> {
+        self.put_json_value(path, policy).await
+    }
+
+    pub async fn fetch_resource_grants(
+        &self,
+        resource_type: &str,
+        resource_id: Uuid,
+    ) -> Result<Value> {
+        self.get_json_path(&format!(
+            "/authz/resources/{resource_type}/{resource_id}/grants"
+        ))
+        .await
+    }
+
+    pub async fn create_resource_grant(
+        &self,
+        resource_type: &str,
+        resource_id: Uuid,
+        principal_type: &str,
+        principal_id: Uuid,
+        permission: &str,
+    ) -> Result<Value> {
+        self.post_json_value(
+            &format!("/authz/resources/{resource_type}/{resource_id}/grants"),
+            &json!({
+                "principal_type": principal_type,
+                "principal_id": principal_id,
+                "permission": permission,
+            }),
+        )
+        .await
+    }
+
+    pub async fn revoke_resource_grant(
+        &self,
+        resource_type: &str,
+        resource_id: Uuid,
+        grant_id: Uuid,
+    ) -> Result<Value> {
+        self.delete_json_value(&format!(
+            "/authz/resources/{resource_type}/{resource_id}/grants/{grant_id}"
+        ))
+        .await
+    }
+
+    pub async fn fetch_resource_owner(
+        &self,
+        resource_type: &str,
+        resource_id: Uuid,
+    ) -> Result<Value> {
+        self.get_json_path(&format!(
+            "/authz/resources/{resource_type}/{resource_id}/owner"
+        ))
+        .await
+    }
+
+    pub async fn transfer_resource_owner(
+        &self,
+        resource_type: &str,
+        resource_id: Uuid,
+        scope_kind: &str,
+        scope_id: Option<Uuid>,
+    ) -> Result<Value> {
+        self.post_json_value(
+            &format!("/authz/resources/{resource_type}/{resource_id}/owner"),
+            &json!({ "owner": { "kind": scope_kind, "id": scope_id } }),
+        )
+        .await
+    }
+
+    pub async fn fetch_catalog_metadata(&self, path: &str) -> Result<Value> {
+        self.get_json_path(path).await
     }
 
     pub async fn create_automation_record(&self, path: &str, record: Value) -> Result<Value> {

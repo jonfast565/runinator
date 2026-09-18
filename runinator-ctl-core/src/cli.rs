@@ -186,6 +186,31 @@ pub enum Commands {
     Login,
     /// Revoke the stored session for the selected server and remove it locally.
     Logout,
+    /// Manage the authenticated user's profile, sessions, and personal API keys.
+    Account {
+        #[command(subcommand)]
+        command: AccountCommands,
+    },
+    /// Manage platform identities, teams, service keys, and policy.
+    Admin {
+        #[command(subcommand)]
+        command: AdminCommands,
+    },
+    /// Manage generic resource grants and ownership.
+    Access {
+        #[command(subcommand)]
+        command: AccessCommands,
+    },
+    /// Inspect and edit platform billing rates.
+    Billing {
+        #[command(subcommand)]
+        command: BillingCommands,
+    },
+    /// Inspect authoring metadata catalogs.
+    Catalog {
+        #[command(subcommand)]
+        command: CatalogCommands,
+    },
     /// Show API, supervisor, and active-run health.
     Status,
     /// Diagnose harness wiring across adapters, workers, profiles, settings, and ingress scopes.
@@ -374,6 +399,186 @@ pub enum Commands {
 }
 
 #[derive(Debug, Subcommand)]
+pub enum AccountCommands {
+    /// Show the authenticated profile and effective assignments.
+    Show,
+    /// Update the current profile from JSON.
+    Update { file: PathBuf },
+    /// Change the current password from a protected JSON file.
+    Password { file: PathBuf },
+    /// Manage authenticated sessions.
+    Sessions {
+        #[command(subcommand)]
+        command: AccountSessionCommands,
+    },
+    /// Manage personal API keys.
+    Keys {
+        #[command(subcommand)]
+        command: PersonalKeyCommands,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+pub enum AccountSessionCommands {
+    /// List current sessions.
+    List,
+    /// Revoke one session.
+    Revoke { id: Uuid },
+    /// Revoke every session except the current one.
+    RevokeOthers,
+}
+
+#[derive(Debug, Subcommand)]
+pub enum PersonalKeyCommands {
+    /// List assignable personal-key scopes.
+    Scopes,
+    /// List personal API keys without secrets.
+    List,
+    /// Create a personal API key from JSON and print its secret once.
+    Create { file: PathBuf },
+}
+
+#[derive(Debug, Subcommand)]
+pub enum AdminCommands {
+    /// Manage platform users.
+    Users {
+        #[command(subcommand)]
+        command: AdminUserCommands,
+    },
+    /// Manage teams and membership.
+    Teams {
+        #[command(subcommand)]
+        command: AdminTeamCommands,
+    },
+    /// Manage service and platform API keys.
+    ApiKeys {
+        #[command(subcommand)]
+        command: AdminApiKeyCommands,
+    },
+    /// Manage authentication refresh policy.
+    AuthSettings {
+        #[command(subcommand)]
+        command: PolicyCommands,
+    },
+    /// Manage server runtime, retention, and telemetry policy.
+    ServerSettings {
+        #[command(subcommand)]
+        command: PolicyCommands,
+    },
+    /// Manage foreign-language runtime definitions.
+    Runtimes {
+        #[command(subcommand)]
+        command: RuntimePolicyCommands,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+pub enum AdminUserCommands {
+    List,
+    Create { file: PathBuf },
+    Update { id: Uuid, file: PathBuf },
+    Delete { id: Uuid },
+    Teams { id: Uuid },
+}
+
+#[derive(Debug, Subcommand)]
+pub enum AdminTeamCommands {
+    List,
+    Create { name: String },
+    Update { id: Uuid, name: String },
+    Delete { id: Uuid },
+    Members { id: Uuid },
+    AddMember { id: Uuid, user: Uuid, role: String },
+    RemoveMember { id: Uuid, user: Uuid },
+}
+
+#[derive(Debug, Subcommand)]
+pub enum AdminApiKeyCommands {
+    List,
+    Create { file: PathBuf },
+    Update { id: Uuid, file: PathBuf },
+    Rotate { id: Uuid },
+    Revoke { id: Uuid },
+}
+
+#[derive(Debug, Subcommand)]
+pub enum PolicyCommands {
+    Show,
+    Apply { file: PathBuf },
+}
+
+#[derive(Debug, Subcommand)]
+pub enum RuntimePolicyCommands {
+    Show { language: String },
+    Apply { language: String, file: PathBuf },
+    Delete { language: String },
+}
+
+#[derive(Debug, Subcommand)]
+pub enum AccessCommands {
+    /// Manage grants for any owned resource.
+    Grants {
+        #[command(subcommand)]
+        command: AccessGrantCommands,
+    },
+    /// Inspect or transfer resource ownership.
+    Owner {
+        #[command(subcommand)]
+        command: AccessOwnerCommands,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+pub enum AccessGrantCommands {
+    List {
+        resource_type: String,
+        resource_id: Uuid,
+    },
+    Grant {
+        resource_type: String,
+        resource_id: Uuid,
+        principal_type: String,
+        principal_id: Uuid,
+        permission: String,
+    },
+    Revoke {
+        resource_type: String,
+        resource_id: Uuid,
+        grant_id: Uuid,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+pub enum AccessOwnerCommands {
+    Show {
+        resource_type: String,
+        resource_id: Uuid,
+    },
+    Transfer {
+        resource_type: String,
+        resource_id: Uuid,
+        scope_kind: String,
+        #[arg(long)]
+        scope_id: Option<Uuid>,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+pub enum BillingCommands {
+    /// Show the platform rate card.
+    RateCard,
+    /// Replace AI model rate entries from a JSON array.
+    UpdateAi { file: PathBuf },
+}
+
+#[derive(Debug, Subcommand)]
+pub enum CatalogCommands {
+    NodeKinds,
+    TriggerKinds,
+    Enums,
+}
+
+#[derive(Debug, Subcommand)]
 pub enum NamespaceCommands {
     /// Write an editable JSON mapping for workflows, pipelines, function packages, and settings.
     Plan {
@@ -529,6 +734,8 @@ pub enum AgentCommands {
 pub enum OrgCommands {
     /// List the organizations you belong to, with your role in each.
     List,
+    /// List every organization. Platform admin only.
+    All,
     /// Select an organization for this and future commands. Available in the interactive repl too.
     Use { org: uuid::Uuid },
     /// Return to the platform authorization scope. Requires a platform role.
@@ -537,6 +744,13 @@ pub enum OrgCommands {
     Create { name: String },
     /// Rename an organization. Its slug and identifier remain unchanged.
     Rename { org: uuid::Uuid, name: String },
+    /// Delete an organization.
+    Delete { org: Uuid },
+    /// Manage organization membership.
+    Members {
+        #[command(subcommand)]
+        command: OrgMemberCommands,
+    },
     /// Show an org's dedicated node allocation and projected monthly cost.
     Nodes { org: uuid::Uuid },
     /// Set an org's dedicated node count for a kind on a backend (quota-enforced).
@@ -554,6 +768,16 @@ pub enum OrgCommands {
     },
     /// Show an org's accrued usage and cost over the trailing 30 days.
     Usage { org: uuid::Uuid },
+    /// Show an organization's quota and current allocation.
+    Quota { org: Uuid },
+}
+
+#[derive(Debug, Subcommand)]
+pub enum OrgMemberCommands {
+    List { org: Uuid },
+    Add { org: Uuid, user: Uuid, role: String },
+    Update { org: Uuid, user: Uuid, role: String },
+    Remove { org: Uuid, user: Uuid },
 }
 
 #[derive(Debug, Subcommand)]
@@ -890,6 +1114,16 @@ pub enum WorkflowCommands {
     Disable { workflow: String },
     /// Permanently delete a workflow and its run history.
     Delete { workflow: String },
+    /// Show AI token usage and cost for a workflow across runs.
+    Usage {
+        workflow: String,
+        #[arg(long)]
+        since: Option<DateTime<Utc>>,
+        #[arg(long)]
+        until: Option<DateTime<Utc>>,
+    },
+    /// Show cross-run transition statistics for one workflow node.
+    Transitions { workflow: String, node: String },
     /// Create a workflow run.
     Run {
         workflow: String,
@@ -924,6 +1158,8 @@ pub enum RunCommands {
     },
     /// Show a workflow run and its VM execution records.
     Show { id: Uuid },
+    /// Show AI token usage and cost for a run.
+    Usage { id: Uuid },
     /// Show the author-facing execution timeline for a workflow run.
     Timeline {
         id: Uuid,
@@ -1200,6 +1436,8 @@ pub enum CalendarCommands {
     },
     /// Revoke a calendar subscription.
     Unsubscribe { subscription_id: Uuid },
+    /// Print the calendar URL for a subscription token.
+    Url { token: String },
     /// Download a point-in-time iCalendar file.
     Download {
         #[arg(long, value_enum, default_value_t = CliCalendarScope::default())]
@@ -1298,6 +1536,16 @@ pub enum PipelineCommands {
     List,
     /// Show a pipeline by UUID or canonical namespace.key, with its member workflows.
     Show { pipeline: String },
+    /// Inspect or transfer pipeline ownership.
+    Owner {
+        #[command(subcommand)]
+        command: PipelineOwnerCommands,
+    },
+    /// Manage pipeline triggers.
+    Triggers {
+        #[command(subcommand)]
+        command: PipelineTriggerCommands,
+    },
     /// Start a pipeline run.
     Run {
         /// Pipeline UUID or canonical namespace.key.
@@ -1342,6 +1590,10 @@ pub enum PipelineCommands {
         #[arg(long = "json-file")]
         json_file: Option<PathBuf>,
     },
+    /// Inspect ingress admission for a scope and correlation key.
+    IngressStatus { scope: String, correlation: String },
+    /// Inspect the ingress admission event timeline.
+    IngressTimeline { scope: String, correlation: String },
     /// List a pipeline's immutable revision history, newest first.
     Revisions {
         pipeline: String,
@@ -1417,6 +1669,25 @@ pub enum PipelineCommands {
     Enable { pipeline: String },
     /// Block new manual, trigger, and ingress runs for a pipeline.
     Disable { pipeline: String },
+}
+
+#[derive(Debug, Subcommand)]
+pub enum PipelineOwnerCommands {
+    Show {
+        pipeline: String,
+    },
+    Set {
+        pipeline: String,
+        #[arg(long)]
+        org: Option<Uuid>,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+pub enum PipelineTriggerCommands {
+    List { pipeline: String },
+    Apply { pipeline: String, file: PathBuf },
+    Delete { id: Uuid },
 }
 
 #[derive(Debug, Subcommand)]
@@ -2038,6 +2309,16 @@ pub enum WorkspaceCommands {
     Cancel { id: Uuid },
     /// Stream a completed export to a new local file.
     Download { id: Uuid, destination: PathBuf },
+    /// Download one full-size file or named result from an immutable version.
+    DownloadObject {
+        workspace: Uuid,
+        version: i64,
+        path: String,
+        #[arg(long)]
+        result: bool,
+        #[arg(short, long)]
+        output: PathBuf,
+    },
     /// Delete one immutable version or the entire workspace.
     Delete {
         workspace: Uuid,

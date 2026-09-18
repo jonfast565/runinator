@@ -4,6 +4,7 @@ use runinator_ctl_core::cli::CalendarCommands;
 pub(super) async fn freeze(
     client: &Client,
     command: &FreezeCommands,
+    api_base_url: &str,
     json_output: bool,
 ) -> Result<()> {
     match command {
@@ -62,6 +63,17 @@ pub(super) async fn freeze(
                     output::json(&json!({ "deleted": true, "id": subscription_id }))?;
                 } else {
                     println!("revoked calendar subscription {subscription_id}");
+                }
+            }
+            CalendarCommands::Url { token } => {
+                let url = format!(
+                    "{}/calendar/{token}/runinator.ics",
+                    api_base_url.trim_end_matches('/')
+                );
+                if json_output {
+                    output::json(&json!({ "url": url }))?;
+                } else {
+                    println!("{url}");
                 }
             }
             CalendarCommands::Download {

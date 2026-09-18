@@ -28,7 +28,8 @@ use runinator_pack::source as pack;
 
 use crate::{output, params};
 use runinator_ctl_core::cli::{
-    AgentCommands, ApprovalCommands, ArtifactCommands, AuditCommands, Cli, Commands,
+    AccessCommands, AccountCommands, AdminCommands, AgentCommands, ApprovalCommands,
+    ArtifactCommands, AuditCommands, BillingCommands, CatalogCommands, Cli, Commands,
     ExecutionProfileCommands, FileCommands, FreezeCommands, GateCommands, IngressCommands,
     NodeCommands, NotebookCommands, NotificationCommands, OrgCommands, ProviderCommands,
     RecordCommands, RexRapCommands, RunCommands, SettingsCommands, TriggerCommands,
@@ -64,6 +65,11 @@ pub async fn run_command(
         Commands::Login | Commands::Logout => Err(err(
             "login and logout must be handled before command dispatch",
         )),
+        Commands::Account { command } => account::account(client, command, json_output).await,
+        Commands::Admin { command } => admin::admin(client, command, json_output).await,
+        Commands::Access { command } => access::access(client, command, json_output).await,
+        Commands::Billing { command } => billing::billing(client, command, json_output).await,
+        Commands::Catalog { command } => catalog::catalog(client, command, json_output).await,
         Commands::Workspaces { command } => workspaces::run(client, command).await,
         Commands::Status => status::status(client, json_output).await,
         Commands::Doctor => doctor::doctor(client, json_output).await,
@@ -75,7 +81,9 @@ pub async fn run_command(
         }
         Commands::Gates { command } => gates::gates(client, command, json_output).await,
         Commands::Triggers { command } => triggers::triggers(client, command, json_output).await,
-        Commands::Freeze { command } => freeze::freeze(client, command, json_output).await,
+        Commands::Freeze { command } => {
+            freeze::freeze(client, command, api_base_url, json_output).await
+        }
         Commands::Files { command } => files::files(client, command, json_output).await,
         Commands::Notebooks { command } => notebooks::notebooks(client, command, json_output).await,
         Commands::Providers { command } => providers::providers(client, command, json_output).await,
@@ -150,7 +158,12 @@ pub async fn run_command(
     }
 }
 
+mod access;
+mod account;
+mod admin;
 mod agents;
+mod billing;
+mod catalog;
 mod doctor;
 mod namespaces;
 mod nodes;

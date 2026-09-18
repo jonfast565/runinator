@@ -72,6 +72,7 @@ fn parses_authoring_and_lifecycle_commands() {
             ID,
         ],
         vec!["freeze", "calendar", "download", "--output", "calendar.ics"],
+        vec!["freeze", "calendar", "url", "subscription-token"],
         vec![
             "files",
             "upload",
@@ -87,6 +88,15 @@ fn parses_authoring_and_lifecycle_commands() {
             "settings", "move", ID, "--scope", "team:ops", "--name", "token", "--kind", "secret",
         ],
         vec!["workspaces", "delete", ID, "--version", "2"],
+        vec![
+            "workspaces",
+            "download-object",
+            ID,
+            "2",
+            "reports/final.pdf",
+            "--output",
+            "final.pdf",
+        ],
     ] {
         parses(&args);
     }
@@ -142,6 +152,46 @@ fn parses_operational_control_commands() {
         vec!["audit", "list", "--actor", ID],
         vec!["records", "external-items"],
         vec!["records", "events"],
+    ] {
+        parses(&args);
+    }
+}
+
+#[test]
+fn parses_administrative_and_analytics_commands() {
+    for args in [
+        vec!["account", "show"],
+        vec!["account", "password", "password-change.json"],
+        vec!["account", "sessions", "revoke", ID],
+        vec!["account", "keys", "create", "personal-key.json"],
+        vec!["admin", "users", "update", ID, "user.json"],
+        vec!["admin", "teams", "add-member", ID, ID, "operator"],
+        vec!["admin", "api-keys", "rotate", ID],
+        vec!["admin", "server-settings", "apply", "server.json"],
+        vec!["admin", "runtimes", "apply", "python", "python.json"],
+        vec![
+            "access", "grants", "grant", "workflow", ID, "team", ID, "run",
+        ],
+        vec![
+            "access",
+            "owner",
+            "transfer",
+            "pipeline",
+            ID,
+            "organization",
+            "--scope-id",
+            ID,
+        ],
+        vec!["orgs", "members", "update", ID, ID, "admin"],
+        vec!["orgs", "quota", ID],
+        vec!["billing", "update-ai", "rates.json"],
+        vec!["catalog", "node-kinds"],
+        vec!["workflows", "usage", ID],
+        vec!["workflows", "transitions", ID, "publish"],
+        vec!["runs", "usage", ID],
+        vec!["pipelines", "owner", "set", ID, "--org", ID],
+        vec!["pipelines", "triggers", "apply", ID, "trigger.json"],
+        vec!["pipelines", "ingress-status", "github:repo:1", "pr:42"],
     ] {
         parses(&args);
     }

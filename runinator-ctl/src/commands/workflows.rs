@@ -238,6 +238,32 @@ pub(super) async fn workflows(
                 json_output,
             )?;
         }
+        WorkflowCommands::Usage {
+            workflow,
+            since,
+            until,
+        } => {
+            let definition = fetch_workflow_ref(client, workflow).await?;
+            let id = definition
+                .id
+                .ok_or_else(|| err("workflow has no persisted id"))?;
+            let value = client.fetch_workflow_ai_usage(id, *since, *until).await?;
+            if json_output {
+                return output::json(&value);
+            }
+            print!("{}", output::value_table(&value)?);
+        }
+        WorkflowCommands::Transitions { workflow, node } => {
+            let definition = fetch_workflow_ref(client, workflow).await?;
+            let id = definition
+                .id
+                .ok_or_else(|| err("workflow has no persisted id"))?;
+            let value = client.fetch_workflow_node_transitions(id, node).await?;
+            if json_output {
+                return output::json(&value);
+            }
+            print!("{}", output::value_table(&value)?);
+        }
         WorkflowCommands::Run {
             workflow,
             params: cli_params,
