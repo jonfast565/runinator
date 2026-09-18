@@ -49,6 +49,23 @@ pub async fn deliveries<T: AuthorizationStore + OrchestrationStore>(
         Err(error) => api_error(error.to_string()),
     }
 }
+pub async fn delivery<T: AuthorizationStore + OrchestrationStore>(
+    Extension(db): Extension<Arc<T>>,
+    Extension(ctx): Extension<AuthContext>,
+    Path((id, delivery_id)): Path<(Uuid, Uuid)>,
+) -> (StatusCode, Json<ApiResponse>) {
+    if let Err(reply) = AuthzChecker::new(db.as_ref(), &ctx)
+        .require_adapter(id, Permission::View)
+        .await
+    {
+        return reply;
+    }
+    match AdapterOperations::new(db).delivery(delivery_id).await {
+        Ok(Some(value)) if value.origin.adapter_id == id => json(value),
+        Ok(_) => not_found("adapter delivery not found"),
+        Err(error) => api_error(error.to_string()),
+    }
+}
 pub async fn attempts<T: AuthorizationStore + OrchestrationStore>(
     Extension(db): Extension<Arc<T>>,
     Extension(ctx): Extension<AuthContext>,
@@ -207,6 +224,10 @@ pub fn routes<T: AuthorizationStore + OrchestrationStore>(pool: Arc<T>) -> axum:
             "/orchestrations/adapters/{id}/deliveries",
             get(deliveries::<T>),
         )
+        .route(
+            "/orchestrations/adapters/{id}/deliveries/{delivery_id}",
+            get(delivery::<T>),
+        )
         .route("/orchestrations/adapters/{id}/attempts", get(attempts::<T>))
         .route(
             "/orchestrations/adapters/{id}/inspection",
@@ -234,6 +255,19 @@ pub const DOCS: &[EndpointDoc] = &[
         "Adapter Control",
         "Inspect normalized adapter deliveries",
         "Inspect normalized adapter deliveries. Resource authorization is required.",
+        false,
+        None,
+        &[],
+        200,
+        "Control result",
+        Example::AdapterDeliveries
+    ),
+    endpoint!(
+        "get",
+        "/orchestrations/adapters/{id}/deliveries/{delivery_id}",
+        "Adapter Control",
+        "Inspect one adapter delivery",
+        "Returns one delivery post-mortem after confirming it belongs to the authorized adapter.",
         false,
         None,
         &[],

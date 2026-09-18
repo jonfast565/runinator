@@ -946,87 +946,6 @@ pub async fn poll_status<T: OrchestrationStore + AuthorizationStore + ReplicaSto
     }
 }
 
-pub async fn deliveries<T: OrchestrationStore + AuthorizationStore>(
-    Extension(db): Extension<Arc<T>>,
-    Extension(ctx): Extension<AuthContext>,
-    Path(id): Path<Uuid>,
-) -> (StatusCode, Json<ApiResponse>) {
-    let operations = AdapterOperations::new(db.clone());
-    if let Err(reply) = authorized_adapter(db.as_ref(), &operations, &ctx, id, Action::View).await {
-        return reply.into_reply();
-    }
-    match operations.deliveries(id).await {
-        Ok(values) => (
-            StatusCode::OK,
-            Json(ApiResponse::JsonValue(
-                serde_json::to_value(values).unwrap_or_default().into(),
-            )),
-        ),
-        Err(error) => api_error(error.to_string()),
-    }
-}
-
-pub async fn delivery<T: OrchestrationStore + AuthorizationStore>(
-    Extension(db): Extension<Arc<T>>,
-    Extension(ctx): Extension<AuthContext>,
-    Path((id, delivery_id)): Path<(Uuid, Uuid)>,
-) -> (StatusCode, Json<ApiResponse>) {
-    let operations = AdapterOperations::new(db.clone());
-    if let Err(reply) = authorized_adapter(db.as_ref(), &operations, &ctx, id, Action::View).await {
-        return reply.into_reply();
-    }
-    match operations.delivery(delivery_id).await {
-        Ok(Some(value)) if value.origin.adapter_id == id => (
-            StatusCode::OK,
-            Json(ApiResponse::JsonValue(
-                serde_json::to_value(value).unwrap_or_default().into(),
-            )),
-        ),
-        Ok(_) => not_found("adapter delivery not found"),
-        Err(error) => api_error(error.to_string()),
-    }
-}
-
-pub async fn attempts<T: OrchestrationStore + AuthorizationStore>(
-    Extension(db): Extension<Arc<T>>,
-    Extension(ctx): Extension<AuthContext>,
-    Path(id): Path<Uuid>,
-) -> (StatusCode, Json<ApiResponse>) {
-    let operations = AdapterOperations::new(db.clone());
-    if let Err(reply) = authorized_adapter(db.as_ref(), &operations, &ctx, id, Action::View).await {
-        return reply.into_reply();
-    }
-    match operations.attempts(id).await {
-        Ok(values) => (
-            StatusCode::OK,
-            Json(ApiResponse::JsonValue(
-                serde_json::to_value(values).unwrap_or_default().into(),
-            )),
-        ),
-        Err(error) => api_error(error.to_string()),
-    }
-}
-
-pub async fn inspection<T: OrchestrationStore + AuthorizationStore>(
-    Extension(db): Extension<Arc<T>>,
-    Extension(ctx): Extension<AuthContext>,
-    Path(id): Path<Uuid>,
-) -> (StatusCode, Json<ApiResponse>) {
-    let operations = AdapterOperations::new(db.clone());
-    if let Err(reply) = authorized_adapter(db.as_ref(), &operations, &ctx, id, Action::View).await {
-        return reply.into_reply();
-    }
-    match operations.inspection(id).await {
-        Ok(value) => (
-            StatusCode::OK,
-            Json(ApiResponse::JsonValue(
-                serde_json::to_value(value).unwrap_or_default().into(),
-            )),
-        ),
-        Err(error) => api_error(error.to_string()),
-    }
-}
-
 pub async fn create<T: OrchestrationStore + AuthorizationStore + ExecutionProfileStore>(
     Extension(host): Extension<Arc<dyn AdapterHostClient>>,
     Extension(db): Extension<Arc<T>>,
@@ -1809,19 +1728,6 @@ where
             get(poll_status::<T>),
         )
         .route(
-            "/orchestrations/adapters/{id}/deliveries",
-            get(deliveries::<T>),
-        )
-        .route(
-            "/orchestrations/adapters/{id}/deliveries/{delivery_id}",
-            get(delivery::<T>),
-        )
-        .route("/orchestrations/adapters/{id}/attempts", get(attempts::<T>))
-        .route(
-            "/orchestrations/adapters/{id}/inspection",
-            get(inspection::<T>),
-        )
-        .route(
             "/orchestrations/adapters/{id}/enabled",
             post(set_enabled::<T>),
         )
@@ -2009,58 +1915,6 @@ pub const DOCS: &[EndpointDoc] = &[
         200,
         "polling adapter status",
         Example::AdapterPollStatus,
-    ),
-    endpoint_with_policy!(
-        "get",
-        "/orchestrations/adapters/{id}/deliveries",
-        "Orchestration Adapters",
-        "List adapter deliveries",
-        "Lists recent durable webhook and polling delivery records, including routing previews, outcomes, holds, and errors.",
-        EndpointPolicy::ScopedAction(Action::View),
-        None,
-        &[],
-        200,
-        "adapter deliveries",
-        Example::AdapterDeliveries,
-    ),
-    endpoint_with_policy!(
-        "get",
-        "/orchestrations/adapters/{id}/deliveries/{delivery_id}",
-        "Orchestration Adapters",
-        "Show an adapter delivery",
-        "Returns one durable delivery post-mortem after verifying it belongs to the authorized adapter.",
-        EndpointPolicy::ScopedAction(Action::View),
-        None,
-        &[],
-        200,
-        "adapter delivery",
-        Example::AdapterDeliveries,
-    ),
-    endpoint_with_policy!(
-        "get",
-        "/orchestrations/adapters/{id}/attempts",
-        "Orchestration Adapters",
-        "List adapter poll attempts",
-        "Lists recent durable poll attempts, including queued dry runs, terminal results, version metadata, and errors.",
-        EndpointPolicy::ScopedAction(Action::View),
-        None,
-        &[],
-        200,
-        "adapter poll attempts",
-        Example::AdapterAttempts,
-    ),
-    endpoint_with_policy!(
-        "get",
-        "/orchestrations/adapters/{id}/inspection",
-        "Orchestration Adapters",
-        "Show adapter inspection mode",
-        "Returns the durable ingress gate mode that determines whether deliveries proceed, pause, or wait for review.",
-        EndpointPolicy::ScopedAction(Action::View),
-        None,
-        &[],
-        200,
-        "adapter inspection",
-        Example::AdapterInspection,
     ),
     endpoint_with_policy!(
         "post",

@@ -194,3 +194,25 @@ fn scalar_docs_point_at_generated_openapi_json() {
     assert!(super::SCALAR_HTML.contains("data-url=\"/openapi.json\""));
     assert!(super::SCALAR_HTML.contains("defaultHttpClient"));
 }
+
+// `Router::merge` panics at startup on a duplicate method+path, which only surfaces once the
+// process runs. every route is documented beside its registration, so a duplicated pair here is
+// the same mistake caught at test time instead of in a crash loop.
+#[test]
+fn no_endpoint_is_documented_twice() {
+    let mut seen: Vec<(&str, &str)> = Vec::new();
+    let mut duplicates: Vec<String> = Vec::new();
+    for doc in endpoint_docs() {
+        let key = (doc.method, doc.path);
+        if seen.contains(&key) {
+            duplicates.push(format!("{} {}", doc.method.to_uppercase(), doc.path));
+            continue;
+        }
+        seen.push(key);
+    }
+    assert!(
+        duplicates.is_empty(),
+        "these endpoints are registered by more than one module, which panics `Router::merge`: {}",
+        duplicates.join(", ")
+    );
+}

@@ -72,7 +72,7 @@ cleanup. Manifest deletion must be enabled in the registry.
 To refresh only the command-center web interface, use:
 
 ```sh
-cargo run -p xtask -- k8s deploy --command-center-only
+cargo run -p xtask -- k8s deploy --service command-center
 ```
 
 Open the Tauri command center against the deployed local cluster with:

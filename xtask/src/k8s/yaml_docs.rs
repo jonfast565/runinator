@@ -58,7 +58,7 @@ pub fn filter_out_statefulsets(docs: &[Value], skip_names: &[&str]) -> Vec<Value
 }
 
 /// keeps only documents whose `metadata.name` is in `names`. mirrors `Select-K8sDocsByName`, used
-/// for `--command-center-only` deploys.
+/// for single-service deploys.
 pub fn select_by_names(docs: &[Value], names: &[&str]) -> Vec<Value> {
     docs.iter()
         .filter(|doc| doc_name(doc).is_some_and(|name| names.contains(&name)))

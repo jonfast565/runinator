@@ -289,8 +289,22 @@ the first one finished. Use the `xtask` commands rather than invoking `kubectl`
 or `scripts/deploy-k8s.sh` directly when multiple operators or agents share a
 cluster.
 
-To redeploy only the web interface, rebuild and apply just the
-`runinator-command-center-web` resources with:
+To redeploy a single service after a change that only touches it, name it with
+`--service`. The deploy then builds just that workload's images (including its
+sidecars and init containers), applies just the resources it owns, and waits on
+just its rollout, leaving the rest of the stack running:
+
+```bash
+cargo run -p xtask -- k8s deploy --service ws
+cargo run -p xtask -- k8s deploy --service worker --service waker
+```
+
+The selectable services are `ws`, `engine-worker`, `worker`, `waker`,
+`archiver`, `blob` and `command-center`. `--service ws` also rebuilds
+`runinator-adapter-host` and `runinator-bootstrap`, because the web service pod
+runs both alongside it; `--service engine-worker` likewise rebuilds the
+adapter-host sidecar. `--command-center-only` remains as shorthand for
+`--service command-center`:
 
 ```bash
 cargo run -p xtask -- k8s deploy --command-center-only
@@ -348,7 +362,7 @@ It adds a host-based ingress for the web service at `api.runinator.local` and a
 any environment where the database must not be externally reachable.
 
 Tear the stack back down with `cargo run -p xtask -- k8s delete` (same
-`--manifest`/`--kube-context`/`--command-center-only` flags apply).
+`--manifest`/`--kube-context`/`--service`/`--command-center-only` flags apply).
 
 ### Production
 

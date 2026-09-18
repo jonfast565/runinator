@@ -179,14 +179,20 @@ pub fn deploy_kubernetes_stack(options: DeployOptions) -> Result<()> {
     let flag = if is_overlay { "-k" } else { "-f" };
     let apply_path_str = apply_path.display().to_string();
 
-    if options.command_center_only {
-        let names = ["runinator-command-center"];
+    if !options.targets.is_empty() {
+        let names = DeployTarget::resources_for(&options.targets);
         let rendered = render_manifest(options.workspace_root, &ctx_args, &apply_path, is_overlay)?;
         let docs = yaml_docs::parse_documents(&rendered)?;
         let filtered = yaml_docs::select_by_names(&docs, &names);
         anyhow::ensure!(
             !filtered.is_empty(),
-            "no command-center web resources were found in {}",
+            "no resources for {} were found in {}",
+            options
+                .targets
+                .iter()
+                .map(|target| target.key)
+                .collect::<Vec<_>>()
+                .join(", "),
             apply_path.display()
         );
         let stdin = yaml_docs::serialize_documents(&filtered)?;
@@ -203,9 +209,12 @@ pub fn deploy_kubernetes_stack(options: DeployOptions) -> Result<()> {
             return Ok(());
         }
 
-        let rollout_target =
-            yaml_docs::rollout_target(&docs, "runinator-command-center", "Deployment");
-        run_rollout_checks(options.workspace_root, &ctx_args, &[rollout_target]);
+        let rollout_targets: Vec<String> = options
+            .targets
+            .iter()
+            .map(|target| yaml_docs::rollout_target(&docs, target.workload, target.workload_kind))
+            .collect();
+        run_rollout_checks(options.workspace_root, &ctx_args, &rollout_targets);
         return Ok(());
     }
 
@@ -676,6 +685,13 @@ fn remove_superseded_workload_controllers(
 
 mod deploy_options;
 pub use deploy_options::DeployOptions;
+
+mod deploy_target;
+pub use deploy_target::DeployTarget;
+
+#[cfg(test)]
+#[path = "deploy/deploy_target_tests.rs"]
+mod deploy_target_tests;
 
 mod grafana_redeploy_options;
 pub use grafana_redeploy_options::GrafanaRedeployOptions;

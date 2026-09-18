@@ -7,7 +7,8 @@ pub struct DeployOptions<'a> {
     pub kube_context: Option<&'a str>,
     pub image_map: Option<HashMap<String, String>>,
     pub delete: bool,
-    pub command_center_only: bool,
+    /// services to act on, or empty for the whole stack.
+    pub targets: Vec<&'static DeployTarget>,
     pub recreate_infra: bool,
     pub expose_direct_ingress: bool,
 }

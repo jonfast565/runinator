@@ -42,7 +42,15 @@ pub(super) struct K8sDeployArgs {
     /// debugging-only postgres NodePort). off by default so prod stays closed.
     #[arg(long, default_value_t = false)]
     pub(super) expose_direct_ingress: bool,
-    /// only deploy the command-center web resources.
+    /// deploy only the named service, repeatable; builds just that workload's images and applies
+    /// just its resources. omit to deploy the whole stack.
+    #[arg(
+        long = "service",
+        value_name = "SERVICE",
+        value_parser = clap::builder::PossibleValuesParser::new(k8s::deploy::DeployTarget::keys())
+    )]
+    pub(super) services: Vec<String>,
+    /// shorthand for `--service command-center`.
     #[arg(long, default_value_t = false)]
     pub(super) command_center_only: bool,
 }

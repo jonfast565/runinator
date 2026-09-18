@@ -256,6 +256,19 @@ fn effective_local_registry<'a>(
         .filter(|registry| !registry.is_empty())
 }
 
+/// resolves `--service` values plus the `--command-center-only` shorthand into deploy targets.
+/// an empty result means the whole stack.
+fn selected_targets(
+    services: &[String],
+    command_center_only: bool,
+) -> anyhow::Result<Vec<&'static k8s::deploy::DeployTarget>> {
+    let mut keys: Vec<String> = services.to_vec();
+    if command_center_only {
+        keys.push("command-center".to_string());
+    }
+    k8s::deploy::DeployTarget::resolve(&keys)
+}
+
 fn run_k8s_deploy(workspace_root: &std::path::Path, args: &K8sDeployArgs) -> anyhow::Result<()> {
     let image_repository = resolve_image_repository(&args.image_repository, &args.local_registry);
     let local_registry = effective_local_registry(&args.image_repository, &args.local_registry);
@@ -267,9 +280,19 @@ fn run_k8s_deploy(workspace_root: &std::path::Path, args: &K8sDeployArgs) -> any
         workspace_root.join(&args.manifest)
     };
 
-    let include_names: Option<Vec<&str>> = args
-        .command_center_only
-        .then_some(vec!["runinator-command-center"]);
+    let targets = selected_targets(&args.services, args.command_center_only)?;
+    let include_names: Option<Vec<&str>> =
+        (!targets.is_empty()).then(|| k8s::deploy::DeployTarget::images_for(&targets));
+    if !targets.is_empty() {
+        println!(
+            "==> Deploying only: {}",
+            targets
+                .iter()
+                .map(|target| target.key)
+                .collect::<Vec<_>>()
+                .join(", ")
+        );
+    }
     let image_map = if args.skip_build {
         anyhow::ensure!(
             args.image_tag != "local" && !args.image_tag.trim().is_empty(),
@@ -321,13 +344,14 @@ fn run_k8s_deploy(workspace_root: &std::path::Path, args: &K8sDeployArgs) -> any
         kube_context: args.kube_context.as_deref(),
         image_map,
         delete: false,
-        command_center_only: args.command_center_only,
+        targets,
         recreate_infra: args.recreate_infra,
         expose_direct_ingress: args.expose_direct_ingress,
     })
 }
 
 fn run_k8s_delete(workspace_root: &std::path::Path, args: &K8sDeleteArgs) -> anyhow::Result<()> {
+    let targets = selected_targets(&args.services, args.command_center_only)?;
     let manifest_path = if args.manifest.is_absolute() {
         args.manifest.clone()
     } else {
@@ -341,7 +365,7 @@ fn run_k8s_delete(workspace_root: &std::path::Path, args: &K8sDeleteArgs) -> any
         kube_context: args.kube_context.as_deref(),
         image_map: None,
         delete: true,
-        command_center_only: args.command_center_only,
+        targets,
         recreate_infra: false,
         expose_direct_ingress: args.expose_direct_ingress,
     })

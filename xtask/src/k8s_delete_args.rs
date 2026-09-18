@@ -12,7 +12,14 @@ pub(super) struct K8sDeleteArgs {
     /// match whichever kustomize component was enabled on deploy, so its resources are torn down too.
     #[arg(long, default_value_t = false)]
     pub(super) expose_direct_ingress: bool,
-    /// only tear down the command-center web resources.
+    /// tear down only the named service, repeatable. omit to tear down the whole stack.
+    #[arg(
+        long = "service",
+        value_name = "SERVICE",
+        value_parser = clap::builder::PossibleValuesParser::new(k8s::deploy::DeployTarget::keys())
+    )]
+    pub(super) services: Vec<String>,
+    /// shorthand for `--service command-center`.
     #[arg(long, default_value_t = false)]
     pub(super) command_center_only: bool,
 }
