@@ -245,6 +245,30 @@ pub fn format_str(src: &str) -> Result<String, RexRapError> {
     Ok(format::format_document(&document))
 }
 
+/// Format workflow declarations inside a unified `.rrx` container while preserving package,
+/// settings, pipeline, and test blocks byte-for-byte.
+pub fn format_rrx_str(src: &str) -> Result<String, RexRapError> {
+    let blocks = parse_rrx_blocks(src)?;
+    if blocks.packages.is_empty()
+        && blocks.settings.is_empty()
+        && blocks.pipelines.trim().is_empty()
+        && blocks.tests.is_empty()
+    {
+        return format_str(src);
+    }
+    let spans = rrx::workflow_declaration_spans(src)?;
+    let mut output = String::with_capacity(src.len());
+    let mut cursor = 0;
+    for span in spans {
+        output.push_str(&src[cursor..span.start]);
+        let formatted = format_str(&src[span.clone()])?;
+        output.push_str(formatted.trim_end());
+        cursor = span.end;
+    }
+    output.push_str(&src[cursor..]);
+    Ok(output)
+}
+
 /// parse and lower a standalone REXRAP fragment into the runtime JSON expression/condition/program
 /// shape used by the reducer.
 pub fn lower_fragment(

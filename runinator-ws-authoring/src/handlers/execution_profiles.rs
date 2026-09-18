@@ -717,7 +717,7 @@ pub async fn content<
     // profile, both checked above. another organization's profile remains invisible.
     let profile = match service.fetch(id).await {
         Ok(Some(value))
-            if ctx.visible_for_read(value.org_id)
+            if ctx.visible_for_runtime_read(value.org_id)
                 && value.enabled
                 && value.current_revision == Some(revision) =>
         {

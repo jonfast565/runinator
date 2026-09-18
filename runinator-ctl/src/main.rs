@@ -31,6 +31,14 @@ async fn run_process() -> commands::Result<()> {
     match &cli.command {
         Commands::Login => auth::login(&cli).await,
         Commands::Logout => auth::logout(&cli).await,
+        Commands::Workflows {
+            command:
+                WorkflowCommands::Scaffold {
+                    path,
+                    name,
+                    namespace,
+                },
+        } => commands::workflows_scaffold(path, name.as_deref(), namespace, cli.json),
         // `workflows test` is a fully offline dry-run; run it without contacting the web service.
         Commands::Workflows {
             command:

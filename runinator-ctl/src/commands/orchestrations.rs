@@ -306,6 +306,91 @@ async fn orchestration_adapters(
             );
             Ok(())
         }
+        OrchestrationAdapterCommands::Deliveries { id } => {
+            let deliveries = client.fetch_orchestration_adapter_deliveries(*id).await?;
+            if json_output {
+                return output::json(&deliveries);
+            }
+            let rows = deliveries
+                .into_iter()
+                .map(|delivery| {
+                    vec![
+                        delivery.id.to_string(),
+                        delivery.state,
+                        delivery
+                            .attempt_id
+                            .map(|value| value.to_string())
+                            .unwrap_or_else(|| "-".into()),
+                        delivery.approved.to_string(),
+                        delivery
+                            .event
+                            .as_ref()
+                            .map(|event| event.event_type.clone())
+                            .unwrap_or_else(|| "-".into()),
+                        delivery.error.unwrap_or_else(|| "-".into()),
+                        delivery.received_at.to_rfc3339(),
+                    ]
+                })
+                .collect::<Vec<_>>();
+            print!(
+                "{}",
+                output::table(
+                    &[
+                        "DELIVERY", "STATE", "ATTEMPT", "APPROVED", "EVENT", "ERROR", "RECEIVED",
+                    ],
+                    &rows,
+                )
+            );
+            Ok(())
+        }
+        OrchestrationAdapterCommands::Delivery { id, delivery_id } => {
+            let delivery = client
+                .fetch_orchestration_adapter_delivery(*id, *delivery_id)
+                .await?;
+            if json_output {
+                return output::json(&delivery);
+            }
+            print!("{}", output::value_table(&delivery)?);
+            Ok(())
+        }
+        OrchestrationAdapterCommands::Attempts { id } => {
+            let attempts = client.fetch_orchestration_adapter_attempts(*id).await?;
+            if json_output {
+                return output::json(&attempts);
+            }
+            let rows = attempts
+                .into_iter()
+                .map(|attempt| {
+                    vec![
+                        attempt.id.to_string(),
+                        attempt.adapter_revision.to_string(),
+                        attempt.state,
+                        attempt.dry_run.to_string(),
+                        attempt.error.unwrap_or_else(|| "-".into()),
+                        attempt.created_at.to_rfc3339(),
+                        attempt.updated_at.to_rfc3339(),
+                    ]
+                })
+                .collect::<Vec<_>>();
+            print!(
+                "{}",
+                output::table(
+                    &[
+                        "ATTEMPT", "REVISION", "STATE", "DRY RUN", "ERROR", "CREATED", "UPDATED",
+                    ],
+                    &rows,
+                )
+            );
+            Ok(())
+        }
+        OrchestrationAdapterCommands::Inspection { id } => {
+            let inspection = client.fetch_orchestration_adapter_inspection(*id).await?;
+            if json_output {
+                return output::json(&inspection);
+            }
+            print!("{}", output::value_table(&inspection)?);
+            Ok(())
+        }
         OrchestrationAdapterCommands::Apply { file, id } => {
             let definition: Value = serde_json::from_slice(&fs::read(file)?)?;
             let adapter = client.apply_orchestration_adapter(*id, &definition).await?;

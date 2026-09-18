@@ -149,11 +149,11 @@ pub(crate) async fn run(
     }
 }
 
-/// dispatch a parsed command, including the two that run offline.
+/// dispatch a parsed command, including commands that run offline.
 ///
-/// `workflows test` and `functions validate` need no web service, and `main` routes them around the
-/// authenticated client for that reason. the same routing is repeated here so they work over MCP
-/// with the server unreachable, which is exactly when a dry run is most useful.
+/// workflow scaffolding/testing and function validation need no web service, and `main` routes them
+/// around the authenticated client for that reason. the same routing is repeated here so they work
+/// over MCP with the server unreachable, which is exactly when a local authoring command is useful.
 async fn dispatch(
     client: &Client,
     command: &Commands,
@@ -161,6 +161,14 @@ async fn dispatch(
     json_output: bool,
 ) -> crate::commands::Result<()> {
     match command {
+        Commands::Workflows {
+            command:
+                WorkflowCommands::Scaffold {
+                    path,
+                    name,
+                    namespace,
+                },
+        } => crate::commands::workflows_scaffold(path, name.as_deref(), namespace, json_output),
         Commands::Workflows {
             command:
                 WorkflowCommands::Test {

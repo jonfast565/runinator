@@ -28,7 +28,6 @@ pub fn parse_rrx_blocks(source: &str) -> Result<RrxBlocks, RexRapError> {
     let mut blocks = RrxBlocks::default();
     let bytes = source.as_bytes();
     let mut cursor = 0;
-    let mut header = String::new();
 
     while cursor < bytes.len() {
         cursor = skip_space_and_comments(source, cursor);
@@ -55,7 +54,6 @@ pub fn parse_rrx_blocks(source: &str) -> Result<RrxBlocks, RexRapError> {
                 ));
             }
             blocks.language_header = true;
-            header.push_str(&source[cursor..end]);
             cursor = end;
             continue;
         }
@@ -78,7 +76,6 @@ pub fn parse_rrx_blocks(source: &str) -> Result<RrxBlocks, RexRapError> {
         let declaration = &source[start..end];
         match word.as_str() {
             "workflow" | "module" | "namespace" => {
-                blocks.workflows.push_str(&header);
                 blocks.workflows.push_str(declaration);
                 blocks.workflows.push('\n');
             }
@@ -98,7 +95,59 @@ pub fn parse_rrx_blocks(source: &str) -> Result<RrxBlocks, RexRapError> {
         }
         cursor = end;
     }
+    if blocks.language_header && !blocks.workflows.is_empty() {
+        blocks.workflows.insert_str(0, "language rexrap-1\n");
+    }
     Ok(blocks)
+}
+
+pub(crate) fn workflow_declaration_spans(
+    source: &str,
+) -> Result<Vec<std::ops::Range<usize>>, RexRapError> {
+    let mut spans = Vec::new();
+    let mut cursor = 0;
+    while cursor < source.len() {
+        cursor = skip_space_and_comments(source, cursor);
+        if cursor >= source.len() {
+            break;
+        }
+        let start = cursor;
+        let Some((word, after_word)) = read_word(source, cursor) else {
+            return Err(RexRapError::syntax(
+                Span::new(cursor, cursor + 1),
+                "expected a named top-level RexRap declaration",
+            ));
+        };
+        if word == "language" {
+            cursor = source[cursor..]
+                .find('\n')
+                .map(|offset| cursor + offset + 1)
+                .unwrap_or(source.len());
+            continue;
+        }
+        let mut brace = find_open_brace(source, after_word).ok_or_else(|| {
+            RexRapError::syntax(
+                Span::new(start, after_word),
+                format!("top-level `{word}` declaration needs a block"),
+            )
+        })?;
+        if word == "workflow" {
+            let first_end = matching_brace(source, brace)?;
+            let next = skip_space_and_comments(source, first_end);
+            if source.as_bytes().get(next) == Some(&b'{') {
+                brace = next;
+            }
+        }
+        let end = matching_brace(source, brace)?;
+        // A namespace can contain several declarations and formatting it as a standalone
+        // document may split or normalize constructs that belong to the surrounding container.
+        // Top-level workflows are self-contained and safe to replace in place.
+        if word == "workflow" {
+            spans.push(start..end);
+        }
+        cursor = end;
+    }
+    Ok(spans)
 }
 
 fn skip_space_and_comments(source: &str, mut cursor: usize) -> usize {

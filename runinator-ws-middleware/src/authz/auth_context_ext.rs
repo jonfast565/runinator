@@ -24,6 +24,12 @@ pub trait AuthContextExt {
     /// difference was invisible at each call site.
     fn visible_for_read(&self, owner_org: Option<Uuid>) -> bool;
 
+    /// Whether tenant-bound runtime material may be read by a machine caller.
+    ///
+    /// Platform-owned material is shared and an exact organization match is admitted. Unlike an
+    /// operator read, an administrative role does not let a worker identity cross tenant bounds.
+    fn visible_for_runtime_read(&self, owner_org: Option<Uuid>) -> bool;
+
     /// Whether a record owned by `owner_org` may be modified by this caller.
     ///
     /// Stricter than [`AuthContextExt::visible_for_read`]: a record has to be in the caller's own
@@ -108,6 +114,10 @@ impl AuthContextExt for AuthContext {
     /// `UI` label. The import path records whether the write came from a pack or a hand edit.
     fn visible_for_read(&self, owner_org: Option<Uuid>) -> bool {
         self.is_platform_admin() || owner_org.is_none() || owner_org == self.org_id
+    }
+
+    fn visible_for_runtime_read(&self, owner_org: Option<Uuid>) -> bool {
+        owner_org.is_none() || owner_org == self.org_id
     }
 
     fn visible_for_write(&self, owner_org: Option<Uuid>) -> bool {

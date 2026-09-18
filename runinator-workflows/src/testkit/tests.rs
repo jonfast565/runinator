@@ -94,3 +94,35 @@ fn failed_expectation_reports_a_readable_failure() {
     assert!(!result.passed);
     assert!(result.failures.iter().any(|f| f.contains("review")));
 }
+
+#[test]
+fn named_fixture_is_deep_merged_with_case_overrides() {
+    let suite: WorkflowTestSuite = serde_json::from_value(serde_json::json!({
+        "fixtures": {
+            "review": {
+                "workflow": "approval-flow",
+                "input": { "amount": 500, "actor": { "name": "default", "role": "author" } },
+                "mocks": { "review": { "output": { "approved": true } } },
+                "expect": { "status": "succeeded", "reached": ["review"] }
+            }
+        },
+        "tests": [
+            {
+                "fixture": "review",
+                "name": "fixture with one nested input override",
+                "input": { "actor": { "name": "case" } },
+                "expect": { "output_contains": { "approved": true } }
+            }
+        ]
+    }))
+    .expect("suite");
+
+    let case = &suite.tests[0];
+    assert_eq!(case.workflow.as_deref(), Some("approval-flow"));
+    assert_eq!(case.input["amount"], 500);
+    assert_eq!(case.input["actor"]["name"], "case");
+    assert_eq!(case.input["actor"]["role"], "author");
+    assert_eq!(case.expect.reached, ["review"]);
+    assert!(case.expect.output_contains.is_some());
+    assert!(case.mocks.contains_key("review"));
+}

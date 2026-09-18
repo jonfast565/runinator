@@ -195,7 +195,9 @@ fn parse_summary(message: &str) -> &str {
             message
                 .lines()
                 .map(str::trim)
-                .filter(|line| !line.is_empty() && !line.starts_with("-->") && !line.starts_with('|'))
+                .filter(|line| {
+                    !line.is_empty() && !line.starts_with("-->") && !line.starts_with('|')
+                })
                 .next_back()
         })
         .unwrap_or(message)

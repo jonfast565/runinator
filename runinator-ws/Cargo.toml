@@ -49,6 +49,7 @@ runinator-rexrap = { path = "../runinator-rexrap" }
 async-trait = "0.1"
 base64 = "0.23"
 tower = { version = "0.5", features = ["util"] }
+runinator-adapter-client = { path = "../runinator-adapter-client" }
 runinator-auth = { path = "../runinator-auth" }
 # enable the engine's in-crate test hooks (forced-failure injection, test helpers) so the
 # result-consumer/repository integration tests can drive engine behavior. dev-only, so normal

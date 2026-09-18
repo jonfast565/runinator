@@ -17,7 +17,7 @@ use runinator_adapter_contract::{
     ADAPTER_ABI_VERSION, AdapterImmediateResponse, AdapterMetadataEnvelope, AdapterPollRequest,
     AdapterPollResponse, AdapterRequest, AdapterResponse, AdapterValidationRequest,
     AdapterValidationResponse, FileOperationFn, HANDLE_SYMBOL, MARKER_SYMBOL, METADATA_SYMBOL,
-    MarkerFn, NAME_SYMBOL, NameFn, POLL_SYMBOL, VALIDATE_SYMBOL, StreamCheckpoints, call_symbol,
+    MarkerFn, NAME_SYMBOL, NameFn, POLL_SYMBOL, StreamCheckpoints, VALIDATE_SYMBOL, call_symbol,
     cstr_to_rust_string, find_marker, invoke_file_operation, verify_bearer, verify_hmac_sha256,
 };
 use runinator_github::{AsyncGitHubClient, GitHubOperation};
@@ -190,16 +190,16 @@ async fn poll_once(
             Some(path) => invoke_dynamic_poll(&path, &request, limits)
                 .await
                 .unwrap_or_else(|error| AdapterPollResponse {
-host_version: None,
-kind_version: None,
+                    host_version: None,
+                    kind_version: None,
                     events: Vec::new(),
                     checkpoint: request.checkpoint,
                     retry_after_seconds: None,
                     error: Some(error),
                 }),
             None => AdapterPollResponse {
-host_version: None,
-kind_version: None,
+                host_version: None,
+                kind_version: None,
                 events: Vec::new(),
                 checkpoint: request.checkpoint,
                 retry_after_seconds: None,
@@ -351,8 +351,8 @@ async fn poll(
         invoke_dynamic_poll(Path::new(&entry.origin), &request.request, state.limits)
             .await
             .unwrap_or_else(|error| AdapterPollResponse {
-host_version: None,
-kind_version: None,
+                host_version: None,
+                kind_version: None,
                 events: Vec::new(),
                 checkpoint,
                 retry_after_seconds: None,
@@ -1156,8 +1156,8 @@ fn canonical_poll_timestamp(value: &str) -> String {
 
 fn poll_response(events: Vec<NormalizedAdapterEvent>, checkpoint: Value) -> AdapterPollResponse {
     AdapterPollResponse {
-host_version: None,
-kind_version: None,
+        host_version: None,
+        kind_version: None,
         events,
         checkpoint,
         retry_after_seconds: None,
@@ -1362,8 +1362,8 @@ where
     match poll(&request).await {
         Ok(response) => response,
         Err(error) => AdapterPollResponse {
-host_version: None,
-kind_version: None,
+            host_version: None,
+            kind_version: None,
             events: Vec::new(),
             checkpoint: fallback_checkpoint,
             retry_after_seconds: error.retry_after_seconds,
@@ -1733,19 +1733,19 @@ async fn poll_jira_inner(request: &AdapterPollRequest) -> Result<AdapterPollResp
         if !streams.is_seeded("issue") {
             checkpoints.advance(&streams, "issue", &updated);
             events.push(NormalizedAdapterEvent {
-            source: "jira".into(),
-            delivery_id: format!("jira:{instance_id}:issue:{issue_id}:{updated}"),
-            event_type: "issue_updated".into(),
-            scope: scope.clone(),
-            correlation_key: correlation_key.clone(),
-            subject_revision: None,
-            occurred_at: parse_occurred_at(&Value::String(updated.clone())).ok(),
-            provenance: operation_provenance(&issue).into(),
-            payload: jira_payload_with_profile(
-                json!({ "issue": issue.clone() }),
-                &request.configuration,
-            )
-            .into(),
+                source: "jira".into(),
+                delivery_id: format!("jira:{instance_id}:issue:{issue_id}:{updated}"),
+                event_type: "issue_updated".into(),
+                scope: scope.clone(),
+                correlation_key: correlation_key.clone(),
+                subject_revision: None,
+                occurred_at: parse_occurred_at(&Value::String(updated.clone())).ok(),
+                provenance: operation_provenance(&issue).into(),
+                payload: jira_payload_with_profile(
+                    json!({ "issue": issue.clone() }),
+                    &request.configuration,
+                )
+                .into(),
             });
         }
         if streams.is_seeded("comment") {

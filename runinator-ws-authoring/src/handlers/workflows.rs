@@ -751,9 +751,8 @@ pub fn routes<
     use axum::routing::{get, post};
     // the adapter host answers what scopes an event can carry, which is what makes an ingress
     // scope checkable at apply time rather than only discoverable by a workflow never starting.
-    let host: std::sync::Arc<dyn runinator_adapter_client::AdapterHostClient> = std::sync::Arc::new(
-        runinator_adapter_client::HttpAdapterHostClient::from_env(),
-    );
+    let host: std::sync::Arc<dyn runinator_adapter_client::AdapterHostClient> =
+        std::sync::Arc::new(runinator_adapter_client::HttpAdapterHostClient::from_env());
     axum::Router::new()
         .route(
             runinator_models::api_routes::API_WORKFLOWS,

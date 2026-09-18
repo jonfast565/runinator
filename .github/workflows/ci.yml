@@ -90,6 +90,12 @@ jobs:
       - name: Check formatting
         run: cargo fmt --all --check
 
+      - name: Check REXRAP formatting
+        run: |
+          find packs -name '*.rrx' -print0 | sort -z | while IFS= read -r -d '' source; do
+            cargo run --quiet -p runinator-ctl -- rexrap format --check "$source"
+          done
+
       - name: Check Rust type layout
         run: python3 scripts/check-rust-type-layout.py
 

@@ -10,6 +10,7 @@ use runinator_models::json;
 use runinator_models::pipelines::{Pipeline, PipelineBundle, PipelineRun, PipelineRunDetail};
 use runinator_models::value::Value;
 use runinator_models::{
+    adapter_control::{AdapterDeliveryRecord, AdapterInspection, AdapterPollAttempt},
     api_routes::{
         api_freeze_window, api_replica_heartbeat, api_replica_offline, api_replica_providers,
         api_scheduler_workflow_run_claim_release, api_scheduler_workflow_run_claim_renew,

@@ -70,8 +70,8 @@ fn event() -> NormalizedAdapterEvent {
 }
 fn response() -> AdapterPollResponse {
     AdapterPollResponse {
-host_version: None,
-kind_version: None,
+        host_version: None,
+        kind_version: None,
         events: vec![event()],
         checkpoint: serde_json::json!({"cursor":2}),
         retry_after_seconds: None,

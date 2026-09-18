@@ -6,6 +6,11 @@ pub(super) async fn workflows(
     json_output: bool,
 ) -> Result<()> {
     match command {
+        WorkflowCommands::Scaffold {
+            path,
+            name,
+            namespace,
+        } => return workflows_scaffold(path, name.as_deref(), namespace, json_output),
         WorkflowCommands::List => {
             let workflows = client.fetch_workflows().await?;
             if json_output {
@@ -513,7 +518,12 @@ fn source_snapshot(file: &Path, json_file: Option<&Path>) -> SourceSnapshot {
 
 mod workflow_tests;
 pub use workflow_tests::workflows_test;
+mod workflow_scaffold;
+pub use workflow_scaffold::workflows_scaffold;
 mod workflow_evals;
+#[cfg(test)]
+#[path = "workflows/workflow_scaffold_tests.rs"]
+mod workflow_scaffold_tests;
 use workflow_evals::workflows_eval;
 mod rexrap;
 pub(crate) use rexrap::rexrap;

@@ -4,9 +4,8 @@ Tracks the workstreams from the "Runinator: harness bring-up ease-of-use program
 A–F). The plan itself is the source of truth for *why* each item exists; this file records only what
 has landed and what has not.
 
-**State at this commit:** A, B, C, D complete and compiling; E and F not started. The last full
-`cargo test --workspace` run predates workstream B, so the suite has **not** been run against this
-change set. Run it before treating any of this as verified.
+**State at this commit:** A through F are implemented. Final verification for E and F is recorded in
+the completing commit rather than this historical handoff note.
 
 ## Done
 
@@ -89,36 +88,25 @@ The two MCP schema tests that asserted the old default were updated.
   `render()` produces a caret snippet for REXRAP001 and the LSP underlines the offending token
   rather than the whole document. `RexRapError::span()` exposes the position to other callers.
 
-## Remaining
+## Completed after the original handoff
 
 ### Workstream E — doctor and post-mortems
 
-- **E2 — expose `deliveries` / `delivery` / `inspection` as CLI commands.** *In progress when this
-  stopped; nothing landed.* There are **no HTTP endpoints** for these yet — `AdapterOperations`
-  has `deliveries`, `delivery`, `inspection`, and `attempts`
-  (`runinator-engine/src/services/adapter_operations.rs:536-573`), but only the `summaries` handler
-  consumes them. The work is: three routes beside `/orchestrations/adapters/{id}/poll-status` in
-  `routes_with_host` (`runinator-ws-authoring/src/handlers/adapters.rs`), following the
-  `poll_status` handler's `authorized_adapter(..., Action::View)` shape; locators in
-  `runinator-api`; then the CLI verbs and renderers. Models are
-  `AdapterDeliveryRecord`, `AdapterInspection`, `AdapterPollAttempt` in
-  `runinator-models/src/adapter_control/`.
-- **E1 — `runinatorctl doctor`.** Mostly assembly over data that now exists: scope reachability
-  (C2's `validate_reachability`), worker-label satisfaction and the worker diagnostic (A1),
-  secret/settings resolution (C3's `unresolved_settings`), profile readability by the principal that
-  will actually fetch it, version skew (B3's `host_version`/`kind_version`), unset settings slots.
-  C2 landed the `scope_template` work this depends on.
+- **E2** Read-only authorized HTTP and CLI surfaces expose deliveries, individual delivery
+  post-mortems, polling attempts, and the inspection gate.
+- **E1** `runinatorctl doctor` assembles installed kind metadata, current adapter revisions, poll
+  diagnostics, profile health/readability, setting bindings, and stored workflow/pipeline ingress
+  policies into one actionable harness report.
 
-### Workstream F — authoring volume (lower priority)
+### Workstream F — authoring volume
 
-- **F1** Named fixtures plus per-case override in `tests { }`. Cuts `flint-dev.rrx` by roughly a
-  third.
-- **F2** A terminal scaffold. Today the documented derivation mechanism is `cp -R`
-  (`docs/help/workflow-authoring.md:52`).
-- **F3** `rexrap format --check` in CI, and fix the settings-import docs drift
-  (`workflow-authoring.md:485` describes JSON; the CLI hard-rejects non-`.rrx`).
+- **F1** `tests { }` suites accept named fixtures and recursively merge per-case overrides.
+- **F2** `runinatorctl workflows scaffold` creates a complete starter pack offline and refuses to
+  overwrite a non-empty directory.
+- **F3** CI checks every checked-in pack with `rexrap format --check`, and the settings-import guide
+  now documents the `.rrx`-only contract.
 
-## Before the next commit
+## Verification for the completing commit
 
 - `cargo fmt --all --check`
 - `cargo clippy --workspace --all-targets`
@@ -128,4 +116,4 @@ The two MCP schema tests that asserted the old default were updated.
   per converted handler.
 - `cargo check --workspace --all-targets` — plain `--workspace` passed, but test targets were not
   compiled after `AdapterKindMetadata` and `PackImportResult` gained fields.
-- The workspace version is still `0.39.773`. The plan for this change set is a **minor** bump.
+- The completing change bumps the workspace minor version.

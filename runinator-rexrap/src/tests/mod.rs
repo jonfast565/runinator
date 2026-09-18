@@ -34,6 +34,7 @@ mod spans;
 mod task_bindings;
 mod triggers;
 mod types;
+mod unified_format;
 mod validation;
 
 use crate::{
@@ -41,9 +42,9 @@ use crate::{
     analyze_source as analyze_source_strict, compile_all_str as compile_all_strict,
     compile_str as compile_str_strict,
     compile_str_with_diagnostics as compile_str_with_diagnostics_strict, decompile, decompile_with,
-    decompile_with_spans, evaluate_fragment, evaluate_fragment_with_functions, format_str,
-    lower_fragment, parse_document, render_compute_program, validate_fragment,
-    validate_fragment_with_functions, workflow_signature_from_source,
+    decompile_with_spans, evaluate_fragment, evaluate_fragment_with_functions, format_rrx_str,
+    format_str, lower_fragment, parse_document, parse_rrx_blocks, render_compute_program,
+    validate_fragment, validate_fragment_with_functions, workflow_signature_from_source,
 };
 use runinator_models::providers::{
     ActionMetadata, ParameterMetadata, ProviderMetadata, ProviderRuntimeMetadata, ResultMetadata,

@@ -13,7 +13,8 @@ File/session authentication is configured as an Execution Profile in Command Cen
 provider calls with `@profile("name")`; collection requires approval in the desktop agent. To load
 ordinary scalar credentials and config, import an `.rrx` source containing a `settings` block with
 `runinatorctl settings import <file>`. Each entry carries a `kind`
-(`secret` — the default — or `config`) and a `value`; secret values stay
+(`secret` or `config`) and a `value`; the kind is explicit so values cannot be written to the wrong
+store. Secret values stay
 encrypted and resolve late at the worker, while config values are arbitrary JSON
 read by the web service.
 
@@ -44,13 +45,17 @@ revision usable. Expand **Desktop details** to see approval coverage, the latest
 success, and the sanitized error reported by the desktop that attempted collection. A claim expires
 after 30 minutes so a disconnected desktop cannot leave an operation stuck indefinitely.
 
-You can seed the app-data workflow pack from the
-repository sample if needed:
+Create a ready-to-check pack from the terminal:
 
 ```bash
-mkdir -p ~/.runinator/workflows
-cp -R packs/hello-world ~/.runinator/workflows/hello-world
+runinatorctl workflows scaffold ~/.runinator/workflows/hello-world \
+  --name "Hello World" --namespace local
+runinatorctl rexrap check ~/.runinator/workflows/hello-world/hello_world.rrx
+runinatorctl workflows test ~/.runinator/workflows/hello-world
 ```
+
+The scaffold refuses to write into a non-empty directory and includes a workflow, named test
+fixture, smoke case, and README. Edit the generated `.rrx` source, then apply its directory.
 
 Compiled JSON workflow packs are never authored or checked in. Use a unified
 `.rrx` source or a directory containing one or more `.rrx` sources for pack imports.
@@ -80,7 +85,9 @@ workflow's deterministic condition/switch/toggle/percentage routing, stubbing ta
 with mocked outputs, and asserts on the branch
 taken and final outputs. Test cases live in an RRX `tests` block and provide a name,
 input, config, mocked task outputs, and assertions on status, reached nodes, branches,
-and final output. Every `.rrx` source in the pack is considered automatically, or pass
+and final output. Repeated setup can live under a top-level `fixtures` object. A case selects one
+with `"fixture": "name"`; its own nested fields are deep-merged over that fixture, while arrays
+and scalar values replace the fixture value. Every `.rrx` source in the pack is considered automatically, or pass
 additional sources with `--tests`. The command
 exits non-zero when any case fails, so it drops straight into CI.
 
@@ -337,6 +344,10 @@ separately: the adapter returns the provider's `Retry-After` and the checkpoint 
 
 Inspect schedule and health with `runinatorctl orchestrations adapters poll-status <adapter-id>` or
 `GET /orchestrations/adapters/{id}/poll-status`; `last_error` carries the most recent failure.
+Use `deliveries`, `delivery`, `attempts`, and `inspection` under the same CLI group for durable
+post-mortems. `runinatorctl doctor` checks the full selected harness for unreachable ingress scopes,
+inert adapter fields, worker-label gaps, inaccessible or unhealthy execution profiles, adapter-host
+version skew, broken secret bindings, and unset workflow settings.
 Transport and identity configuration become immutable after the adapter admits its first
 correlation.
 
@@ -470,22 +481,21 @@ runinatorctl settings set api base '"https://api.example.com"' \
 runinatorctl settings set api base '"https://api.example.com/v2"' --kind config
 
 # store a secret (string)
-runinatorctl settings set github token "ghp_xxx"
+runinatorctl settings set github token "ghp_xxx" --kind secret
 
 # read a value from a file instead of passing it inline
-runinatorctl settings set github deploy-key --value-file ./id_ed25519
+runinatorctl settings set github deploy-key --value-file ./id_ed25519 --kind secret
 
-# bulk import secrets and config from a bundle file
+# bulk import secrets and config from an REXRAP settings block
 runinatorctl settings import ./settings.rrx
 
 runinatorctl settings list            # all settings, no values
 runinatorctl settings get api base --kind config
 ```
 
-The import file is a `{ "secrets": [...] }` document; each entry carries
-`scope`, `name`, and `value`, plus optional `kind` (`secret` or `config`) and
-`schema`. Existing entries are only overwritten when an incoming `updated_at` is
-strictly newer.
+The import file is an `.rrx` source containing a `settings { ... }` block. Importing provisions its
+declared config and secret slots through the same pack path used by `workflows apply`; JSON settings
+documents are not accepted.
 
 #### Provider authentication
 

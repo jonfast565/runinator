@@ -170,6 +170,8 @@ pub enum Commands {
     Logout,
     /// Show API, supervisor, and active-run health.
     Status,
+    /// Diagnose harness wiring across adapters, workers, profiles, settings, and ingress scopes.
+    Doctor,
     /// Inspect and run workflow definitions.
     Workflows {
         #[command(subcommand)]
@@ -684,6 +686,17 @@ pub enum RexRapCommands {
 
 #[derive(Debug, Subcommand)]
 pub enum WorkflowCommands {
+    /// Create a ready-to-check REXRAP pack with a workflow, test fixture, and README.
+    Scaffold {
+        /// New pack directory. It must be absent or empty.
+        path: PathBuf,
+        /// Human-readable workflow and package name. Defaults from the directory name.
+        #[arg(long)]
+        name: Option<String>,
+        /// REXRAP namespace for the starter workflow.
+        #[arg(long, default_value = "local")]
+        namespace: String,
+    },
     /// List workflow definitions.
     List,
     /// Show a workflow by id or name.
@@ -1233,6 +1246,14 @@ pub enum OrchestrationAdapterCommands {
     Show { id: Uuid },
     /// Show durable checkpoint, schedule, and health for a polling adapter.
     PollStatus { id: Uuid },
+    /// List recent durable delivery post-mortems for an adapter.
+    Deliveries { id: Uuid },
+    /// Show one durable delivery post-mortem.
+    Delivery { id: Uuid, delivery_id: Uuid },
+    /// List recent durable polling attempts, including queued dry runs.
+    Attempts { id: Uuid },
+    /// Show the adapter's ingress inspection gate.
+    Inspection { id: Uuid },
     /// Create or update an adapter from a JSON definition. Secret values must be stored Secret IDs.
     Apply {
         file: PathBuf,

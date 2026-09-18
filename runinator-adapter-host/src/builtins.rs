@@ -118,8 +118,8 @@ pub(super) fn registry() -> &'static BTreeMap<String, Box<dyn BuiltinAdapter>> {
 }
 pub(super) fn unsupported_poll(request: AdapterPollRequest) -> AdapterPollResponse {
     AdapterPollResponse {
-host_version: None,
-kind_version: None,
+        host_version: None,
+        kind_version: None,
         events: Vec::new(),
         checkpoint: request.checkpoint,
         retry_after_seconds: None,

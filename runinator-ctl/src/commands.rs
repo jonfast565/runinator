@@ -64,6 +64,7 @@ pub async fn run_command(
         )),
         Commands::Workspaces { command } => workspaces::run(client, command).await,
         Commands::Status => status::status(client, json_output).await,
+        Commands::Doctor => doctor::doctor(client, json_output).await,
         Commands::Workflows { command } => workflows::workflows(client, command, json_output).await,
         Commands::Runs { command } => runs::runs(client, command, json_output).await,
         Commands::Approvals { command } => approvals::approvals(client, command, json_output).await,
@@ -139,12 +140,14 @@ pub async fn run_command(
 }
 
 mod agents;
+mod doctor;
 mod namespaces;
 mod nodes;
 mod orgs;
 mod status;
 mod workflows;
 pub(crate) use workflows::rexrap;
+pub use workflows::workflows_scaffold;
 pub use workflows::workflows_test;
 mod approvals;
 mod artifacts;

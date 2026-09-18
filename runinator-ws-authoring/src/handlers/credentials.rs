@@ -237,7 +237,9 @@ pub async fn resolve_runtime_secret<T: SettingStore + RuntimeStore>(
         return not_found("credential not found");
     }
     let record = match db.fetch_setting_by_id(ctx.org_id, setting_id).await {
-        Ok(Some(record)) if ctx.visible_for_write(record.org_id) && record.kind == SettingKind::Secret => {
+        Ok(Some(record))
+            if ctx.visible_for_write(record.org_id) && record.kind == SettingKind::Secret =>
+        {
             record
         }
         Ok(_) => return not_found("credential not found"),

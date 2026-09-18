@@ -1032,7 +1032,9 @@ pub fn routes<
         .layer(Extension(std::sync::Arc::new(
             runinator_adapter_client::HttpAdapterHostClient::from_env(),
         )
-            as std::sync::Arc<dyn runinator_adapter_client::AdapterHostClient>))
+            as std::sync::Arc<
+                dyn runinator_adapter_client::AdapterHostClient,
+            >))
 }
 
 mod pipeline_revision_list_query;

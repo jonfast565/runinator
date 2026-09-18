@@ -3,6 +3,7 @@
 
 use super::*;
 
+use runinator_adapter_client::{AdapterHostClient, HttpAdapterHostClient};
 use runinator_broker::UiEventPublisher;
 use runinator_engine::services::WorkflowAuthoring;
 use runinator_models::{
@@ -138,6 +139,7 @@ async fn breaking_contract_override_requires_own_and_is_audited() {
         db.clone(),
         UiEventPublisher::new(Arc::new(InMemoryBroker::new())),
     ));
+    let host: Arc<dyn AdapterHostClient> = Arc::new(HttpAdapterHostClient::from_env());
     let mut proposed = saved.clone();
     proposed.output_type = runinator_models::types::RuninatorType::Any;
     for (principal, reason, expected) in [
@@ -148,6 +150,7 @@ async fn breaking_contract_override_requires_own_and_is_audited() {
         let (status, body) = upsert_workflow::<SqliteDb>(
             Extension(db.clone()),
             Extension(service.clone()),
+            Extension(host.clone()),
             Extension(user_ctx(principal)),
             Query(WorkflowPublishOptions {
                 contract_override_reason: reason.map(str::to_string),

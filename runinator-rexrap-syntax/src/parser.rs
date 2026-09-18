@@ -49,8 +49,8 @@ fn pest_parse_error(src: &str, err: pest::error::Error<Rule>) -> RexRapError {
 
 /// Parse a RexRap source document into an AST.
 pub fn parse_document(src: &str) -> Result<Document, RexRapError> {
-    let mut pairs = RexRapParser::parse(Rule::document, src)
-        .map_err(|err| pest_parse_error(src, err))?;
+    let mut pairs =
+        RexRapParser::parse(Rule::document, src).map_err(|err| pest_parse_error(src, err))?;
     let document = pairs
         .next()
         .ok_or_else(|| RexRapError::parse("empty input"))?;
@@ -247,9 +247,7 @@ pub fn parse_document(src: &str) -> Result<Document, RexRapError> {
         workflows.push(workflow);
     }
     if workflows.is_empty() && modules.is_empty() {
-        return Err(RexRapError::parse(
-            "missing workflow or source module",
-        ));
+        return Err(RexRapError::parse("missing workflow or source module"));
     }
     let mut document = Document {
         language_header,

@@ -61,7 +61,7 @@ pub(crate) fn rexrap(command: &RexRapCommands, json_output: bool) -> Result<()> 
         } => {
             let source = fs::read_to_string(file)?;
             let formatted =
-                runinator_rexrap::format_str(&source).map_err(|e| err(e.render(&source)))?;
+                runinator_rexrap::format_rrx_str(&source).map_err(|e| err(e.render(&source)))?;
             if *check {
                 if formatted == source {
                     println!("{} ok", file.display());
@@ -74,7 +74,10 @@ pub(crate) fn rexrap(command: &RexRapCommands, json_output: bool) -> Result<()> 
                     fs::write(path, formatted)?;
                     println!("wrote {}", path.display());
                 }
-                None => print!("{formatted}"),
+                None => {
+                    fs::write(file, formatted)?;
+                    println!("formatted {}", file.display());
+                }
             }
         }
         RexRapCommands::Check { file, typing } => {

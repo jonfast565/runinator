@@ -443,6 +443,41 @@ where
             .await
     }
 
+    pub async fn fetch_orchestration_adapter_deliveries(
+        &self,
+        id: Uuid,
+    ) -> Result<Vec<AdapterDeliveryRecord>> {
+        self.get_json_path(&format!("/orchestrations/adapters/{id}/deliveries"))
+            .await
+    }
+
+    pub async fn fetch_orchestration_adapter_delivery(
+        &self,
+        id: Uuid,
+        delivery_id: Uuid,
+    ) -> Result<AdapterDeliveryRecord> {
+        self.get_json_path(&format!(
+            "/orchestrations/adapters/{id}/deliveries/{delivery_id}"
+        ))
+        .await
+    }
+
+    pub async fn fetch_orchestration_adapter_attempts(
+        &self,
+        id: Uuid,
+    ) -> Result<Vec<AdapterPollAttempt>> {
+        self.get_json_path(&format!("/orchestrations/adapters/{id}/attempts"))
+            .await
+    }
+
+    pub async fn fetch_orchestration_adapter_inspection(
+        &self,
+        id: Uuid,
+    ) -> Result<AdapterInspection> {
+        self.get_json_path(&format!("/orchestrations/adapters/{id}/inspection"))
+            .await
+    }
+
     pub async fn apply_orchestration_adapter(
         &self,
         id: Option<Uuid>,
