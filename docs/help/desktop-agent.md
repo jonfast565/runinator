@@ -64,6 +64,12 @@ the token must be redeemed before `--ttl` elapses, and the machine credential ex
 time. Add `--permanent` to issue a machine credential that remains valid until it is explicitly
 invalidated. Both modes are available to callers authorized for agent enrollment.
 
+`--label` grants the operator-chosen routing labels the agent may advertise; an agent presenting a
+label its token does not grant is refused. The agent's own `pool=desktop` and `runner=desktop` are
+decided by the runtime rather than by whoever enrolls, so they are always accepted and need no
+`--label` entry. A refusal answers with an opaque `401 enrollment rejected` on purpose, so that a
+token id cannot be probed; the web service logs which label it refused.
+
 Use `runinatorctl agents machines` to list enrolled machines and
 `runinatorctl agents invalidate <machine-id>` to disable one machine, revoke all of its agent
 credentials, and kick every replica registered by it. To stop only one current activation while

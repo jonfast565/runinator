@@ -281,8 +281,11 @@ fn describe_worker_event(event: &WorkerEvent) -> String {
 /// `RUNINATOR_WORKER_LABELS`). the two desktop identity labels cannot be overridden.
 fn advertised_labels(config: &AgentConfig) -> BTreeMap<String, String> {
     let mut labels = parse_labels(Some(&config.extra_labels.join(",")));
-    labels.insert("pool".to_string(), POOL_LABEL.to_string());
-    labels.insert("runner".to_string(), POOL_LABEL.to_string());
+    // shared with the enrollment check, which grants these without a token entry precisely
+    // because this function, not the operator, decides them.
+    for (key, value) in runinator_models::replicas::DESKTOP_IDENTITY_LABELS {
+        labels.insert((*key).to_string(), (*value).to_string());
+    }
     labels
 }
 

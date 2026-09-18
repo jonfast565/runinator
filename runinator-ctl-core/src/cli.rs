@@ -701,7 +701,8 @@ pub enum AgentCommands {
         /// Token lifetime, such as 30s, 15m, 2h, or 1d.
         #[arg(long, default_value = "15m")]
         ttl: String,
-        /// Routing label as KEY=VALUE; repeat for multiple labels.
+        /// Routing label as KEY=VALUE; repeat for multiple labels. The desktop agent's own
+        /// `pool=desktop` and `runner=desktop` are always accepted and need no entry here.
         #[arg(long = "label")]
         labels: Vec<String>,
         /// Organization assigned to the agent credential.

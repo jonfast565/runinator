@@ -10,6 +10,19 @@ use crate::validation::{
 
 use crate::{providers::ProviderMetadata, value::Value};
 
+/// routing labels the desktop agent forces on every replica it registers. they identify the
+/// runtime rather than describing operator-chosen routing, and the agent refuses to let
+/// configuration override them, so an enrolling party cannot choose them either. an enrollment
+/// token therefore constrains the labels around these, never these themselves.
+pub const DESKTOP_IDENTITY_LABELS: &[(&str, &str)] = &[("pool", "desktop"), ("runner", "desktop")];
+
+/// whether `key`/`value` is one of the immutable desktop identity labels.
+pub fn is_desktop_identity_label(key: &str, value: &str) -> bool {
+    DESKTOP_IDENTITY_LABELS
+        .iter()
+        .any(|(label, expected)| *label == key && *expected == value)
+}
+
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord)]
 #[serde(rename_all = "snake_case")]
 pub enum ReplicaKind {

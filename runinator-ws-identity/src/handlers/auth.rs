@@ -1674,6 +1674,23 @@ pub async fn enroll_agent<T: AuthStore + RbacStore + RuntimeStore>(
     }
 }
 
+/// the first label the enrolling agent presented that its token does not grant, if any.
+///
+/// the desktop agent forces its own identity labels and refuses to let configuration override
+/// them, so an enrolling party cannot choose them and a token need not grant them. requiring a
+/// token to list them made one minted without `--label` reject every desktop agent, with nothing
+/// but an opaque 401 to say why. every other label still has to be granted explicitly, so a token
+/// cannot be used to claim routing that targets someone else's work.
+fn ungranted_label<'a>(
+    presented: &'a std::collections::BTreeMap<String, String>,
+    granted: &std::collections::BTreeMap<String, String>,
+) -> Option<(&'a String, &'a String)> {
+    presented.iter().find(|(key, value)| {
+        !runinator_models::replicas::is_desktop_identity_label(key, value)
+            && granted.get(*key).is_none_or(|allowed| allowed != *value)
+    })
+}
+
 async fn authorize_enrollment<T: AuthStore + RbacStore + RuntimeStore>(
     db: &T,
     request: EnrollAgentRequest,
@@ -1702,15 +1719,17 @@ async fn authorize_enrollment<T: AuthStore + RbacStore + RuntimeStore>(
     };
     // keep this verification before every authorization-field check: one opaque response and one
     // constant-time HMAC path prevent token-id and scope probing from becoming an oracle.
-    if !token.verify_proof(&canonical, &proof)
-        || request.request_body.labels.iter().any(|(key, value)| {
-            stored
-                .token
-                .labels
-                .get(key)
-                .is_none_or(|allowed| allowed != value)
-        })
+    if !token.verify_proof(&canonical, &proof) {
+        return Ok(None);
+    }
+    if let Some((key, value)) = ungranted_label(&request.request_body.labels, &stored.token.labels)
     {
+        // the response stays opaque so token-id and scope probing cannot become an oracle; the
+        // operator reads the reason here instead of guessing at a bare 401.
+        log::warn!(
+            "agent enrollment refused: token {} does not grant label {key}={value}",
+            stored.token.token_id
+        );
         return Ok(None);
     }
 
@@ -2620,3 +2639,7 @@ pub use auth_settings_request::AuthSettingsRequest;
 
 mod server_settings_response;
 use server_settings_response::ServerSettingsResponse;
+
+#[cfg(test)]
+#[path = "auth_tests.rs"]
+mod auth_tests;
