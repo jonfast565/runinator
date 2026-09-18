@@ -259,6 +259,8 @@ runinatorctl workspaces export WORKSPACE_UUID 1 --filesystem
 runinatorctl workspaces job TRANSFER_UUID
 runinatorctl workspaces download TRANSFER_UUID workspace.oci.tar
 runinatorctl workspaces cancel TRANSFER_UUID
+runinatorctl workspaces delete WORKSPACE_UUID --version 2
+runinatorctl workspaces delete WORKSPACE_UUID
 ```
 
 `cat` is a bounded preview (at most 1 MiB). Directory/results/diff responses include continuation

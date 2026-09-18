@@ -100,5 +100,15 @@ pub(super) async fn run(client: &Client, command: &WorkspaceCommands) -> Result<
             let _ = tokio::fs::remove_file(temporary).await;
             result
         }
+        WorkspaceCommands::Delete { workspace, version } => {
+            client
+                .delete_durable_workspace(*workspace, *version)
+                .await?;
+            output::json(&json!({
+                "deleted": true,
+                "workspace_id": workspace,
+                "version": version,
+            }))
+        }
     }
 }

@@ -15,6 +15,24 @@ pub(super) async fn artifacts(
             }
             print_artifacts(&artifacts);
         }
+        ArtifactCommands::Download {
+            effect,
+            event,
+            output: path,
+        } => {
+            let bytes = client
+                .download_workflow_effect_artifact(*effect, *event)
+                .await?;
+            fs::write(path, bytes)?;
+            if json_output {
+                return output::json(&json!({
+                    "effect_id": effect,
+                    "event_id": event,
+                    "output": path,
+                }));
+            }
+            println!("wrote {}", path.display());
+        }
     }
     Ok(())
 }

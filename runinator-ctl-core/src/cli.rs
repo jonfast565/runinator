@@ -65,6 +65,24 @@ pub enum CliTimelineFormat {
     Json,
 }
 
+#[derive(Debug, Clone, Copy, Default, ValueEnum)]
+pub enum CliCalendarScope {
+    #[default]
+    User,
+    Organization,
+    Platform,
+}
+
+impl CliCalendarScope {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::User => "user",
+            Self::Organization => "organization",
+            Self::Platform => "platform",
+        }
+    }
+}
+
 impl From<CliTyping> for TypePolicy {
     fn from(policy: CliTyping) -> Self {
         match policy {
@@ -196,6 +214,16 @@ pub enum Commands {
     Freeze {
         #[command(subcommand)]
         command: FreezeCommands,
+    },
+    /// Manage reusable workflow input files.
+    Files {
+        #[command(subcommand)]
+        command: FileCommands,
+    },
+    /// Manage durable console sessions and cells without opening the interactive console.
+    Notebooks {
+        #[command(subcommand)]
+        command: NotebookCommands,
     },
     /// Publish and promote packaged functions.
     Functions {
@@ -586,6 +614,16 @@ pub enum SettingsCommands {
     },
     /// Import settings from an `.rrx` source containing a `settings` block. JSON is not accepted.
     Import { file: PathBuf },
+    /// Move or rename a setting while preserving its durable id.
+    Move {
+        id: Uuid,
+        #[arg(long)]
+        scope: String,
+        #[arg(long)]
+        name: String,
+        #[arg(long, value_enum)]
+        kind: CliSettingKind,
+    },
     /// Delete a setting.
     Delete {
         scope: String,
@@ -703,6 +741,16 @@ pub enum WorkflowCommands {
     Show { workflow: String },
     /// Validate a workflow definition JSON file.
     Validate { file: PathBuf },
+    /// Simulate a workflow definition on the server without publishing effects.
+    Simulate {
+        file: PathBuf,
+        #[arg(long = "input-file")]
+        input_file: Option<PathBuf>,
+        #[arg(long = "replay-run")]
+        replay_run: Option<Uuid>,
+    },
+    /// Preview downstream contract compatibility for a proposed workflow definition.
+    ContractImpact { file: PathBuf },
     /// Import a workflow pack (an .rrx source or directory of .rrx sources), or save a workflow
     /// definition / import a workflow bundle from a JSON file. A source's `settings` blocks are
     /// imported with the pack to seed config/secret slots. When no path is given, falls back to the
@@ -710,6 +758,14 @@ pub enum WorkflowCommands {
     Apply {
         file: Option<PathBuf>,
         /// Audited reason for overriding a breaking contract without a major bump (requires Own).
+        #[arg(long)]
+        contract_override_reason: Option<String>,
+    },
+    /// Import a compiled pack ZIP produced by a trusted build.
+    ImportArchive {
+        file: PathBuf,
+        #[arg(long)]
+        overwrite: bool,
         #[arg(long)]
         contract_override_reason: Option<String>,
     },
@@ -803,6 +859,12 @@ pub enum WorkflowCommands {
         #[arg(long, value_enum, default_value_t = CliBumpLevel::default())]
         bump: CliBumpLevel,
     },
+    /// Allow a workflow to start new runs.
+    Enable { workflow: String },
+    /// Block a workflow from starting new runs.
+    Disable { workflow: String },
+    /// Permanently delete a workflow and its run history.
+    Delete { workflow: String },
     /// Create a workflow run.
     Run {
         workflow: String,
@@ -856,6 +918,64 @@ pub enum RunCommands {
     },
     /// Print log chunks for a workflow effect.
     Logs { effect_id: Uuid },
+    /// Advance one paused VM continuation by one boundary.
+    Step {
+        id: Uuid,
+        #[arg(long)]
+        cursor: Option<Uuid>,
+    },
+    /// Resume one paused VM continuation or all paused continuations.
+    Continue {
+        id: Uuid,
+        #[arg(long)]
+        cursor: Option<Uuid>,
+    },
+    /// Manage run-scoped debugger breakpoints.
+    Breakpoints {
+        #[command(subcommand)]
+        command: BreakpointCommands,
+    },
+    /// Resume one continuation until it reaches a node or another breakpoint.
+    ToNode {
+        id: Uuid,
+        cursor: Uuid,
+        node_id: String,
+    },
+    /// Enable or disable pausing before a failure is routed.
+    PauseOnFailure {
+        id: Uuid,
+        #[arg(action = clap::ArgAction::Set)]
+        enabled: bool,
+    },
+    /// Deliver a named signal to a parked workflow run.
+    Signal {
+        id: Uuid,
+        name: String,
+        #[arg(long = "json-file")]
+        json_file: Option<PathBuf>,
+    },
+    /// Request an interrupt declared by the workflow.
+    Interrupt {
+        id: Uuid,
+        source: String,
+        #[arg(long = "json-file")]
+        json_file: Option<PathBuf>,
+        #[arg(long)]
+        continuation: Option<Uuid>,
+    },
+    /// Resolve an input-required effect with structured output.
+    ResolveInput {
+        effect: Uuid,
+        #[arg(long = "json-file")]
+        json_file: PathBuf,
+        #[arg(long)]
+        message: Option<String>,
+    },
+    /// Control an active provider terminal.
+    Terminal {
+        #[command(subcommand)]
+        command: TerminalCommands,
+    },
     /// Pause a workflow run.
     Pause { id: Uuid },
     /// Resume a workflow run.
@@ -894,6 +1014,37 @@ pub enum ArtifactCommands {
         #[arg(long = "effect")]
         effect_id: Uuid,
     },
+    /// Download one artifact output event.
+    Download {
+        #[arg(long)]
+        effect: Uuid,
+        #[arg(long)]
+        event: Uuid,
+        #[arg(short, long)]
+        output: PathBuf,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+pub enum BreakpointCommands {
+    /// Replace the run's breakpoint set.
+    Set {
+        id: Uuid,
+        #[arg(long = "breakpoint", required = true)]
+        breakpoints: Vec<String>,
+    },
+    /// Remove every breakpoint from the run.
+    Clear { id: Uuid },
+}
+
+#[derive(Debug, Subcommand)]
+pub enum TerminalCommands {
+    /// Send UTF-8 input to an active terminal.
+    Input { effect: Uuid, data: String },
+    /// Resize an active terminal.
+    Resize { effect: Uuid, cols: u16, rows: u16 },
+    /// Close terminal input.
+    Close { effect: Uuid },
 }
 
 #[derive(Debug, Subcommand)]
@@ -935,6 +1086,12 @@ pub enum ApprovalCommands {
 pub enum TriggerCommands {
     /// List triggers for a workflow by id or name.
     List { workflow: String },
+    /// Show one trigger by id.
+    Show { trigger_id: Uuid },
+    /// Create or replace a trigger from JSON.
+    Apply { file: PathBuf },
+    /// Delete a trigger.
+    Delete { trigger_id: Uuid },
     /// List triggers due for execution.
     Due,
     /// Create a run from a trigger.
@@ -996,8 +1153,118 @@ pub enum FreezeCommands {
         #[arg(long)]
         reason: Option<String>,
     },
+    /// Replace a freeze window from a JSON NewFreezeWindow document.
+    Update { window_id: Uuid, file: PathBuf },
+    /// Manage private iCalendar subscriptions and exports.
+    Calendar {
+        #[command(subcommand)]
+        command: CalendarCommands,
+    },
     /// Remove a freeze window.
     Delete { window_id: Uuid },
+}
+
+#[derive(Debug, Subcommand)]
+pub enum CalendarCommands {
+    /// Create a private calendar subscription token.
+    Subscribe {
+        #[arg(long, value_enum, default_value_t = CliCalendarScope::default())]
+        scope: CliCalendarScope,
+        #[arg(long)]
+        org_id: Option<Uuid>,
+    },
+    /// Revoke a calendar subscription.
+    Unsubscribe { subscription_id: Uuid },
+    /// Download a point-in-time iCalendar file.
+    Download {
+        #[arg(long, value_enum, default_value_t = CliCalendarScope::default())]
+        scope: CliCalendarScope,
+        #[arg(long)]
+        org_id: Option<Uuid>,
+        #[arg(short, long)]
+        output: PathBuf,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+pub enum FileCommands {
+    /// List reusable library files.
+    List,
+    /// Upload a reusable file revision.
+    Upload {
+        source: PathBuf,
+        #[arg(long)]
+        path: String,
+        #[arg(long)]
+        mime_type: Option<String>,
+    },
+    /// Download file content.
+    Download {
+        id: Uuid,
+        #[arg(short, long)]
+        output: PathBuf,
+    },
+    /// Archive a reusable file revision.
+    Archive { id: Uuid },
+}
+
+#[derive(Debug, Subcommand)]
+pub enum NotebookCommands {
+    /// Manage durable console sessions.
+    Sessions {
+        #[command(subcommand)]
+        command: NotebookSessionCommands,
+    },
+    /// Manage durable console cells.
+    Cells {
+        #[command(subcommand)]
+        command: NotebookCellCommands,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+pub enum NotebookSessionCommands {
+    List,
+    Show { id: Uuid },
+    Create { name: String },
+    Rename { id: Uuid, name: String },
+    Clear { id: Uuid },
+    Delete { id: Uuid },
+}
+
+#[derive(Debug, Subcommand)]
+pub enum NotebookCellCommands {
+    Show {
+        id: Uuid,
+    },
+    Create {
+        session: Uuid,
+        file: PathBuf,
+        #[arg(long)]
+        label: Option<String>,
+        #[arg(long)]
+        position: Option<i64>,
+    },
+    Update {
+        id: Uuid,
+        file: PathBuf,
+        #[arg(long)]
+        label: Option<String>,
+        #[arg(long)]
+        position: Option<i64>,
+    },
+    Run {
+        id: Uuid,
+    },
+    Cancel {
+        id: Uuid,
+    },
+    Replay {
+        id: Uuid,
+    },
+    Delete {
+        id: Uuid,
+    },
 }
 
 #[derive(Debug, Subcommand)]
@@ -1414,4 +1681,14 @@ pub enum WorkspaceCommands {
     Cancel { id: Uuid },
     /// Stream a completed export to a new local file.
     Download { id: Uuid, destination: PathBuf },
+    /// Delete one immutable version or the entire workspace.
+    Delete {
+        workspace: Uuid,
+        #[arg(long)]
+        version: Option<i64>,
+    },
 }
+
+#[cfg(test)]
+#[path = "cli_tests.rs"]
+mod tests;

@@ -13,6 +13,8 @@ Use these task-oriented guides in place of the former monolithic repository READ
 - [AI missions](missions.md) — install the mission recipes and Claude execution profile, then
   start, inspect, steer, and troubleshoot bounded coding and research/report loops.
 - [Console and MCP](console-and-mcp.md) — the terminal and browser consoles, command completion, session behavior, and MCP integration.
+- [CLI control-plane operations](cli-control-plane.md) — scriptable workflow recovery, reusable files,
+  schedules, artifacts, workspaces, and notebook management.
 - [Packaged functions](packaged-functions.md) — immutable function packages, workflow and HTTP invocation, pack integration, execution, and retention.
 - [Observability](observability.md) — logs, metrics, traces, the local telemetry stack, Kubernetes observability, dead letters, and audit logs.
 

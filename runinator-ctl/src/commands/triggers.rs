@@ -17,6 +17,28 @@ pub(super) async fn triggers(
             }
             print_triggers(&triggers);
         }
+        TriggerCommands::Show { trigger_id } => {
+            let trigger = client.fetch_workflow_trigger(*trigger_id).await?;
+            if json_output {
+                return output::json(&trigger);
+            }
+            print_triggers(std::slice::from_ref(&trigger));
+        }
+        TriggerCommands::Apply { file } => {
+            let trigger: WorkflowTrigger = serde_json::from_slice(&fs::read(file)?)?;
+            let saved = client.upsert_workflow_trigger(&trigger).await?;
+            if json_output {
+                return output::json(&saved);
+            }
+            print_triggers(std::slice::from_ref(&saved));
+        }
+        TriggerCommands::Delete { trigger_id } => {
+            print_task_response(
+                client.delete_workflow_trigger(*trigger_id).await?,
+                "deleted workflow trigger",
+                json_output,
+            )?;
+        }
         TriggerCommands::Due => {
             let triggers = client.fetch_due_workflow_triggers().await?;
             if json_output {

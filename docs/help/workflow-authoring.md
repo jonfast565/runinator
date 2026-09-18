@@ -446,6 +446,8 @@ capability:
 ```bash
 runinatorctl freeze create "December freeze" --from 2026-12-20T00:00:00Z --to 2027-01-02T00:00:00Z
 runinatorctl freeze list --active
+runinatorctl freeze update <window-id> freeze-window.json
+runinatorctl freeze calendar download --output schedule.ics --scope user
 ```
 
 **Backfill** replays a cron trigger's slots across a past range. Slots the loop already
@@ -454,6 +456,8 @@ claims through — so an overlapping range is safe to re-issue:
 
 ```bash
 runinatorctl triggers backfill <trigger-id> --from 2026-08-01T00:00:00Z --dry-run
+runinatorctl triggers show <trigger-id>
+runinatorctl triggers apply trigger.json
 ```
 
 REXRAP references resolve runtime values into action arguments. Alongside `params.*`,

@@ -29,8 +29,8 @@ use runinator_pack::source as pack;
 use crate::{output, params};
 use runinator_ctl_core::cli::{
     AgentCommands, ApprovalCommands, ArtifactCommands, Cli, Commands, ExecutionProfileCommands,
-    FreezeCommands, NodeCommands, OrgCommands, ProviderCommands, RexRapCommands, RunCommands,
-    SettingsCommands, TriggerCommands, WorkflowCommands,
+    FileCommands, FreezeCommands, NodeCommands, NotebookCommands, OrgCommands, ProviderCommands,
+    RexRapCommands, RunCommands, SettingsCommands, TriggerCommands, WorkflowCommands,
 };
 
 pub type Result<T> = std::result::Result<T, Box<dyn Error + Send + Sync>>;
@@ -70,6 +70,8 @@ pub async fn run_command(
         Commands::Approvals { command } => approvals::approvals(client, command, json_output).await,
         Commands::Triggers { command } => triggers::triggers(client, command, json_output).await,
         Commands::Freeze { command } => freeze::freeze(client, command, json_output).await,
+        Commands::Files { command } => files::files(client, command, json_output).await,
+        Commands::Notebooks { command } => notebooks::notebooks(client, command, json_output).await,
         Commands::Providers { command } => providers::providers(client, command, json_output).await,
         Commands::Functions { command } => functions::functions(client, command, json_output).await,
         Commands::Pipelines { command } => pipelines::pipelines(client, command, json_output).await,
@@ -151,6 +153,7 @@ pub use workflows::workflows_scaffold;
 pub use workflows::workflows_test;
 mod approvals;
 mod artifacts;
+mod files;
 mod freeze;
 mod functions;
 pub use functions::functions_validate;
@@ -158,6 +161,7 @@ mod console;
 mod execution_profiles;
 mod mcp;
 mod missions;
+mod notebooks;
 mod orchestrations;
 mod pipelines;
 mod providers;

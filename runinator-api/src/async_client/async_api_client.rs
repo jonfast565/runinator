@@ -92,6 +92,39 @@ where
         Ok(response.json::<ConsoleSessionDetail>().await?)
     }
 
+    pub async fn rename_console_session(
+        &self,
+        session_id: Uuid,
+        name: &str,
+    ) -> Result<ConsoleSessionDetail> {
+        let url = self
+            .build_url(&format!("/console/sessions/{session_id}"))
+            .await?;
+        let response = self
+            .send(self.http_patch(url.clone()).json(&json!({ "name": name })))
+            .await?;
+        Ok(Self::handle_response(url, response)
+            .await?
+            .json::<ConsoleSessionDetail>()
+            .await?)
+    }
+
+    pub async fn clear_console_session(&self, session_id: Uuid) -> Result<Value> {
+        let url = self
+            .build_url(&format!("/console/sessions/{session_id}/clear"))
+            .await?;
+        let response = self.send(self.http_post(url.clone())).await?;
+        Ok(Self::handle_response(url, response).await?.json().await?)
+    }
+
+    pub async fn delete_console_session(&self, session_id: Uuid) -> Result<Value> {
+        let url = self
+            .build_url(&format!("/console/sessions/{session_id}"))
+            .await?;
+        let response = self.send(self.http_delete(url.clone())).await?;
+        Ok(Self::handle_response(url, response).await?.json().await?)
+    }
+
     /// Append a cell to a durable session.
     pub async fn create_console_cell(
         &self,
@@ -122,6 +155,25 @@ where
         let response = self.send(self.http_get(url.clone())).await?;
         let response = Self::handle_response(url, response).await?;
         Ok(response.json::<ConsoleCell>().await?)
+    }
+
+    pub async fn update_console_cell(
+        &self,
+        cell_id: Uuid,
+        cell: &NewConsoleCell,
+    ) -> Result<ConsoleCell> {
+        let url = self.build_url(&format!("/console/cells/{cell_id}")).await?;
+        let response = self.send(self.http_patch(url.clone()).json(cell)).await?;
+        Ok(Self::handle_response(url, response)
+            .await?
+            .json::<ConsoleCell>()
+            .await?)
+    }
+
+    pub async fn delete_console_cell(&self, cell_id: Uuid) -> Result<Value> {
+        let url = self.build_url(&format!("/console/cells/{cell_id}")).await?;
+        let response = self.send(self.http_delete(url.clone())).await?;
+        Ok(Self::handle_response(url, response).await?.json().await?)
     }
 
     /// Cancel the durable workflow behind a running console cell.
@@ -2222,6 +2274,67 @@ where
         Ok(response.json::<FreezeWindow>().await?)
     }
 
+    pub async fn update_freeze_window(
+        &self,
+        window_id: Uuid,
+        window: &NewFreezeWindow,
+    ) -> Result<FreezeWindow> {
+        let url = self.build_url(&api_freeze_window(window_id)).await?;
+        let response = self.send(self.http_patch(url.clone()).json(window)).await?;
+        Ok(Self::handle_response(url, response)
+            .await?
+            .json::<FreezeWindow>()
+            .await?)
+    }
+
+    pub async fn create_calendar_subscription(
+        &self,
+        scope: &str,
+        org_id: Option<Uuid>,
+    ) -> Result<CalendarSubscriptionSecret> {
+        let url = self.build_url("/schedules/calendar-subscriptions").await?;
+        let response = self
+            .send(
+                self.http_post(url.clone())
+                    .json(&json!({ "scope": scope, "org_id": org_id })),
+            )
+            .await?;
+        Ok(Self::handle_response(url, response)
+            .await?
+            .json::<CalendarSubscriptionSecret>()
+            .await?)
+    }
+
+    pub async fn delete_calendar_subscription(&self, subscription_id: Uuid) -> Result<()> {
+        let url = self
+            .build_url(&format!(
+                "/schedules/calendar-subscriptions/{subscription_id}"
+            ))
+            .await?;
+        let response = self.send(self.http_delete(url.clone())).await?;
+        Self::handle_response(url, response).await?;
+        Ok(())
+    }
+
+    pub async fn download_schedule_calendar(
+        &self,
+        scope: &str,
+        org_id: Option<Uuid>,
+    ) -> Result<Vec<u8>> {
+        let mut url = self.build_url("/schedules/calendar.ics").await?;
+        url.query_pairs_mut().append_pair("scope", scope);
+        if let Some(org_id) = org_id {
+            url.query_pairs_mut()
+                .append_pair("org_id", &org_id.to_string());
+        }
+        let response = self.send(self.http_get(url.clone())).await?;
+        Ok(Self::handle_response(url, response)
+            .await?
+            .bytes()
+            .await?
+            .to_vec())
+    }
+
     pub async fn delete_freeze_window(&self, window_id: Uuid) -> Result<TaskResponse> {
         let url = self.build_url(&api_freeze_window(window_id)).await?;
         let response = self.send(self.http_delete(url.clone())).await?;
@@ -2263,6 +2376,41 @@ where
         let response = self.send(self.http_delete(url.clone())).await?;
         let response = Self::handle_response(url, response).await?;
         Ok(response.json::<TaskResponse>().await?)
+    }
+
+    pub async fn list_workflow_files(&self) -> Result<Vec<StoredFile>> {
+        let url = self.build_url(API_WORKFLOW_FILES).await?;
+        let response = self.send(self.http_get(url.clone())).await?;
+        Ok(Self::handle_response(url, response)
+            .await?
+            .json::<Vec<StoredFile>>()
+            .await?)
+    }
+
+    pub async fn upload_workflow_file(
+        &self,
+        path: &str,
+        mime_type: Option<&str>,
+        bytes: Vec<u8>,
+    ) -> Result<StoredFile> {
+        let mut url = self.build_url(API_WORKFLOW_FILES).await?;
+        url.query_pairs_mut().append_pair("path", path);
+        if let Some(mime_type) = mime_type {
+            url.query_pairs_mut().append_pair("mime_type", mime_type);
+        }
+        let response = self.send(self.http_post(url.clone()).body(bytes)).await?;
+        Ok(Self::handle_response(url, response)
+            .await?
+            .json::<StoredFile>()
+            .await?)
+    }
+
+    pub async fn archive_workflow_file(&self, file_id: Uuid) -> Result<Value> {
+        let url = self
+            .build_url(&format!("/workflow_files/{file_id}"))
+            .await?;
+        let response = self.send(self.http_delete(url.clone())).await?;
+        Ok(Self::handle_response(url, response).await?.json().await?)
     }
 
     pub async fn create_workflow_trigger_run(
@@ -2528,6 +2676,74 @@ where
         Ok(Self::handle_response(url, response).await?.json().await?)
     }
 
+    pub async fn delete_workflow(&self, workflow_id: Uuid) -> Result<TaskResponse> {
+        let url = self.build_url(&api_workflow(workflow_id)).await?;
+        let response = self.send(self.http_delete(url.clone())).await?;
+        Ok(Self::handle_response(url, response)
+            .await?
+            .json::<TaskResponse>()
+            .await?)
+    }
+
+    pub async fn debug_workflow_run(
+        &self,
+        workflow_run_id: Uuid,
+        verb: &DebugVerb,
+    ) -> Result<TaskResponse> {
+        let url = self
+            .build_url(&format!("/workflow_runs/{workflow_run_id}/debug/command"))
+            .await?;
+        let response = self.send(self.http_post(url.clone()).json(verb)).await?;
+        Ok(Self::handle_response(url, response)
+            .await?
+            .json::<TaskResponse>()
+            .await?)
+    }
+
+    pub async fn deliver_workflow_signal(
+        &self,
+        workflow_run_id: Uuid,
+        name: &str,
+        payload: Value,
+    ) -> Result<TaskResponse> {
+        let url = self
+            .build_url(&format!("/workflow_runs/{workflow_run_id}/signals"))
+            .await?;
+        let response = self
+            .send(
+                self.http_post(url.clone())
+                    .json(&json!({ "name": name, "payload": payload })),
+            )
+            .await?;
+        Ok(Self::handle_response(url, response)
+            .await?
+            .json::<TaskResponse>()
+            .await?)
+    }
+
+    pub async fn request_workflow_interrupt(
+        &self,
+        workflow_run_id: Uuid,
+        source: &str,
+        payload: Value,
+        continuation_id: Option<Uuid>,
+    ) -> Result<TaskResponse> {
+        let url = self
+            .build_url(&format!("/workflow_runs/{workflow_run_id}/interrupts"))
+            .await?;
+        let response = self
+            .send(self.http_post(url.clone()).json(&json!({
+                "source": source,
+                "payload": payload,
+                "continuation_id": continuation_id,
+            })))
+            .await?;
+        Ok(Self::handle_response(url, response)
+            .await?
+            .json::<TaskResponse>()
+            .await?)
+    }
+
     pub async fn replay_workflow_run_reviewed(
         &self,
         workflow_run_id: Uuid,
@@ -2646,6 +2862,24 @@ where
             Self::handle_response(url.clone(), self.send(self.http_get(url.clone())).await?)
                 .await?;
         Ok(response.json::<Vec<WorkflowEffectOutputEvent>>().await?)
+    }
+
+    pub async fn download_workflow_effect_artifact(
+        &self,
+        effect_id: Uuid,
+        event_id: Uuid,
+    ) -> Result<Vec<u8>> {
+        let url = self
+            .build_url(&format!(
+                "/workflow_effects/{effect_id}/output/{event_id}/artifact"
+            ))
+            .await?;
+        let response = self.send(self.http_get(url.clone())).await?;
+        Ok(Self::handle_response(url, response)
+            .await?
+            .bytes()
+            .await?
+            .to_vec())
     }
 
     /// Deliver one structured steering message to the worker currently owning a harnessed effect.

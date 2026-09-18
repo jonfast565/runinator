@@ -33,6 +33,30 @@ pub(super) async fn workflows(
             }
             println!("workflow {} v{} validates", workflow.name, workflow.version);
         }
+        WorkflowCommands::Simulate {
+            file,
+            input_file,
+            replay_run,
+        } => {
+            let workflow = read_workflow_definition(file)?;
+            let inputs = match input_file {
+                Some(path) => params::load_json_file(path)?,
+                None => Value::Object(Map::new()),
+            };
+            let result = client
+                .simulate_workflow(&runinator_models::workflows::WorkflowSimulateRequest {
+                    workflow,
+                    inputs,
+                    replay_run: *replay_run,
+                })
+                .await?;
+            output::json(&result)?;
+        }
+        WorkflowCommands::ContractImpact { file } => {
+            let workflow = read_workflow_definition(file)?;
+            let impact = client.workflow_contract_impact(&workflow).await?;
+            output::json(&impact)?;
+        }
         WorkflowCommands::Apply {
             file,
             contract_override_reason,
@@ -48,6 +72,20 @@ pub(super) async fn workflows(
             if !json_output {
                 print_apply_summary(&summary);
             }
+        }
+        WorkflowCommands::ImportArchive {
+            file,
+            overwrite,
+            contract_override_reason,
+        } => {
+            let imported = client
+                .import_reviewed_pack_zip(
+                    fs::read(file)?,
+                    *overwrite,
+                    contract_override_reason.as_deref(),
+                )
+                .await?;
+            output::json(&imported)?;
         }
         WorkflowCommands::Test {
             file,
@@ -175,6 +213,30 @@ pub(super) async fn workflows(
                 copy.id.unwrap_or_default(),
                 copy.version
             );
+        }
+        WorkflowCommands::Enable { workflow } | WorkflowCommands::Disable { workflow } => {
+            let mut definition = fetch_workflow_ref(client, workflow).await?;
+            definition.enabled = matches!(command, WorkflowCommands::Enable { .. });
+            let saved = client.upsert_workflow(&definition).await?;
+            if json_output {
+                return output::json(&saved);
+            }
+            println!(
+                "{} workflow {}",
+                if saved.enabled { "enabled" } else { "disabled" },
+                saved.name
+            );
+        }
+        WorkflowCommands::Delete { workflow } => {
+            let definition = fetch_workflow_ref(client, workflow).await?;
+            let id = definition
+                .id
+                .ok_or_else(|| err("workflow has no persisted id"))?;
+            print_task_response(
+                client.delete_workflow(id).await?,
+                "deleted workflow",
+                json_output,
+            )?;
         }
         WorkflowCommands::Run {
             workflow,

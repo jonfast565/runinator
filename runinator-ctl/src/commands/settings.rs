@@ -117,6 +117,23 @@ pub(super) async fn settings(
                 file.display()
             );
         }
+        SettingsCommands::Move {
+            id,
+            scope,
+            name,
+            kind,
+        } => {
+            let response = client
+                .move_setting(*id, SettingKind::from(*kind), scope, name)
+                .await?;
+            if json_output {
+                return output::json(&response);
+            }
+            println!(
+                "moved {} to {scope}/{name}",
+                SettingKind::from(*kind).as_str()
+            );
+        }
         SettingsCommands::Delete { scope, name, kind } => {
             let response = client
                 .delete_setting(SettingKind::from(*kind), scope, name)

@@ -24,6 +24,13 @@ fn lists_console_verbs_and_every_command_line_leaf() {
     assert!(names.contains(&"workspaces import".to_string()));
     assert!(names.contains(&"workspaces export".to_string()));
     assert!(names.contains(&"workspaces download".to_string()));
+    assert!(names.contains(&"workspaces delete".to_string()));
+    assert!(names.contains(&"workflows simulate".to_string()));
+    assert!(names.contains(&"runs signal".to_string()));
+    assert!(names.contains(&"runs terminal input".to_string()));
+    assert!(names.contains(&"freeze calendar subscribe".to_string()));
+    assert!(names.contains(&"files upload".to_string()));
+    assert!(names.contains(&"notebooks cells run".to_string()));
     assert!(entry("workspaces export").usage.contains("--filesystem"));
     assert!(entry("workspaces ls").usage.contains("--cursor"));
     assert!(names.contains(&"replicas list".to_string()));

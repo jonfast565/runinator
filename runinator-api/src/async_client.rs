@@ -5,7 +5,7 @@ mod settings;
 
 use chrono::{DateTime, Utc};
 use reqwest::{Client, Response, Url};
-use runinator_comm::{AgentDirectiveKind, AgentDirectiveRecord};
+use runinator_comm::{AgentDirectiveKind, AgentDirectiveRecord, DebugVerb};
 use runinator_models::json;
 use runinator_models::pipelines::{Pipeline, PipelineBundle, PipelineRun, PipelineRunDetail};
 use runinator_models::value::Value;
@@ -44,6 +44,7 @@ use runinator_models::{
         ExecutionProfileOperationCompleteRequest, ExecutionProfilePublishRequest,
         ExecutionProfilePutRequest, ExecutionProfileRevision, ExecutionProfileStatusRequest,
     },
+    files::StoredFile,
     functions::{
         FunctionAlias, FunctionArtifact, FunctionCatalogEntry, FunctionInvocationTarget,
         FunctionPackage, FunctionPackageDetail, FunctionVersion, NewFunctionVersion,
@@ -65,7 +66,10 @@ use runinator_models::{
     },
     revisions::{PipelineRevision, WorkflowRevision},
     runs::ProviderTerminalControl,
-    schedules::{BackfillRequest, BackfillResponse, FreezeWindow, NewFreezeWindow},
+    schedules::{
+        BackfillRequest, BackfillResponse, CalendarSubscriptionSecret, FreezeWindow,
+        NewFreezeWindow,
+    },
     telemetry::ReplicaSampleSeries,
     web::TaskResponse,
     workflow_vm::{
