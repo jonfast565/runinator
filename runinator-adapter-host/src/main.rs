@@ -1183,6 +1183,16 @@ impl From<String> for PollError {
 /// Walk a GitHub collection newest-first, stopping at the first page whose items are all older
 /// than `since`. Without this a repository with more than one page of activity silently dropped
 /// everything past the first hundred items the moment the watermark moved past them.
+/// whether an item's timestamp predates the stream's checkpoint mark.
+///
+/// [`github_collect`] stops paging once a whole page predates the mark but still returns every
+/// item it walked, so each stream drops its own stale items. naming that check keeps the streams
+/// comparable: the `pull_request_review` stream once omitted it and paid a request per pull
+/// request in the repository on every poll.
+fn github_predates_mark(stamp: &str, since: Option<&str>) -> bool {
+    since.is_some_and(|mark| !stamp.is_empty() && stamp < mark)
+}
+
 async fn github_collect(
     client: &AsyncGitHubClient,
     mut operation: impl FnMut(u32) -> GitHubOperation,
@@ -1452,10 +1462,7 @@ async fn poll_github_inner(request: &AdapterPollRequest) -> Result<AdapterPollRe
             .await?
             {
                 let updated = github_updated_at(&value);
-                if since
-                    .as_deref()
-                    .is_some_and(|mark| !updated.is_empty() && updated.as_str() < mark)
-                {
+                if github_predates_mark(&updated, since.as_deref()) {
                     continue;
                 }
                 let id = value.get("id").map(value_string).unwrap_or_default();
@@ -1515,6 +1522,15 @@ async fn poll_github_inner(request: &AdapterPollRequest) -> Result<AdapterPollRe
             let pull_id = pull.get("id").map(value_string).unwrap_or_default();
             let number = pull.get("number").map(value_string).unwrap_or_default();
             if pull_id.is_empty() || number.is_empty() {
+                continue;
+            }
+            // `github_collect` stops paging once a whole page predates the mark, but still returns
+            // everything it walked, so the sibling streams above drop the stale items themselves.
+            // this one costs a request per pull, so skipping them here is the difference between
+            // one call for each pull that actually moved and one for every pull in the repository
+            // on every poll -- which is what pushed this stream past its own poll timeout.
+            let pull_updated = github_updated_at(&pull);
+            if github_predates_mark(&pull_updated, since.as_deref()) {
                 continue;
             }
             // the reviews listing is not paginated, so it is fetched whole rather than through
@@ -1603,10 +1619,7 @@ async fn poll_github_inner(request: &AdapterPollRequest) -> Result<AdapterPollRe
             .await?;
             for check in checks {
                 let updated = github_check_stamp(&check);
-                if since
-                    .as_deref()
-                    .is_some_and(|mark| !updated.is_empty() && updated.as_str() < mark)
-                {
+                if github_predates_mark(&updated, since.as_deref()) {
                     continue;
                 }
                 let id = check.get("id").map(value_string).unwrap_or_default();
