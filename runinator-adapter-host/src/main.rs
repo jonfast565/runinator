@@ -20,6 +20,8 @@ use runinator_adapter_contract::{
     MarkerFn, NAME_SYMBOL, NameFn, POLL_SYMBOL, VALIDATE_SYMBOL, call_symbol, cstr_to_rust_string,
     find_marker, invoke_file_operation, verify_bearer, verify_hmac_sha256,
 };
+use runinator_github::{AsyncGitHubClient, GitHubOperation};
+use runinator_jira::{AsyncJiraClient, JiraCredentials, JiraOperation};
 use runinator_models::{
     orchestration::{
         AdapterAuthenticationKind, AdapterConfigurationField, AdapterKindCatalogEntry,
@@ -28,6 +30,7 @@ use runinator_models::{
     types::{RuninatorField, RuninatorType},
 };
 use runinator_platform::{env, time};
+use runinator_provider_support::polling::{PollLimit, PollPage, poll_pages_async};
 use serde::Deserialize;
 use serde_json::{Value, json};
 use tokio::{process::Command, sync::RwLock, time::timeout};
@@ -1173,140 +1176,94 @@ fn poll_response(events: Vec<NormalizedAdapterEvent>, checkpoint: Value) -> Adap
     }
 }
 
-/// A poll that ran out of upstream quota. This is not an adapter fault: the checkpoint must be
-/// preserved verbatim and the caller told when to come back, which is why it is distinct from an
-/// ordinary error string.
-
-enum PollError {
-    RateLimited(RateLimited),
-    Failed(String),
+/// A service poll failure that preserves its optional upstream retry hint.
+struct PollError {
+    message: String,
+    retry_after_seconds: Option<u64>,
 }
 
 impl From<String> for PollError {
     fn from(value: String) -> Self {
-        Self::Failed(value)
-    }
-}
-
-fn retry_after_header(response: &reqwest::Response) -> Option<u64> {
-    response
-        .headers()
-        .get("retry-after")
-        .and_then(|value| value.to_str().ok())
-        .and_then(|value| value.parse().ok())
-}
-
-/// The `Link: <url>; rel="next"` cursor GitHub returns on every paginated collection.
-#[cfg(test)]
-fn parse_next_link(header: &str) -> Option<String> {
-    header.split(',').find_map(|part| {
-        let (url, rel) = part.split_once(';')?;
-        rel.contains("rel=\"next\"").then(|| {
-            url.trim()
-                .trim_start_matches('<')
-                .trim_end_matches('>')
-                .to_owned()
-        })
-    })
-}
-
-fn github_command(url: &str, access_token: Option<&str>) -> Command {
-    let mut command = Command::new("gh");
-    command
-        .args([
-            "api",
-            "--method",
-            "GET",
-            "--header",
-            "Accept: application/vnd.github+json",
-            "--header",
-            "X-GitHub-Api-Version: 2022-11-28",
-            url,
-        ])
-        .env_remove("GH_TOKEN")
-        .env_remove("GITHUB_TOKEN")
-        .env("GH_PROMPT_DISABLED", "1")
-        .env("GH_PAGER", "cat")
-        .env("NO_COLOR", "1");
-    if let Some(access_token) = access_token {
-        command.env("GH_TOKEN", access_token);
-    }
-    command
-}
-
-async fn github_get(url: &str, access_token: Option<&str>) -> Result<Value, PollError> {
-    let mut command = github_command(url, access_token);
-    let output = timeout(Duration::from_secs(30), command.output())
-        .await
-        .map_err(|_| PollError::Failed("gh api timed out".into()))?
-        .map_err(|error| PollError::Failed(format!("gh api could not start: {error}")))?;
-    if !output.status.success() {
-        let error = String::from_utf8_lossy(&output.stderr).trim().to_string();
-        if error.to_ascii_lowercase().contains("rate limit") {
-            return Err(PollError::RateLimited(RateLimited {
-                retry_after_seconds: None,
-            }));
+        Self {
+            message: value,
+            retry_after_seconds: None,
         }
-        return Err(PollError::Failed(format!("gh api failed: {error}")));
     }
-    if output.stdout.len() > DEFAULT_OUTPUT_LIMIT * 4 {
-        return Err(PollError::Failed("gh api response exceeds 4 MiB".into()));
-    }
-    serde_json::from_slice(&output.stdout)
-        .map_err(|error| PollError::Failed(format!("gh api returned invalid JSON: {error}")))
 }
 
 /// Walk a GitHub collection newest-first, stopping at the first page whose items are all older
 /// than `since`. Without this a repository with more than one page of activity silently dropped
 /// everything past the first hundred items the moment the watermark moved past them.
 async fn github_collect(
-    first_url: String,
+    client: &AsyncGitHubClient,
+    mut operation: impl FnMut(u32) -> GitHubOperation,
     array_key: Option<&str>,
     since: Option<&str>,
-    timestamp_of: impl Fn(&Value) -> String,
-    access_token: Option<&str>,
+    timestamp_of: impl Fn(&Value) -> String + Copy,
 ) -> Result<Vec<Value>, PollError> {
-    let mut collected = Vec::new();
-    for page in 1..=GITHUB_MAX_PAGES {
-        let separator = if first_url.contains('?') { '&' } else { '?' };
-        let current = format!("{first_url}{separator}page={page}");
-        let body = github_get(&current, access_token).await?;
-        let values = array_key
-            .and_then(|key| body.get(key))
-            .and_then(Value::as_array)
-            .or_else(|| body.as_array())
-            .cloned()
-            .unwrap_or_default();
-        if values.is_empty() {
-            break;
-        }
-        let exhausted = since.is_some_and(|since| {
-            values.iter().all(|value| {
-                let stamp = timestamp_of(value);
-                !stamp.is_empty() && stamp.as_str() < since
-            })
-        });
-        let page_len = values.len();
-        collected.extend(values);
-        if exhausted {
-            break;
-        }
-        if page_len < 100 {
-            break;
-        }
-        require_complete_page(page == GITHUB_MAX_PAGES)?;
-    }
-    Ok(collected)
+    poll_pages_async(
+        Some(1u32),
+        GITHUB_MAX_PAGES,
+        |page| {
+            let page = page.unwrap_or(1);
+            let call = operation(page);
+            async move {
+                let body = client.execute(call).await.map_err(github_poll_error)?;
+                let values = array_key
+                    .and_then(|key| body.get(key))
+                    .and_then(Value::as_array)
+                    .or_else(|| body.as_array())
+                    .cloned()
+                    .unwrap_or_default();
+                let exhausted = since.is_some_and(|since| {
+                    values.iter().all(|value| {
+                        let stamp = timestamp_of(value);
+                        !stamp.is_empty() && stamp.as_str() < since
+                    })
+                });
+                let page_len = values.len();
+                let next_cursor = (!exhausted && page_len == 100).then_some(page + 1);
+                Ok(PollPage {
+                    items: values,
+                    next_cursor,
+                })
+            }
+        },
+        |limit| incomplete_poll("GitHub", limit),
+    )
+    .await
 }
 
 fn require_complete_page(incomplete: bool) -> Result<(), PollError> {
     if incomplete {
-        return Err(PollError::Failed(
-            "GitHub scan exceeded its budget before reaching the checkpoint; checkpoint retained"
+        return Err(PollError {
+            message: "GitHub scan exceeded its budget before reaching the checkpoint; checkpoint retained"
                 .into(),
-        ));
+            retry_after_seconds: None,
+        });
     }
     Ok(())
+}
+
+fn github_poll_error(error: runinator_github::errors::GitHubError) -> PollError {
+    PollError {
+        retry_after_seconds: error.retry_after_seconds(),
+        message: error.to_string(),
+    }
+}
+
+fn jira_poll_error(error: runinator_jira::errors::JiraError) -> PollError {
+    PollError {
+        retry_after_seconds: error.retry_after_seconds(),
+        message: error.to_string(),
+    }
+}
+
+fn incomplete_poll(service: &str, limit: PollLimit) -> PollError {
+    PollError {
+        message: format!("{service} polling did not complete: {limit:?}"),
+        retry_after_seconds: None,
+    }
 }
 
 fn operation_provenance(payload: &Value) -> Value {
@@ -1366,20 +1323,25 @@ fn github_check_stamp(value: &Value) -> String {
 }
 
 async fn poll_github(request: AdapterPollRequest) -> AdapterPollResponse {
+    run_builtin_poll(request, |request| Box::pin(poll_github_inner(request))).await
+}
+
+async fn run_builtin_poll<F>(request: AdapterPollRequest, poll: F) -> AdapterPollResponse
+where
+    F: for<'a> FnOnce(
+        &'a AdapterPollRequest,
+    ) -> std::pin::Pin<
+        Box<dyn std::future::Future<Output = Result<AdapterPollResponse, PollError>> + Send + 'a>,
+    >,
+{
     let fallback_checkpoint = request.checkpoint.clone();
-    match poll_github_inner(&request).await {
+    match poll(&request).await {
         Ok(response) => response,
-        Err(PollError::RateLimited(limited)) => AdapterPollResponse {
+        Err(error) => AdapterPollResponse {
             events: Vec::new(),
             checkpoint: fallback_checkpoint,
-            retry_after_seconds: limited.retry_after_seconds,
-            error: Some("GitHub rate limit reached".into()),
-        },
-        Err(PollError::Failed(error)) => AdapterPollResponse {
-            events: Vec::new(),
-            checkpoint: fallback_checkpoint,
-            retry_after_seconds: None,
-            error: Some(error),
+            retry_after_seconds: error.retry_after_seconds,
+            error: Some(error.message),
         },
     }
 }
@@ -1397,13 +1359,19 @@ async fn poll_github_inner(request: &AdapterPollRequest) -> Result<AdapterPollRe
         .get("access_token")
         .and_then(Value::as_str)
         .filter(|value| !value.trim().is_empty());
+    let client = AsyncGitHubClient::cli(
+        access_token.map(str::to_owned),
+        Duration::from_secs(30),
+        DEFAULT_OUTPUT_LIMIT * 4,
+    );
 
     for repository in repositories.iter().filter_map(Value::as_str) {
-        let repository_info = github_get(
-            &format!("https://api.github.com/repos/{repository}"),
-            access_token,
-        )
-        .await?;
+        let repository_info = client
+            .execute(GitHubOperation::Repository {
+                repository: repository.into(),
+            })
+            .await
+            .map_err(github_poll_error)?;
         let repository_id = github_repository_id(repository, &repository_info)?;
         if request.initialize {
             // initialization deliberately establishes the boundary without scanning old history.
@@ -1414,28 +1382,38 @@ async fn poll_github_inner(request: &AdapterPollRequest) -> Result<AdapterPollRe
             continue;
         }
 
-        for (url, event_type, array_key) in [
-            (
-                format!(
-                    "https://api.github.com/repos/{repository}/pulls?state=all&sort=updated&direction=desc&per_page=100"
-                ),
-                "pull_request",
-                None,
-            ),
-            (
-                format!("https://api.github.com/repos/{repository}/actions/runs?per_page=100"),
-                "workflow_run",
-                Some("workflow_runs"),
-            ),
+        for (event_type, array_key) in [
+            ("pull_request", None),
+            ("workflow_run", Some("workflow_runs")),
         ] {
             let stream = format!("{repository_id}:{event_type}");
             let since = stream_checkpoint(&request.checkpoint, &stream);
             for value in github_collect(
-                url,
+                &client,
+                |page| {
+                    if event_type == "pull_request" {
+                        GitHubOperation::PullRequests {
+                            repository: repository.into(),
+                            state: "all".into(),
+                            head: None,
+                            per_page: 100,
+                            page,
+                        }
+                    } else {
+                        GitHubOperation::WorkflowRuns {
+                            repository: repository.into(),
+                            workflow_id: None,
+                            branch: None,
+                            event: None,
+                            status: None,
+                            per_page: Some(100),
+                            page: Some(page),
+                        }
+                    }
+                },
                 array_key,
                 since.as_deref(),
                 github_updated_at,
-                access_token,
             )
             .await?
             {
@@ -1476,13 +1454,15 @@ async fn poll_github_inner(request: &AdapterPollRequest) -> Result<AdapterPollRe
 
         let stream = format!("{repository_id}:check_run");
         let since = stream_checkpoint(&request.checkpoint, &stream);
-        let mut commits_url =
-            format!("https://api.github.com/repos/{repository}/commits?per_page=100");
-        if let Some(since) = &since {
-            commits_url.push_str("&since=");
-            commits_url.push_str(&urlencoding::encode(since));
-        }
-        let commits = github_get(&commits_url, access_token).await?;
+        let commits = client
+            .execute(GitHubOperation::Commits {
+                repository: repository.into(),
+                since: since.clone(),
+                per_page: 100,
+                page: 1,
+            })
+            .await
+            .map_err(github_poll_error)?;
         // one check-runs request per commit is the expensive part of this poll. bounding it keeps a
         // busy repository from spending the hourly quota in a single pass; `since` above is what
         // keeps the steady-state list short in the first place.
@@ -1493,13 +1473,16 @@ async fn poll_github_inner(request: &AdapterPollRequest) -> Result<AdapterPollRe
                 continue;
             };
             let checks = github_collect(
-                format!(
-                    "https://api.github.com/repos/{repository}/commits/{sha}/check-runs?per_page=100"
-                ),
+                &client,
+                |page| GitHubOperation::CheckRuns {
+                    repository: repository.into(),
+                    git_ref: sha.into(),
+                    per_page: Some(100),
+                    page: Some(page),
+                },
                 Some("check_runs"),
                 None,
                 github_check_stamp,
-                access_token,
             )
             .await?;
             for check in checks {
@@ -1563,22 +1546,7 @@ fn jira_relative_bound(previous: &str) -> Option<String> {
 }
 
 async fn poll_jira(request: AdapterPollRequest) -> AdapterPollResponse {
-    let fallback_checkpoint = request.checkpoint.clone();
-    match poll_jira_inner(&request).await {
-        Ok(response) => response,
-        Err(PollError::RateLimited(limited)) => AdapterPollResponse {
-            events: Vec::new(),
-            checkpoint: fallback_checkpoint,
-            retry_after_seconds: limited.retry_after_seconds,
-            error: Some("Jira rate limit reached".into()),
-        },
-        Err(PollError::Failed(error)) => AdapterPollResponse {
-            events: Vec::new(),
-            checkpoint: fallback_checkpoint,
-            retry_after_seconds: None,
-            error: Some(error),
-        },
-    }
+    run_builtin_poll(request, |request| Box::pin(poll_jira_inner(request))).await
 }
 
 async fn poll_jira_inner(request: &AdapterPollRequest) -> Result<AdapterPollResponse, PollError> {
@@ -1598,66 +1566,30 @@ async fn poll_jira_inner(request: &AdapterPollRequest) -> Result<AdapterPollResp
         None => jql.to_owned(),
     };
 
-    let client = reqwest::Client::new();
-    let mut issues = Vec::new();
-    let mut next_page_token: Option<String> = None;
-    for page in 0..JIRA_MAX_PAGES {
-        let requested_page_token = next_page_token.clone();
-        let mut call = client
-            .get(format!("{base_url}/rest/api/3/search/jql"))
-            .basic_auth(email, Some(token))
-            .query(&[
-                ("jql", query.as_str()),
-                ("maxResults", "100"),
-                (
-                    "fields",
-                    "summary,description,project,status,labels,issuetype,priority,assignee,components,updated,comment",
-                ),
-            ]);
-        if let Some(token) = &next_page_token {
-            call = call.query(&[("nextPageToken", token)]);
+    let client = AsyncJiraClient::new(
+        base_url,
+        JiraCredentials {
+            email: email.into(),
+            token: token.into(),
+        },
+        Duration::from_secs(30),
+    )
+    .map_err(jira_poll_error)?;
+    let issues = poll_pages_async(None, JIRA_MAX_PAGES, |next_page_token| {
+        let operation = JiraOperation::Search {
+            jql: query.clone(),
+            max_results: Some(100),
+            fields: "summary,description,project,status,labels,issuetype,priority,assignee,components,updated,comment".into(),
+            next_page_token,
+        };
+        let client = &client;
+        async move {
+            let response = client.execute(operation).await.map_err(jira_poll_error)?;
+            let items = response.get("issues").and_then(Value::as_array).cloned().unwrap_or_default();
+            let next_cursor = response.get("nextPageToken").and_then(Value::as_str).map(str::to_owned).filter(|value| !value.is_empty());
+            Ok(PollPage { items, next_cursor })
         }
-        let response = call
-            .send()
-            .await
-            .map_err(|error| PollError::Failed(error.to_string()))?;
-        if response.status() == reqwest::StatusCode::TOO_MANY_REQUESTS {
-            return Err(PollError::RateLimited(RateLimited {
-                retry_after_seconds: retry_after_header(&response),
-            }));
-        }
-        let response = response
-            .error_for_status()
-            .map_err(|error| PollError::Failed(error.to_string()))?
-            .json::<Value>()
-            .await
-            .map_err(|error| PollError::Failed(error.to_string()))?;
-        issues.extend(
-            response
-                .get("issues")
-                .and_then(Value::as_array)
-                .cloned()
-                .unwrap_or_default(),
-        );
-        next_page_token = response
-            .get("nextPageToken")
-            .and_then(Value::as_str)
-            .map(str::to_owned)
-            .filter(|value| !value.is_empty());
-        if next_page_token.is_some() && next_page_token == requested_page_token {
-            return Err(PollError::Failed(
-                "Jira polling received a repeated page token".to_string(),
-            ));
-        }
-        if next_page_token.is_none() {
-            break;
-        }
-        if page + 1 == JIRA_MAX_PAGES {
-            return Err(PollError::Failed(format!(
-                "Jira polling exceeded {JIRA_MAX_PAGES} result pages"
-            )));
-        }
-    }
+    }, |limit| incomplete_poll("Jira", limit)).await?;
 
     let mut marks = existing_streams(&request.checkpoint);
     let mut events = Vec::new();
@@ -2555,22 +2487,26 @@ mod tests {
         );
     }
 
-    #[test]
-    fn a_next_page_cursor_is_read_from_the_link_header() {
-        // without following this cursor a repository with more than one page of activity dropped
-        // everything past the first hundred items as soon as the watermark moved past them.
-        assert_eq!(
-            parse_next_link(
-                "<https://api.github.com/repos/o/r/pulls?page=2>; rel=\"next\", <https://api.github.com/repos/o/r/pulls?page=9>; rel=\"last\""
-            )
-            .as_deref(),
-            Some("https://api.github.com/repos/o/r/pulls?page=2")
-        );
-        assert_eq!(
-            parse_next_link("<https://api.github.com/repos/o/r/pulls?page=9>; rel=\"last\""),
-            None,
-            "the last page has no next cursor and must end the walk"
-        );
+    #[tokio::test]
+    async fn generic_builtin_poll_preserves_checkpoint_and_retry_on_failure() {
+        let request = AdapterPollRequest {
+            configuration: Value::Null,
+            secrets: Value::Null,
+            checkpoint: json!({ "cursor": "old" }),
+            initialize: false,
+        };
+        let response = run_builtin_poll(request, |_| {
+            Box::pin(async {
+                Err(PollError {
+                    message: "limited".into(),
+                    retry_after_seconds: Some(17),
+                })
+            })
+        })
+        .await;
+        assert_eq!(response.checkpoint, json!({ "cursor": "old" }));
+        assert_eq!(response.retry_after_seconds, Some(17));
+        assert_eq!(response.error.as_deref(), Some("limited"));
     }
 
     #[test]
@@ -2747,24 +2683,6 @@ mod tests {
         assert_eq!(github.polling_secret_fields[0].name, "access_token");
         assert_eq!(github.execution_profile_scopes, vec!["github"]);
     }
-
-    #[test]
-    fn github_api_tokens_are_supplied_only_to_the_gh_process() {
-        let command = github_command("repos/octo/example", Some("adapter-token"));
-        let gh_token = command
-            .as_std()
-            .get_envs()
-            .find(|(name, _)| *name == "GH_TOKEN")
-            .and_then(|(_, value)| value)
-            .and_then(|value| value.to_str());
-        assert_eq!(gh_token, Some("adapter-token"));
-        assert!(
-            command
-                .as_std()
-                .get_envs()
-                .any(|(name, value)| name == "GITHUB_TOKEN" && value.is_none())
-        );
-    }
 }
 
 #[cfg(test)]
@@ -2785,6 +2703,3 @@ use poll_invoke_request::PollInvokeRequest;
 
 mod validate_invoke_request;
 use validate_invoke_request::ValidateInvokeRequest;
-
-mod rate_limited;
-use rate_limited::RateLimited;

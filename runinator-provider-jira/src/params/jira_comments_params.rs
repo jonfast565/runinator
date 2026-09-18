@@ -3,8 +3,6 @@ use super::*;
 
 #[derive(Deserialize)]
 pub(crate) struct JiraCommentsParams {
-    #[serde(flatten)]
-    pub base: JiraBaseParams,
     pub key: String,
     // optional directory to also write downloaded images into (e.g. a worktree the
     // ai step reads from); images are always registered as run artifacts too.

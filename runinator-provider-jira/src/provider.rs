@@ -1,6 +1,7 @@
 use std::sync::Arc;
 use std::time::Duration;
 
+use runinator_jira::{JiraClient, JiraCredentials, JiraOperation};
 use runinator_models::json;
 use runinator_models::{
     errors::SendableError,
@@ -14,7 +15,7 @@ use runinator_models::{
 use runinator_plugin::provider::{Provider, ProviderEventSink};
 
 use crate::comments::{fetch_all_comments, jira_fetch_comments, render_comment_body};
-use crate::error::{MISSING_OPERATION_KEY, UNSUPPORTED_ACTION, http_error, validate_base_url};
+use crate::error::{MISSING_OPERATION_KEY, UNSUPPORTED_ACTION, client_error};
 use crate::metadata::{
     base_param, comments_results, email_param, issue_key_param, jira_results, token_param,
 };
@@ -22,7 +23,7 @@ use crate::params::{
     JiraCommentParams, JiraCommentsParams, JiraEnsureCommentParams, JiraEnsureTransitionParams,
     JiraIssueKeyParams, JiraSearchParams, JiraTransitionParams, parse_params,
 };
-use crate::response::{json_response, response_json};
+use crate::response::json_response;
 use crate::search::jira_search_all;
 
 #[derive(Clone)]
@@ -172,10 +173,30 @@ impl Provider for JiraProvider {
         _sink: Option<Arc<dyn ProviderEventSink>>,
         _token: runinator_plugin::cancel::CancellationToken,
     ) -> Result<TaskExecutionResult, SendableError> {
-        let client = reqwest::blocking::Client::builder()
-            .timeout(Duration::from_secs(request.timeout_secs.max(1) as u64))
-            .build()
-            .map_err(|e| http_error("jira client build failed", e))?;
+        let base_url = request
+            .parameters
+            .get("base_url")
+            .and_then(runinator_models::value::Value::as_str)
+            .unwrap_or_default();
+        let token = request
+            .parameters
+            .get("token")
+            .and_then(runinator_models::value::Value::as_str)
+            .unwrap_or_default();
+        let email = request
+            .parameters
+            .get("email")
+            .and_then(runinator_models::value::Value::as_str)
+            .unwrap_or_default();
+        let client = JiraClient::new(
+            base_url,
+            JiraCredentials {
+                email: email.into(),
+                token: token.into(),
+            },
+            Duration::from_secs(request.timeout_secs.max(1) as u64),
+        )
+        .map_err(|error| client_error("jira client build failed", error))?;
         let function = request.action_function.as_str();
         let response = match function {
             "search_external_items" | "search" => {
@@ -184,38 +205,28 @@ impl Provider for JiraProvider {
             }
             "fetch_item" | "fetch" => {
                 let p: JiraIssueKeyParams = parse_params(&request)?;
-                validate_base_url(&p.base.base_url)?;
-                client
-                    .get(format!("{}/rest/api/3/issue/{}", p.base.base_url, p.key))
-                    .basic_auth(
-                        p.base.email.as_deref().unwrap_or_default(),
-                        Some(&p.base.token),
-                    )
-                    .send()
-                    .map_err(|e| http_error("jira fetch request failed", e))?
+                jira_call(
+                    &client,
+                    JiraOperation::Issue {
+                        key: p.key,
+                        fields: None,
+                    },
+                    "jira fetch request failed",
+                )?
             }
             "add_comment" | "comment" => {
                 let p: JiraCommentParams = parse_params(&request)?;
-                validate_base_url(&p.base.base_url)?;
-                client
-                    .post(format!("{}/rest/api/3/issue/{}/comment", p.base.base_url, p.key))
-                    .basic_auth(p.base.email.as_deref().unwrap_or_default(), Some(&p.base.token))
-                    .json(&json!({ "body": { "type": "doc", "version": 1, "content": [{ "type": "paragraph", "content": [{ "type": "text", "text": p.body }] }] } }))
-                    .send()
-                    .map_err(|e| http_error("jira comment request failed", e))?
+                jira_call(&client, JiraOperation::AddComment { key: p.key, body: json!({ "body": { "type": "doc", "version": 1, "content": [{ "type": "paragraph", "content": [{ "type": "text", "text": p.body }] }] } }).into() }, "jira comment request failed")?
             }
             "ensure_comment" => {
                 let p: JiraEnsureCommentParams = parse_params(&request)?;
-                validate_base_url(&p.base.base_url)?;
                 let operation_key = p
                     .operation_key
                     .or_else(|| request.idempotency_key.clone())
                     .filter(|key| !key.trim().is_empty())
                     .ok_or_else(|| MISSING_OPERATION_KEY.bare())?;
                 let marker = format!("[runinator-operation:{operation_key}]");
-                let base = p.base.base_url.trim_end_matches('/');
-                let auth_user = p.base.email.as_deref().unwrap_or_default();
-                let comments = fetch_all_comments(&client, base, auth_user, &p.base.token, &p.key)?;
+                let comments = fetch_all_comments(&client, &p.key)?;
                 if let Some(comment) = comments
                     .iter()
                     .find(|comment| render_comment_body(comment.get("body")).contains(&marker))
@@ -231,11 +242,11 @@ impl Provider for JiraProvider {
                         artifacts: Vec::new(),
                     });
                 }
-                let comment = response_json(
-                    client
-                        .post(format!("{base}/rest/api/3/issue/{}/comment", p.key))
-                        .basic_auth(auth_user, Some(&p.base.token))
-                        .json(&json!({
+                let comment = jira_call(
+                    &client,
+                    JiraOperation::AddComment {
+                        key: p.key,
+                        body: json!({
                             "body": {
                                 "type": "doc",
                                 "version": 1,
@@ -247,9 +258,10 @@ impl Provider for JiraProvider {
                                     }]
                                 }]
                             }
-                        }))
-                        .send()
-                        .map_err(|e| http_error("jira ensure comment request failed", e))?,
+                        })
+                        .into(),
+                    },
+                    "jira ensure comment request failed",
                 )?;
                 return Ok(TaskExecutionResult {
                     message: Some("jira comment created".into()),
@@ -268,37 +280,30 @@ impl Provider for JiraProvider {
             }
             "transition_item" | "transition" => {
                 let p: JiraTransitionParams = parse_params(&request)?;
-                validate_base_url(&p.base.base_url)?;
-                client
-                    .post(format!(
-                        "{}/rest/api/3/issue/{}/transitions",
-                        p.base.base_url, p.key
-                    ))
-                    .basic_auth(
-                        p.base.email.as_deref().unwrap_or_default(),
-                        Some(&p.base.token),
-                    )
-                    .json(&json!({ "transition": { "id": p.transition_id } }))
-                    .send()
-                    .map_err(|e| http_error("jira transition request failed", e))?
+                jira_call(
+                    &client,
+                    JiraOperation::Transition {
+                        key: p.key,
+                        transition_id: p.transition_id,
+                        update: None,
+                    },
+                    "jira transition request failed",
+                )?
             }
             "ensure_transition" => {
                 let p: JiraEnsureTransitionParams = parse_params(&request)?;
-                validate_base_url(&p.base.base_url)?;
                 let operation_key = p
                     .operation_key
                     .or_else(|| request.idempotency_key.clone())
                     .filter(|key| !key.trim().is_empty())
                     .ok_or_else(|| MISSING_OPERATION_KEY.bare())?;
-                let base = p.base.base_url.trim_end_matches('/');
-                let auth_user = p.base.email.as_deref().unwrap_or_default();
-                let issue = response_json(
-                    client
-                        .get(format!("{base}/rest/api/3/issue/{}", p.key))
-                        .basic_auth(auth_user, Some(&p.base.token))
-                        .query(&[("fields", "status")])
-                        .send()
-                        .map_err(|e| http_error("jira status reconciliation failed", e))?,
+                let issue = jira_call(
+                    &client,
+                    JiraOperation::Issue {
+                        key: p.key.clone(),
+                        fields: Some("status".into()),
+                    },
+                    "jira status reconciliation failed",
                 )?;
                 let status = issue.pointer("/fields/status").cloned().unwrap_or_default();
                 let reached_target = status
@@ -322,34 +327,35 @@ impl Provider for JiraProvider {
                         artifacts: Vec::new(),
                     });
                 }
-                let transition = response_json(
-                    client
-                        .post(format!("{base}/rest/api/3/issue/{}/transitions", p.key))
-                        .basic_auth(auth_user, Some(&p.base.token))
-                        .json(&json!({
-                            "transition": { "id": p.transition_id },
-                            "update": {
-                                "comment": [{
-                                    "add": {
-                                        "body": {
-                                            "type": "doc",
-                                            "version": 1,
-                                            "content": [{
-                                                "type": "paragraph",
+                let transition = jira_call(
+                    &client,
+                    JiraOperation::Transition {
+                        key: p.key,
+                        transition_id: p.transition_id,
+                        update: Some(
+                            json!({
+                                    "comment": [{
+                                        "add": {
+                                            "body": {
+                                                "type": "doc",
+                                                "version": 1,
                                                 "content": [{
-                                                    "type": "text",
-                                                    "text": format!(
-                                                        "[runinator-operation:{operation_key}]"
-                                                    )
+                                                    "type": "paragraph",
+                                                    "content": [{
+                                                        "type": "text",
+                                                        "text": format!(
+                                                            "[runinator-operation:{operation_key}]"
+                                                        )
+                                                    }]
                                                 }]
-                                            }]
+                                            }
                                         }
-                                    }
-                                }]
-                            }
-                        }))
-                        .send()
-                        .map_err(|e| http_error("jira ensure transition request failed", e))?,
+                                    }]
+                            })
+                            .into(),
+                        ),
+                    },
+                    "jira ensure transition request failed",
                 )?;
                 return Ok(TaskExecutionResult {
                     message: Some("jira issue transitioned".into()),
@@ -365,15 +371,14 @@ impl Provider for JiraProvider {
             }
             "poll_status" | "poll" => {
                 let p: JiraIssueKeyParams = parse_params(&request)?;
-                validate_base_url(&p.base.base_url)?;
-                client
-                    .get(format!("{}/rest/api/3/issue/{}", p.base.base_url, p.key))
-                    .basic_auth(
-                        p.base.email.as_deref().unwrap_or_default(),
-                        Some(&p.base.token),
-                    )
-                    .send()
-                    .map_err(|e| http_error("jira poll request failed", e))?
+                jira_call(
+                    &client,
+                    JiraOperation::Issue {
+                        key: p.key,
+                        fields: None,
+                    },
+                    "jira poll request failed",
+                )?
             }
             other => {
                 return Err(UNSUPPORTED_ACTION.error(other));
@@ -381,4 +386,14 @@ impl Provider for JiraProvider {
         };
         json_response(response)
     }
+}
+
+fn jira_call(
+    client: &JiraClient,
+    operation: JiraOperation,
+    context: &str,
+) -> Result<serde_json::Value, SendableError> {
+    client
+        .execute(operation)
+        .map_err(|error| client_error(context, error))
 }

@@ -2,9 +2,6 @@ use serde::Deserialize;
 
 runinator_provider_support::provider_parse_params!(crate::error::INVALID_PARAMS);
 
-mod jira_base_params;
-pub(crate) use jira_base_params::JiraBaseParams;
-
 mod jira_search_params;
 pub(crate) use jira_search_params::JiraSearchParams;
 

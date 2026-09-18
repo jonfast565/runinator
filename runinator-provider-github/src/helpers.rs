@@ -5,36 +5,19 @@ use runinator_models::{
 };
 use serde_json::{Value, json};
 
-use crate::errors::{HTTP_ERROR, INVALID_JSON, REVISION_MISMATCH};
+use crate::errors::REVISION_MISMATCH;
 
 runinator_provider_support::provider_parse_params!(crate::errors::INVALID_PARAMS);
 
-pub(crate) fn first_pull_number(
-    response: reqwest::blocking::Response,
-) -> Result<Option<i64>, SendableError> {
-    let text = response.text()?;
-    let value: Value = serde_json::from_str(&text).map_err(|err| {
-        INVALID_JSON.error(format!(
-            "GitHub pull request list response was not JSON: {err}"
-        ))
-    })?;
-    Ok(value
+pub(crate) fn first_pull_number(value: &Value) -> Option<i64> {
+    value
         .as_array()
         .and_then(|items| items.first())
         .and_then(|item| item.get("number"))
-        .and_then(Value::as_i64))
+        .and_then(Value::as_i64)
 }
 
-pub(crate) fn checks_summary_response(
-    response: reqwest::blocking::Response,
-) -> Result<TaskExecutionResult, SendableError> {
-    let status = response.status();
-    let text = response.text()?;
-    if !status.is_success() {
-        return Err(HTTP_ERROR.error(format!("HTTP {status}: {text}")));
-    }
-    let raw: Value = serde_json::from_str(&text)
-        .unwrap_or_else(|_| json!({ "body": text, "status": status.as_u16() }));
+pub(crate) fn checks_summary_response(raw: Value) -> Result<TaskExecutionResult, SendableError> {
     let summary = summarize_check_runs(raw);
     Ok(TaskExecutionResult {
         message: Some("github checks summary completed".into()),
@@ -45,17 +28,9 @@ pub(crate) fn checks_summary_response(
 }
 
 pub(crate) fn exact_revision_checks_summary_response(
-    response: reqwest::blocking::Response,
+    raw: Value,
     expected_revision: &str,
 ) -> Result<TaskExecutionResult, SendableError> {
-    let status = response.status();
-    let text = response.text()?;
-    if !status.is_success() {
-        return Err(HTTP_ERROR.error(format!("HTTP {status}: {text}")));
-    }
-    let raw: Value = serde_json::from_str(&text).map_err(|err| {
-        INVALID_JSON.error(format!("GitHub check-runs response was not JSON: {err}"))
-    })?;
     let mismatched = raw
         .get("check_runs")
         .and_then(Value::as_array)
@@ -80,20 +55,6 @@ pub(crate) fn exact_revision_checks_summary_response(
         chunks: Vec::new(),
         artifacts: Vec::new(),
     })
-}
-
-pub(crate) fn response_json(response: reqwest::blocking::Response) -> Result<Value, SendableError> {
-    let status = response.status();
-    let text = response.text()?;
-    if !status.is_success() {
-        return Err(HTTP_ERROR.error(format!("HTTP {status}: {text}")));
-    }
-    if text.trim().is_empty() {
-        Ok(json!({ "status": status.as_u16() }))
-    } else {
-        serde_json::from_str(&text)
-            .map_err(|err| INVALID_JSON.error(format!("GitHub response was not JSON: {err}")))
-    }
 }
 
 pub(crate) fn summarize_check_runs(raw: Value) -> Value {
@@ -147,20 +108,7 @@ pub(crate) fn summarize_check_runs(raw: Value) -> Value {
     })
 }
 
-pub(crate) fn json_response(
-    response: reqwest::blocking::Response,
-) -> Result<TaskExecutionResult, SendableError> {
-    let status = response.status();
-    let text = response.text()?;
-    if !status.is_success() {
-        return Err(HTTP_ERROR.error(format!("HTTP {status}: {text}")));
-    }
-    let output = if text.trim().is_empty() {
-        json!({ "status": status.as_u16() })
-    } else {
-        serde_json::from_str(&text)
-            .unwrap_or_else(|_| json!({ "body": text, "status": status.as_u16() }))
-    };
+pub(crate) fn json_response(output: Value) -> Result<TaskExecutionResult, SendableError> {
     Ok(TaskExecutionResult {
         message: Some("github action completed".into()),
         output_json: Some(output.into()),

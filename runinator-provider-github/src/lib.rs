@@ -5,6 +5,7 @@ mod params;
 use std::sync::Arc;
 use std::time::Duration;
 
+use runinator_github::{GitHubClient, GitHubOperation};
 use runinator_models::{
     errors::SendableError,
     orchestration::DeliverySemantics,
@@ -16,12 +17,12 @@ use runinator_models::{
     runs::{ProviderExecutionRequest, TaskExecutionResult},
 };
 use runinator_plugin::provider::{Provider, ProviderEventSink};
+use runinator_provider_support::polling::{PollPage, poll_pages};
 use serde_json::{Value, json};
 
 use helpers::{
     auth_param, checks_summary_response, exact_revision_checks_summary_response, first_pull_number,
     json_response, json_results, parse_params, pull_request_results, repo_owner_param, repo_param,
-    response_json,
 };
 use params::{
     AddAssigneesParams, AddCommentParams, CheckRunParams, CreatePrParams, DispatchParams,
@@ -297,15 +298,20 @@ impl Provider for GitHubProvider {
             (true, None) => {}
         }
         let function = request.action_function.as_str();
-        let client = reqwest::blocking::Client::builder()
-            .timeout(Duration::from_secs(request.timeout_secs.max(1) as u64))
-            .user_agent("runinator")
-            .build()?;
-        let api = "https://api.github.com";
+        let token = request
+            .parameters
+            .get("token")
+            .and_then(runinator_models::value::Value::as_str)
+            .unwrap_or_default();
+        let client = GitHubClient::http(
+            token,
+            Duration::from_secs(request.timeout_secs.max(1) as u64),
+        )
+        .map_err(github_error)?;
         let response = match function {
             "create_or_update_pr" | "create_pr" | "ensure_pr" => {
                 let p: CreatePrParams = parse_params(&request)?;
-                let auth = format!("Bearer {}", p.base.token);
+                let repository = format!("{}/{}", p.base.owner, p.base.repo);
                 let body = if function == "ensure_pr" {
                     let operation_key = p
                         .operation_key
@@ -329,63 +335,52 @@ impl Provider for GitHubProvider {
                 } else {
                     format!("{}:{}", p.base.owner, p.head)
                 };
-                let pulls_url = reqwest::Url::parse_with_params(
-                    &format!("{api}/repos/{}/{}/pulls", p.base.owner, p.base.repo),
-                    &[("state", "open"), ("head", head.as_str())],
+                let existing = github_call(
+                    &client,
+                    GitHubOperation::PullRequests {
+                        repository: repository.clone(),
+                        state: "open".into(),
+                        head: Some(head),
+                        per_page: 100,
+                        page: 1,
+                    },
                 )?;
-                let existing = client
-                    .get(pulls_url)
-                    .header("Authorization", &auth)
-                    .header("Accept", "application/vnd.github+json")
-                    .send()?;
-                if !existing.status().is_success() {
-                    existing
-                } else if let Some(number) = first_pull_number(existing)? {
-                    client
-                        .patch(format!(
-                            "{api}/repos/{}/{}/pulls/{number}",
-                            p.base.owner, p.base.repo
-                        ))
-                        .header("Authorization", &auth)
-                        .header("Accept", "application/vnd.github+json")
-                        .json(&json!({
-                            "title": p.title,
-                            "base": p.base_branch.as_deref().unwrap_or("main"),
-                            "body": body
-                        }))
-                        .send()?
+                if let Some(number) = first_pull_number(&existing) {
+                    github_call(
+                        &client,
+                        GitHubOperation::UpdatePull {
+                            repository,
+                            number,
+                            title: p.title,
+                            base: p.base_branch.unwrap_or_else(|| "main".into()),
+                            body,
+                        },
+                    )?
                 } else {
-                    client
-                        .post(format!(
-                            "{api}/repos/{}/{}/pulls",
-                            p.base.owner, p.base.repo
-                        ))
-                        .header("Authorization", &auth)
-                        .header("Accept", "application/vnd.github+json")
-                        .json(&json!({
-                            "title": p.title,
-                            "head": p.head,
-                            "base": p.base_branch.as_deref().unwrap_or("main"),
-                            "body": body
-                        }))
-                        .send()?
+                    github_call(
+                        &client,
+                        GitHubOperation::CreatePull {
+                            repository,
+                            title: p.title,
+                            head: p.head,
+                            base: p.base_branch.unwrap_or_else(|| "main".into()),
+                            body,
+                        },
+                    )?
                 }
             }
             "read_reviews" | "reviews" => {
                 let p: PrNumberParams = parse_params(&request)?;
-                let auth = format!("Bearer {}", p.base.token);
-                client
-                    .get(format!(
-                        "{api}/repos/{}/{}/pulls/{}/reviews",
-                        p.base.owner, p.base.repo, p.pull_number
-                    ))
-                    .header("Authorization", &auth)
-                    .header("Accept", "application/vnd.github+json")
-                    .send()?
+                github_call(
+                    &client,
+                    GitHubOperation::Reviews {
+                        repository: format!("{}/{}", p.base.owner, p.base.repo),
+                        pull_number: p.pull_number,
+                    },
+                )?
             }
             "merge_pull_request" | "merge_pr" => {
                 let p: MergePrParams = parse_params(&request)?;
-                let auth = format!("Bearer {}", p.base.token);
                 let mut body = serde_json::Map::new();
                 body.insert(
                     "merge_method".into(),
@@ -400,40 +395,37 @@ impl Provider for GitHubProvider {
                 if let Some(sha) = p.sha {
                     body.insert("sha".into(), json!(sha));
                 }
-                client
-                    .put(format!(
-                        "{api}/repos/{}/{}/pulls/{}/merge",
-                        p.base.owner, p.base.repo, p.pull_number
-                    ))
-                    .header("Authorization", &auth)
-                    .header("Accept", "application/vnd.github+json")
-                    .json(&Value::Object(body))
-                    .send()?
+                github_call(
+                    &client,
+                    GitHubOperation::MergePull {
+                        repository: format!("{}/{}", p.base.owner, p.base.repo),
+                        pull_number: p.pull_number,
+                        body: Value::Object(body),
+                    },
+                )?
             }
             "read_issue_comments" | "comments" => {
                 let p: IssueNumberParams = parse_params(&request)?;
-                let auth = format!("Bearer {}", p.base.token);
-                client
-                    .get(format!(
-                        "{api}/repos/{}/{}/issues/{}/comments",
-                        p.base.owner, p.base.repo, p.issue_number
-                    ))
-                    .header("Authorization", &auth)
-                    .header("Accept", "application/vnd.github+json")
-                    .send()?
+                github_call(
+                    &client,
+                    GitHubOperation::IssueComments {
+                        repository: format!("{}/{}", p.base.owner, p.base.repo),
+                        issue_number: p.issue_number,
+                        per_page: 100,
+                        page: 1,
+                    },
+                )?
             }
             "add_comment" => {
                 let p: AddCommentParams = parse_params(&request)?;
-                let auth = format!("Bearer {}", p.base.token);
-                client
-                    .post(format!(
-                        "{api}/repos/{}/{}/issues/{}/comments",
-                        p.base.owner, p.base.repo, p.issue_number
-                    ))
-                    .header("Authorization", &auth)
-                    .header("Accept", "application/vnd.github+json")
-                    .json(&json!({ "body": p.body }))
-                    .send()?
+                github_call(
+                    &client,
+                    GitHubOperation::AddComment {
+                        repository: format!("{}/{}", p.base.owner, p.base.repo),
+                        issue_number: p.issue_number,
+                        body: p.body,
+                    },
+                )?
             }
             "ensure_comment" => {
                 let p: EnsureCommentParams = parse_params(&request)?;
@@ -443,54 +435,45 @@ impl Provider for GitHubProvider {
                     .filter(|key| !key.trim().is_empty())
                     .ok_or_else(|| errors::MISSING_OPERATION_KEY.bare())?;
                 let marker = format!("<!-- runinator-operation:{operation_key} -->");
-                let auth = format!("Bearer {}", p.base.token);
-                let comments_url = format!(
-                    "{api}/repos/{}/{}/issues/{}/comments",
-                    p.base.owner, p.base.repo, p.issue_number
-                );
-                let mut page = 1u32;
-                loop {
-                    let existing = response_json(
-                        client
-                            .get(&comments_url)
-                            .header("Authorization", &auth)
-                            .header("Accept", "application/vnd.github+json")
-                            .query(&[("per_page", "100"), ("page", &page.to_string())])
-                            .send()?,
-                    )?;
-                    let comments = existing.as_array().cloned().unwrap_or_default();
-                    if let Some(comment) = comments.iter().find(|comment| {
-                        comment
-                            .get("body")
-                            .and_then(Value::as_str)
-                            .is_some_and(|body| body.contains(&marker))
-                    }) {
-                        return Ok(TaskExecutionResult {
-                            message: Some("github comment already existed".into()),
-                            output_json: Some(
-                                json!({
-                                    "created": false,
-                                    "operation_key": operation_key,
-                                    "comment": comment
-                                })
-                                .into(),
-                            ),
-                            chunks: Vec::new(),
-                            artifacts: Vec::new(),
-                        });
-                    }
-                    if comments.len() < 100 {
-                        break;
-                    }
-                    page += 1;
+                let repository = format!("{}/{}", p.base.owner, p.base.repo);
+                let issue_number = p.issue_number.clone();
+                let comments = poll_pages(
+                    Some(1u32),
+                    usize::MAX,
+                    |page| {
+                        let page = page.unwrap_or(1);
+                        let value = github_call(
+                            &client,
+                            GitHubOperation::IssueComments {
+                                repository: repository.clone(),
+                                issue_number: issue_number.clone(),
+                                per_page: 100,
+                                page,
+                            },
+                        )?;
+                        let items = value.as_array().cloned().unwrap_or_default();
+                        let next_cursor = (items.len() == 100).then_some(page + 1);
+                        Ok::<_, SendableError>(PollPage { items, next_cursor })
+                    },
+                    |limit| {
+                        errors::HTTP_ERROR.error(format!("comment pagination failed: {limit:?}"))
+                    },
+                )?;
+                if let Some(comment) = comments.iter().find(|comment| {
+                    comment
+                        .get("body")
+                        .and_then(Value::as_str)
+                        .is_some_and(|body| body.contains(&marker))
+                }) {
+                    return Ok(TaskExecutionResult { message: Some("github comment already existed".into()), output_json: Some(json!({ "created": false, "operation_key": operation_key, "comment": comment }).into()), chunks: Vec::new(), artifacts: Vec::new() });
                 }
-                let comment = response_json(
-                    client
-                        .post(comments_url)
-                        .header("Authorization", &auth)
-                        .header("Accept", "application/vnd.github+json")
-                        .json(&json!({ "body": format!("{}\n\n{}", p.body, marker) }))
-                        .send()?,
+                let comment = github_call(
+                    &client,
+                    GitHubOperation::AddComment {
+                        repository,
+                        issue_number: p.issue_number,
+                        body: format!("{}\n\n{}", p.body, marker),
+                    },
                 )?;
                 return Ok(TaskExecutionResult {
                     message: Some("github comment created".into()),
@@ -511,138 +494,111 @@ impl Provider for GitHubProvider {
                 if p.reviewers.is_empty() && p.team_reviewers.is_empty() {
                     return Err(errors::MISSING_REVIEWERS.bare());
                 }
-                let auth = format!("Bearer {}", p.base.token);
-                client
-                    .post(format!(
-                        "{api}/repos/{}/{}/pulls/{}/requested_reviewers",
-                        p.base.owner, p.base.repo, p.pull_number
-                    ))
-                    .header("Authorization", &auth)
-                    .header("Accept", "application/vnd.github+json")
-                    .json(&json!({
-                        "reviewers": p.reviewers,
-                        "team_reviewers": p.team_reviewers
-                    }))
-                    .send()?
+                github_call(
+                    &client,
+                    GitHubOperation::RequestReviewers {
+                        repository: format!("{}/{}", p.base.owner, p.base.repo),
+                        pull_number: p.pull_number,
+                        reviewers: p.reviewers,
+                        team_reviewers: p.team_reviewers,
+                    },
+                )?
             }
             "add_assignees" => {
                 let p: AddAssigneesParams = parse_params(&request)?;
-                let auth = format!("Bearer {}", p.base.token);
-                client
-                    .post(format!(
-                        "{api}/repos/{}/{}/issues/{}/assignees",
-                        p.base.owner, p.base.repo, p.issue_number
-                    ))
-                    .header("Authorization", &auth)
-                    .header("Accept", "application/vnd.github+json")
-                    .json(&json!({ "assignees": p.assignees }))
-                    .send()?
+                github_call(
+                    &client,
+                    GitHubOperation::AddAssignees {
+                        repository: format!("{}/{}", p.base.owner, p.base.repo),
+                        issue_number: p.issue_number,
+                        assignees: p.assignees,
+                    },
+                )?
             }
             "read_checks" | "checks" => {
                 let p: RefParams = parse_params(&request)?;
-                let auth = format!("Bearer {}", p.base.token);
-                client
-                    .get(format!(
-                        "{api}/repos/{}/{}/commits/{}/check-runs",
-                        p.base.owner, p.base.repo, p.git_ref
-                    ))
-                    .header("Authorization", &auth)
-                    .header("Accept", "application/vnd.github+json")
-                    .send()?
+                github_call(
+                    &client,
+                    GitHubOperation::CheckRuns {
+                        repository: format!("{}/{}", p.base.owner, p.base.repo),
+                        git_ref: p.git_ref,
+                        per_page: None,
+                        page: None,
+                    },
+                )?
             }
             "checks_summary" => {
                 let p: RefParams = parse_params(&request)?;
-                let auth = format!("Bearer {}", p.base.token);
-                let response = client
-                    .get(format!(
-                        "{api}/repos/{}/{}/commits/{}/check-runs",
-                        p.base.owner, p.base.repo, p.git_ref
-                    ))
-                    .header("Authorization", &auth)
-                    .header("Accept", "application/vnd.github+json")
-                    .send()?;
+                let response = github_call(
+                    &client,
+                    GitHubOperation::CheckRuns {
+                        repository: format!("{}/{}", p.base.owner, p.base.repo),
+                        git_ref: p.git_ref,
+                        per_page: None,
+                        page: None,
+                    },
+                )?;
                 return checks_summary_response(response);
             }
             "exact_revision_check_summary" => {
                 let p: ExactRevisionParams = parse_params(&request)?;
-                let auth = format!("Bearer {}", p.base.token);
-                let response = client
-                    .get(format!(
-                        "{api}/repos/{}/{}/commits/{}/check-runs",
-                        p.base.owner, p.base.repo, p.revision
-                    ))
-                    .header("Authorization", &auth)
-                    .header("Accept", "application/vnd.github+json")
-                    .query(&[("per_page", "100")])
-                    .send()?;
+                let response = github_call(
+                    &client,
+                    GitHubOperation::CheckRuns {
+                        repository: format!("{}/{}", p.base.owner, p.base.repo),
+                        git_ref: p.revision.clone(),
+                        per_page: Some(100),
+                        page: None,
+                    },
+                )?;
                 return exact_revision_checks_summary_response(response, &p.revision);
             }
             "dispatch_workflow" | "dispatch" => {
                 let p: DispatchParams = parse_params(&request)?;
-                let auth = format!("Bearer {}", p.base.token);
-                client
-                    .post(format!(
-                        "{api}/repos/{}/{}/actions/workflows/{}/dispatches",
-                        p.base.owner, p.base.repo, p.workflow_id
-                    ))
-                    .header("Authorization", &auth)
-                    .header("Accept", "application/vnd.github+json")
-                    .json(&json!({
-                        "ref": p.git_ref,
-                        "inputs": p.inputs.unwrap_or_else(|| json!({}))
-                    }))
-                    .send()?
+                github_call(
+                    &client,
+                    GitHubOperation::DispatchWorkflow {
+                        repository: format!("{}/{}", p.base.owner, p.base.repo),
+                        workflow_id: p.workflow_id,
+                        git_ref: p.git_ref,
+                        inputs: p.inputs.unwrap_or_else(|| json!({})),
+                    },
+                )?
             }
             "poll_workflow_runs" | "workflow_runs" => {
                 let p: WorkflowRunsParams = parse_params(&request)?;
-                let auth = format!("Bearer {}", p.base.token);
-                let base_url = match &p.workflow_id {
-                    Some(workflow_id) => format!(
-                        "{api}/repos/{}/{}/actions/workflows/{}/runs",
-                        p.base.owner, p.base.repo, workflow_id
-                    ),
-                    None => format!("{api}/repos/{}/{}/actions/runs", p.base.owner, p.base.repo),
-                };
-                let mut filters: Vec<(&str, String)> = Vec::new();
-                if let Some(branch) = p.branch {
-                    filters.push(("branch", branch));
-                }
-                if let Some(event) = p.event {
-                    filters.push(("event", event));
-                }
-                if let Some(status) = p.status {
-                    filters.push(("status", status));
-                }
-                let url = reqwest::Url::parse_with_params(&base_url, &filters)?;
-                client
-                    .get(url)
-                    .header("Authorization", &auth)
-                    .header("Accept", "application/vnd.github+json")
-                    .send()?
+                github_call(
+                    &client,
+                    GitHubOperation::WorkflowRuns {
+                        repository: format!("{}/{}", p.base.owner, p.base.repo),
+                        workflow_id: p.workflow_id,
+                        branch: p.branch,
+                        event: p.event,
+                        status: p.status,
+                        per_page: None,
+                        page: None,
+                    },
+                )?
             }
             "rerun_workflow" => {
                 let p: WorkflowRunParams = parse_params(&request)?;
-                let auth = format!("Bearer {}", p.base.token);
-                client
-                    .post(format!(
-                        "{api}/repos/{}/{}/actions/runs/{}/rerun",
-                        p.base.owner, p.base.repo, p.run_id
-                    ))
-                    .header("Authorization", &auth)
-                    .header("Accept", "application/vnd.github+json")
-                    .send()?
+                github_call(
+                    &client,
+                    GitHubOperation::RerunWorkflow {
+                        repository: format!("{}/{}", p.base.owner, p.base.repo),
+                        run_id: p.run_id,
+                    },
+                )?
             }
             "rerequest_check" => {
                 let p: CheckRunParams = parse_params(&request)?;
-                let auth = format!("Bearer {}", p.base.token);
-                client
-                    .post(format!(
-                        "{api}/repos/{}/{}/check-runs/{}/rerequest",
-                        p.base.owner, p.base.repo, p.check_run_id
-                    ))
-                    .header("Authorization", &auth)
-                    .header("Accept", "application/vnd.github+json")
-                    .send()?
+                github_call(
+                    &client,
+                    GitHubOperation::RerequestCheck {
+                        repository: format!("{}/{}", p.base.owner, p.base.repo),
+                        check_run_id: p.check_run_id,
+                    },
+                )?
             }
             other => {
                 return Err(errors::UNSUPPORTED_ACTION.error(other));
@@ -650,6 +606,14 @@ impl Provider for GitHubProvider {
         };
         json_response(response)
     }
+}
+
+fn github_error(error: runinator_github::errors::GitHubError) -> SendableError {
+    error.descriptor().error(error.detail())
+}
+
+fn github_call(client: &GitHubClient, operation: GitHubOperation) -> Result<Value, SendableError> {
+    client.execute(operation).map_err(github_error)
 }
 
 fn with_github_authentication(mut action: ActionMetadata) -> ActionMetadata {

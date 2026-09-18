@@ -1,30 +1,27 @@
 use std::fs;
 use std::path::Path;
 
+use runinator_jira::{JiraClient, JiraOperation};
 use runinator_models::{
     errors::SendableError,
     runs::{NewRunArtifact, TaskExecutionResult},
 };
+use runinator_provider_support::polling::{PollPage, poll_pages};
 use serde_json::{Value, json};
 
-use crate::error::{IO_ERROR, http_error, validate_base_url};
+use crate::error::{IO_ERROR, client_error};
 use crate::params::JiraCommentsParams;
-use crate::response::http_status_error;
 
 // fetches an issue's comments, renders each comment body (atlassian document
 // format) to plain text the way an llm wants it, and downloads any image
 // attachments so a downstream ai step can read them. returns parsed text plus
 // image file references, and registers the images as run artifacts.
 pub(crate) fn jira_fetch_comments(
-    client: &reqwest::blocking::Client,
+    client: &JiraClient,
     p: &JiraCommentsParams,
     artifact_dir: &str,
 ) -> Result<TaskExecutionResult, SendableError> {
-    validate_base_url(&p.base.base_url)?;
-    let base = p.base.base_url.trim_end_matches('/');
-    let auth_user = p.base.email.as_deref().unwrap_or_default();
-
-    let comments = fetch_all_comments(client, base, auth_user, &p.base.token, &p.key)?;
+    let comments = fetch_all_comments(client, &p.key)?;
     let mut rendered: Vec<Value> = Vec::with_capacity(comments.len());
     let mut text_blocks: Vec<String> = Vec::with_capacity(comments.len());
     for comment in &comments {
@@ -51,7 +48,7 @@ pub(crate) fn jira_fetch_comments(
         }));
     }
 
-    let attachments = fetch_image_attachments(client, base, auth_user, &p.base.token, &p.key)?;
+    let attachments = fetch_image_attachments(client, &p.key)?;
     let target_dir = p.download_dir.as_deref().unwrap_or(artifact_dir);
     if !target_dir.is_empty() {
         fs::create_dir_all(target_dir)
@@ -80,7 +77,9 @@ pub(crate) fn jira_fetch_comments(
         if content_url.is_empty() {
             continue;
         }
-        let bytes = download_bytes(client, content_url, auth_user, &p.base.token)?;
+        let bytes = client
+            .download(content_url.to_owned())
+            .map_err(|error| client_error("jira attachment download failed", error))?;
         let safe_name = sanitize_filename(filename);
         let stem = if att_id.is_empty() {
             safe_name.clone()
@@ -134,61 +133,48 @@ pub(crate) fn jira_fetch_comments(
 
 // pages through the comment endpoint until every comment is collected.
 pub(crate) fn fetch_all_comments(
-    client: &reqwest::blocking::Client,
-    base: &str,
-    auth_user: &str,
-    token: &str,
+    client: &JiraClient,
     key: &str,
 ) -> Result<Vec<Value>, SendableError> {
-    let mut all = Vec::new();
-    let mut start_at = 0i64;
-    loop {
-        let url = format!("{base}/rest/api/3/issue/{key}/comment");
-        let response = client
-            .get(&url)
-            .basic_auth(auth_user, Some(token))
-            .query(&[
-                ("startAt", start_at.to_string()),
-                ("maxResults", "100".to_string()),
-            ])
-            .send()
-            .map_err(|e| http_error("jira comments request failed", e))?;
-        let value = read_json(response)?;
-        let page: Vec<Value> = value
-            .get("comments")
-            .and_then(Value::as_array)
-            .cloned()
-            .unwrap_or_default();
-        let page_len = page.len() as i64;
-        all.extend(page);
-        let total = value
-            .get("total")
-            .and_then(Value::as_i64)
-            .unwrap_or(all.len() as i64);
-        start_at += page_len;
-        if page_len == 0 || start_at >= total {
-            break;
-        }
-    }
-    Ok(all)
+    poll_pages(
+        Some(0u64),
+        100,
+        |start_at| {
+            let start_at = start_at.unwrap_or_default();
+            let value = client
+                .execute(JiraOperation::Comments {
+                    key: key.to_owned(),
+                    start_at,
+                    max_results: 100,
+                })
+                .map_err(|error| client_error("jira comments request failed", error))?;
+            let items = value
+                .get("comments")
+                .and_then(Value::as_array)
+                .cloned()
+                .unwrap_or_default();
+            let total = value
+                .get("total")
+                .and_then(Value::as_u64)
+                .unwrap_or(start_at + items.len() as u64);
+            let next = start_at + items.len() as u64;
+            let next_cursor = (!items.is_empty() && next < total).then_some(next);
+            Ok::<_, SendableError>(PollPage { items, next_cursor })
+        },
+        |limit| {
+            crate::error::HTTP_ERROR.error(format!("jira comment pagination failed: {limit:?}"))
+        },
+    )
 }
 
 // reads the issue's attachment list and keeps the image/* ones.
-fn fetch_image_attachments(
-    client: &reqwest::blocking::Client,
-    base: &str,
-    auth_user: &str,
-    token: &str,
-    key: &str,
-) -> Result<Vec<Value>, SendableError> {
-    let url = format!("{base}/rest/api/3/issue/{key}");
-    let response = client
-        .get(&url)
-        .basic_auth(auth_user, Some(token))
-        .query(&[("fields", "attachment")])
-        .send()
-        .map_err(|e| http_error("jira attachment request failed", e))?;
-    let value = read_json(response)?;
+fn fetch_image_attachments(client: &JiraClient, key: &str) -> Result<Vec<Value>, SendableError> {
+    let value = client
+        .execute(JiraOperation::Issue {
+            key: key.to_owned(),
+            fields: Some("attachment".into()),
+        })
+        .map_err(|error| client_error("jira attachment request failed", error))?;
     let attachments = value
         .get("fields")
         .and_then(|f| f.get("attachment"))
@@ -204,39 +190,6 @@ fn fetch_image_attachments(
                 .unwrap_or(false)
         })
         .collect())
-}
-
-fn download_bytes(
-    client: &reqwest::blocking::Client,
-    url: &str,
-    auth_user: &str,
-    token: &str,
-) -> Result<Vec<u8>, SendableError> {
-    let response = client
-        .get(url)
-        .basic_auth(auth_user, Some(token))
-        .send()
-        .map_err(|e| http_error("jira attachment download failed", e))?;
-    let status = response.status();
-    if !status.is_success() {
-        return Err(http_status_error(
-            status,
-            &response.text().unwrap_or_default(),
-        ));
-    }
-    let bytes = response
-        .bytes()
-        .map_err(|e| http_error("jira attachment read failed", e))?;
-    Ok(bytes.to_vec())
-}
-
-fn read_json(response: reqwest::blocking::Response) -> Result<Value, SendableError> {
-    let status = response.status();
-    let text = response.text().unwrap_or_default();
-    if !status.is_success() {
-        return Err(http_status_error(status, &text));
-    }
-    Ok(serde_json::from_str(&text).unwrap_or(Value::Null))
 }
 
 // keeps a downloaded filename safe to write: strips path separators and control
@@ -263,88 +216,5 @@ fn sanitize_filename(name: &str) -> String {
 // renders a comment body into plain text. handles both the modern atlassian
 // document format (a node tree) and the legacy plain-string body.
 pub(crate) fn render_comment_body(body: Option<&Value>) -> String {
-    match body {
-        Some(Value::String(s)) => s.trim().to_string(),
-        Some(node @ Value::Object(_)) => {
-            let mut out = String::new();
-            walk_adf(node, &mut out);
-            collapse_blank_lines(&out)
-        }
-        _ => String::new(),
-    }
-}
-
-// walks an adf node, appending text and image placeholders; block-level nodes are
-// separated by newlines so the rendered text reads naturally.
-fn walk_adf(node: &Value, out: &mut String) {
-    let node_type = node.get("type").and_then(Value::as_str).unwrap_or("");
-    match node_type {
-        "text" => {
-            if let Some(s) = node.get("text").and_then(Value::as_str) {
-                out.push_str(s);
-            }
-            return;
-        }
-        "hardBreak" => {
-            out.push('\n');
-            return;
-        }
-        "media" | "mediaInline" => {
-            let attrs = node.get("attrs");
-            let alt = attrs
-                .and_then(|a| a.get("alt"))
-                .and_then(Value::as_str)
-                .or_else(|| {
-                    attrs
-                        .and_then(|a| a.get("__fileName"))
-                        .and_then(Value::as_str)
-                })
-                .unwrap_or("image");
-            out.push_str(&format!("[image: {alt}]"));
-            return;
-        }
-        "mention" => {
-            if let Some(text) = node
-                .get("attrs")
-                .and_then(|a| a.get("text"))
-                .and_then(Value::as_str)
-            {
-                out.push_str(text);
-            }
-            return;
-        }
-        "listItem" => out.push_str("- "),
-        _ => {}
-    }
-
-    if let Some(content) = node.get("content").and_then(Value::as_array) {
-        for child in content {
-            walk_adf(child, out);
-        }
-    }
-
-    if matches!(
-        node_type,
-        "paragraph" | "heading" | "listItem" | "blockquote" | "codeBlock" | "rule"
-    ) {
-        out.push('\n');
-    }
-}
-
-// squeezes runs of 3+ newlines down to a paragraph break and trims edges.
-fn collapse_blank_lines(text: &str) -> String {
-    let mut result = String::with_capacity(text.len());
-    let mut newline_run = 0;
-    for ch in text.chars() {
-        if ch == '\n' {
-            newline_run += 1;
-            if newline_run <= 2 {
-                result.push('\n');
-            }
-        } else {
-            newline_run = 0;
-            result.push(ch);
-        }
-    }
-    result.trim().to_string()
+    runinator_jira::render_comment_body(body)
 }

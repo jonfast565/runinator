@@ -70,7 +70,7 @@ the detailed routing index.
 | Change area | Owning crate or family | Required scoped guide |
 | --- | --- | --- |
 | Shared domain and wire models | `runinator-models`, `runinator-comm` | This file |
-| Cross-crate environment, time, and digest helpers | `runinator-platform`, `runinator-hash`, `runinator-provider-support` | This file |
+| Cross-crate environment, time, digest, and external API clients | `runinator-platform`, `runinator-hash`, `runinator-provider-support`, `runinator-github`, `runinator-jira` | This file |
 | Expressions and graph validation | `runinator-compute`, `runinator-workflows` | `runinator-workflows/AGENTS.md` |
 | REXRAP syntax, semantics, codegen, and IDE seam | `runinator-rexrap*` | `runinator-rexrap/AGENTS.md` |
 | Pack compilation and wire archives | `runinator-pack`, `runinator-pack-wire` | `runinator-pack/AGENTS.md` |
@@ -124,6 +124,9 @@ service crate, stop and redesign the boundary.
   platform, application paths, or secrets. `runinator-hash` owns plain SHA-256 generation,
   validation, and digest parsing; `runinator-provider-support` owns provider-neutral helpers.
   Keep crypto/plaintext persistence auditable inside `runinator-secrets`.
+- `runinator-github` and `runinator-jira` own typed third-party API calls, endpoint construction,
+  response decoding, and client errors. Providers map those results into actions; adapters map them
+  into inbound events. Do not construct GitHub or Jira requests in provider or adapter crates.
 - Prefer one purpose-named context or request object when an operation needs several related inputs.
   Do not retain a long positional parameter list merely to avoid introducing a small domain type.
 

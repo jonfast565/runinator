@@ -132,6 +132,11 @@ accept a runner through `with_runner` and map its failures to their own error di
 terminals continue through the PTY/ConPTY contract. Supervisor restart/shutdown behavior uses
 `ProcessBackend` and `ManagedChild`, with native process creation and signaling behind that boundary.
 
+Typed GitHub and Jira calls live in `runinator-github` and `runinator-jira`. Both expose blocking and
+async clients over the same operation descriptions. Providers retain outbound action mapping and
+adapters retain checkpoint/event normalization, while generic bounded page polling lives in
+`runinator-provider-support::polling`.
+
 Command Center realtime accepts a `WebSocketFactory` and `EventStreamTimers`. Non-secret display,
 organization, and debug preferences use `PreferenceStorage`; watch expressions use a
 `WatchExpressionRepository`. Workflow composition forwards both dependencies. The LSP metadata cache
