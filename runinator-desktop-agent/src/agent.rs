@@ -477,7 +477,17 @@ async fn start_inner(
             runtime_config.api_key.clone(),
         )?;
         let handle = AgentRuntime::start(runtime_config, observer)?;
-        crate::execution_profiles::spawn(&rt, client, shared.clone(), handle.watch());
+        let log_shared = shared.clone();
+        let status_shared = shared.clone();
+        crate::execution_profiles::spawn(
+            &rt,
+            client,
+            move |message: String| log_line(&log_shared, message),
+            move |statuses| {
+                crate::execution_profiles::update_local_statuses(&status_shared, statuses)
+            },
+            handle.watch(),
+        );
         Ok(handle)
     }
     .await;

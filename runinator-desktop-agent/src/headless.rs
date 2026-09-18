@@ -9,6 +9,7 @@
 use std::sync::Arc;
 use std::time::Duration;
 
+use runinator_api::{AsyncApiClient, StaticLocator};
 use runinator_models::errors::SendableError;
 use runinator_worker::agent::{AgentRuntime, NoopObserver};
 use tracing::{error, info};
@@ -40,7 +41,31 @@ async fn serve(config: AgentConfig) -> Result<(), SendableError> {
     let grace = Duration::from_secs(config.shutdown_grace_seconds.max(1) + 5);
     let mut runtime_config = crate::agent::runtime_config(&config)?;
     runinator_worker::prepare_agent_credentials(&mut runtime_config).await?;
+    let client = AsyncApiClient::with_credentials(
+        StaticLocator::new(runtime_config.service_url.clone()),
+        runtime_config.api_key.clone(),
+    )?;
     let mut agent = AgentRuntime::start(runtime_config, Arc::new(NoopObserver))?;
+    // a remotely managed machine still owns credentials the cluster needs published. collection
+    // only ever touches profiles already approved in this machine's config, so running it without
+    // a desktop session cannot approve anything new.
+    crate::execution_profiles::spawn(
+        &tokio::runtime::Handle::current(),
+        client,
+        |message| info!("{message}"),
+        |statuses| {
+            for status in statuses {
+                info!(
+                    profile = %status.name,
+                    approved = status.approved,
+                    enabled = status.enabled,
+                    "execution profile: {}",
+                    status.message
+                );
+            }
+        },
+        agent.watch(),
+    );
 
     tokio::select! {
         signal = tokio::signal::ctrl_c() => {

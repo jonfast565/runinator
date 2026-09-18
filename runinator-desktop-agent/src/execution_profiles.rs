@@ -59,7 +59,7 @@ fn newly_required_approvals<'a>(
         .collect()
 }
 
-fn update_local_statuses(shared: &SharedHandle, statuses: &[LocalProfileStatus]) {
+pub(crate) fn update_local_statuses(shared: &SharedHandle, statuses: &[LocalProfileStatus]) {
     let notices = {
         let Ok(mut guard) = shared.lock() else {
             return;
@@ -82,10 +82,14 @@ fn update_local_statuses(shared: &SharedHandle, statuses: &[LocalProfileStatus])
     }
 }
 
+/// run the profile collector against the sinks the caller reports through: the tray writes into
+/// its shared state, a headless agent writes into its log. collection itself is identical, and
+/// [`synchronize`] only ever touches profiles this machine has already approved.
 pub fn spawn(
     runtime: &tokio::runtime::Handle,
     client: AsyncApiClient<StaticLocator>,
-    shared: SharedHandle,
+    log: impl Fn(String) + Send + Sync + 'static,
+    update: impl Fn(&[LocalProfileStatus]) + Send + Sync + 'static,
     mut agent: tokio::sync::watch::Receiver<runinator_worker::AgentStatus>,
 ) {
     runtime.spawn(async move {
@@ -98,19 +102,10 @@ pub fn spawn(
             if !wait_until_running(&mut agent).await {
                 return;
             }
-            match synchronize(
-                &client,
-                |message| log_line(&shared, message),
-                |statuses| update_local_statuses(&shared, statuses),
-            )
-            .await
-            {
+            match synchronize(&client, &log, &update).await {
                 Ok(next) => profiles = next,
                 Err(error) => {
-                    log_line(
-                        &shared,
-                        format!("Execution profile synchronization failed: {error}"),
-                    );
+                    log(format!("Execution profile synchronization failed: {error}"));
                 }
             }
             let sync_deadline = tokio::time::Instant::now() + PROFILE_SYNC_INTERVAL;
