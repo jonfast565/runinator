@@ -91,3 +91,58 @@ fn parses_authoring_and_lifecycle_commands() {
         parses(&args);
     }
 }
+
+#[test]
+fn parses_operational_control_commands() {
+    for args in [
+        vec!["notifications", "list", "--unread"],
+        vec![
+            "notifications",
+            "policies",
+            "apply",
+            "policy.json",
+            "--id",
+            ID,
+        ],
+        vec!["gates", "list", "--run-id", ID, "--status", "waiting"],
+        vec!["gates", "open", ID, "--reason", "approved"],
+        vec!["orchestrations", "epochs", ID],
+        vec!["orchestrations", "operations", "list", ID],
+        vec![
+            "orchestrations",
+            "operations",
+            "resolve",
+            ID,
+            ID,
+            "succeeded",
+            "--reason",
+            "verified",
+        ],
+        vec!["orchestrations", "debug", "step", ID],
+        vec!["orchestrations", "adapters", "inspection-set", ID, "review"],
+        vec![
+            "orchestrations",
+            "adapters",
+            "delivery-decide",
+            ID,
+            ID,
+            "approve",
+        ],
+        vec!["ingress", "external", "configure", "workflow", ID, "paused"],
+        vec![
+            "ingress",
+            "broker",
+            "session",
+            "organization",
+            "--scope-id",
+            ID,
+        ],
+        vec!["ingress", "messages", "list", "--adapter", ID],
+        vec!["ingress", "dead-letters", "list", "--channel", "ingress"],
+        vec!["audit", "list", "--actor", ID],
+        vec!["records", "external-items"],
+        vec!["records", "events"],
+    ] {
+        parses(&args);
+    }
+}

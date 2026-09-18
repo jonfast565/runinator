@@ -64,6 +64,30 @@ where
         Ok(response.json().await?)
     }
 
+    async fn post_json_value(&self, path: &str, body: &Value) -> Result<Value> {
+        let url = self.build_url(path).await?;
+        let response = self.send(self.http_post(url.clone()).json(body)).await?;
+        Ok(Self::handle_response(url, response).await?.json().await?)
+    }
+
+    async fn put_json_value(&self, path: &str, body: &Value) -> Result<Value> {
+        let url = self.build_url(path).await?;
+        let response = self.send(self.http_put(url.clone()).json(body)).await?;
+        Ok(Self::handle_response(url, response).await?.json().await?)
+    }
+
+    async fn patch_json_value(&self, path: &str, body: &Value) -> Result<Value> {
+        let url = self.build_url(path).await?;
+        let response = self.send(self.http_patch(url.clone()).json(body)).await?;
+        Ok(Self::handle_response(url, response).await?.json().await?)
+    }
+
+    async fn delete_json_value(&self, path: &str) -> Result<Value> {
+        let url = self.build_url(path).await?;
+        let response = self.send(self.http_delete(url.clone())).await?;
+        Ok(Self::handle_response(url, response).await?.json().await?)
+    }
+
     /// List console sessions visible to the authenticated principal.
     pub async fn console_sessions(&self) -> Result<Vec<ConsoleSession>> {
         let url = self.build_url("/console/sessions").await?;
@@ -368,6 +392,44 @@ where
             .await
     }
 
+    pub async fn fetch_orchestration_operations(&self, id: Uuid) -> Result<Value> {
+        self.get_json_path(&format!("/orchestrations/{id}/operations"))
+            .await
+    }
+
+    pub async fn resolve_orchestration_operation(
+        &self,
+        id: Uuid,
+        operation_id: Uuid,
+        resolution: &str,
+        reason: &str,
+        receipt: Option<Value>,
+    ) -> Result<Value> {
+        self.post_json_value(
+            &format!("/orchestrations/{id}/operations/{operation_id}/resolve"),
+            &json!({ "resolution": resolution, "reason": reason, "receipt": receipt }),
+        )
+        .await
+    }
+
+    pub async fn fetch_orchestration_debug(&self, pipeline_id: Uuid) -> Result<Value> {
+        self.get_json_path(&format!("/pipelines/{pipeline_id}/orchestration-debug"))
+            .await
+    }
+
+    pub async fn set_orchestration_debug(
+        &self,
+        pipeline_id: Uuid,
+        paused: bool,
+        steps: i64,
+    ) -> Result<Value> {
+        self.put_json_value(
+            &format!("/pipelines/{pipeline_id}/orchestration-debug"),
+            &json!({ "paused": paused, "steps": steps }),
+        )
+        .await
+    }
+
     pub async fn fetch_orchestration_aliases(
         &self,
         id: Uuid,
@@ -474,6 +536,15 @@ where
         self.get_json_path("/orchestrations/adapters").await
     }
 
+    pub async fn fetch_orchestration_adapter_summaries(&self) -> Result<Value> {
+        self.get_json_path("/orchestrations/adapters/summaries")
+            .await
+    }
+
+    pub async fn fetch_orchestration_adapter_health(&self) -> Result<Value> {
+        self.get_json_path("/orchestrations/adapters/health").await
+    }
+
     pub async fn fetch_orchestration_adapter(&self, id: Uuid) -> Result<AdapterDefinition> {
         self.get_json_path(&format!("/orchestrations/adapters/{id}"))
             .await
@@ -528,6 +599,57 @@ where
     ) -> Result<AdapterInspection> {
         self.get_json_path(&format!("/orchestrations/adapters/{id}/inspection"))
             .await
+    }
+
+    pub async fn set_orchestration_adapter_inspection(
+        &self,
+        id: Uuid,
+        mode: &str,
+    ) -> Result<Value> {
+        self.put_json_value(
+            &format!("/orchestrations/adapters/{id}/inspection"),
+            &json!({ "mode": mode }),
+        )
+        .await
+    }
+
+    pub async fn decide_orchestration_adapter_delivery(
+        &self,
+        id: Uuid,
+        delivery_id: Uuid,
+        decision: &str,
+    ) -> Result<Value> {
+        self.post_json_value(
+            &format!("/orchestrations/adapters/{id}/deliveries/{delivery_id}/{decision}"),
+            &json!({}),
+        )
+        .await
+    }
+
+    pub async fn release_orchestration_adapter_deliveries(&self, id: Uuid) -> Result<Value> {
+        self.post_json_value(
+            &format!("/orchestrations/adapters/{id}/deliveries/release"),
+            &json!({}),
+        )
+        .await
+    }
+
+    pub async fn validate_orchestration_adapter_draft(&self, draft: &Value) -> Result<Value> {
+        self.post_json_value("/orchestrations/adapters/validate", draft)
+            .await
+    }
+
+    pub async fn test_orchestration_adapter_draft(
+        &self,
+        draft: Value,
+        headers: Value,
+        body_base64: &str,
+    ) -> Result<Value> {
+        self.post_json_value(
+            "/orchestrations/adapters/test",
+            &json!({ "draft": draft, "headers": headers, "body_base64": body_base64 }),
+        )
+        .await
     }
 
     pub async fn apply_orchestration_adapter(
@@ -2997,6 +3119,284 @@ where
             .await?;
         let response = Self::handle_response(url, response).await?;
         Ok(response.json::<Value>().await?)
+    }
+
+    pub async fn fetch_notifications(&self, unread: bool, limit: i64) -> Result<Value> {
+        let mut url = self.build_url("/notifications").await?;
+        url.query_pairs_mut()
+            .append_pair("limit", &limit.to_string());
+        if unread {
+            url.query_pairs_mut().append_pair("unread", "true");
+        }
+        let response = self.send(self.http_get(url.clone())).await?;
+        Ok(Self::handle_response(url, response).await?.json().await?)
+    }
+
+    pub async fn mark_notification_read(&self, id: Uuid) -> Result<Value> {
+        self.post_json_value(&format!("/notifications/{id}/mark_read"), &json!({}))
+            .await
+    }
+
+    pub async fn mark_all_notifications_read(&self) -> Result<Value> {
+        self.post_json_value("/notifications/mark_all_read", &json!({}))
+            .await
+    }
+
+    pub async fn delete_notification(&self, id: Uuid) -> Result<Value> {
+        self.delete_json_value(&format!("/notifications/{id}"))
+            .await
+    }
+
+    pub async fn apply_notification_action(
+        &self,
+        id: Uuid,
+        action: &str,
+        input: Option<Value>,
+    ) -> Result<Value> {
+        self.post_json_value(
+            &format!("/notifications/{id}/actions/{action}"),
+            &json!({ "input": input }),
+        )
+        .await
+    }
+
+    pub async fn fetch_notification_policies(&self, workflow: Option<Uuid>) -> Result<Value> {
+        let mut url = self.build_url("/notification_policies").await?;
+        if let Some(workflow) = workflow {
+            url.query_pairs_mut()
+                .append_pair("workflow_id", &workflow.to_string());
+        }
+        let response = self.send(self.http_get(url.clone())).await?;
+        Ok(Self::handle_response(url, response).await?.json().await?)
+    }
+
+    pub async fn apply_notification_policy(
+        &self,
+        id: Option<Uuid>,
+        policy: &Value,
+    ) -> Result<Value> {
+        match id {
+            Some(id) => {
+                self.patch_json_value(&format!("/notification_policies/{id}"), policy)
+                    .await
+            }
+            None => self.post_json_value("/notification_policies", policy).await,
+        }
+    }
+
+    pub async fn delete_notification_policy(&self, id: Uuid) -> Result<Value> {
+        self.delete_json_value(&format!("/notification_policies/{id}"))
+            .await
+    }
+
+    pub async fn fetch_gates(
+        &self,
+        workflow_run_id: Option<Uuid>,
+        status: Option<&str>,
+    ) -> Result<Value> {
+        let mut url = self.build_url("/gates").await?;
+        if let Some(id) = workflow_run_id {
+            url.query_pairs_mut()
+                .append_pair("workflow_run_id", &id.to_string());
+        }
+        if let Some(status) = status {
+            url.query_pairs_mut().append_pair("status", status);
+        }
+        let response = self.send(self.http_get(url.clone())).await?;
+        Ok(Self::handle_response(url, response).await?.json().await?)
+    }
+
+    pub async fn delete_gate(&self, id: Uuid) -> Result<Value> {
+        self.delete_json_value(&format!("/gates/{id}")).await
+    }
+
+    pub async fn fetch_external_ingress(
+        &self,
+        target_kind: Option<&str>,
+        target_id: Option<Uuid>,
+        state: Option<&str>,
+        limit: i64,
+    ) -> Result<Value> {
+        let mut url = self.build_url("/ingress_control/external").await?;
+        let mut query = url.query_pairs_mut();
+        if let Some(value) = target_kind {
+            query.append_pair("target_kind", value);
+        }
+        if let Some(value) = target_id {
+            query.append_pair("target_id", &value.to_string());
+        }
+        if let Some(value) = state {
+            query.append_pair("state", value);
+        }
+        query.append_pair("limit", &limit.to_string());
+        drop(query);
+        let response = self.send(self.http_get(url.clone())).await?;
+        Ok(Self::handle_response(url, response).await?.json().await?)
+    }
+
+    pub async fn configure_external_ingress(
+        &self,
+        target_kind: &str,
+        target_id: Uuid,
+        mode: &str,
+    ) -> Result<Value> {
+        self.put_json_value(
+            &format!("/ingress_control/targets/{target_kind}/{target_id}/gate"),
+            &json!({ "mode": mode }),
+        )
+        .await
+    }
+
+    pub async fn decide_external_ingress(&self, id: Uuid, decision: &str) -> Result<Value> {
+        self.post_json_value(
+            &format!("/ingress_control/external/{id}/{decision}"),
+            &json!({}),
+        )
+        .await
+    }
+
+    pub async fn release_external_ingress(
+        &self,
+        target_kind: &str,
+        target_id: Uuid,
+    ) -> Result<Value> {
+        self.post_json_value(
+            &format!("/ingress_control/targets/{target_kind}/{target_id}/release"),
+            &json!({}),
+        )
+        .await
+    }
+
+    pub async fn fetch_broker_ingress(
+        &self,
+        state: Option<&str>,
+        channel: Option<&str>,
+        limit: i64,
+    ) -> Result<Value> {
+        let mut url = self.build_url("/ingress_control/broker").await?;
+        let mut query = url.query_pairs_mut();
+        if let Some(value) = state {
+            query.append_pair("state", value);
+        }
+        if let Some(value) = channel {
+            query.append_pair("channel", value);
+        }
+        query.append_pair("limit", &limit.to_string());
+        drop(query);
+        let response = self.send(self.http_get(url.clone())).await?;
+        Ok(Self::handle_response(url, response).await?.json().await?)
+    }
+
+    pub async fn fetch_broker_ingress_session(
+        &self,
+        scope_kind: &str,
+        scope_id: Option<Uuid>,
+    ) -> Result<Value> {
+        let mut url = self.build_url("/ingress_control/broker/session").await?;
+        url.query_pairs_mut().append_pair("scope_kind", scope_kind);
+        if let Some(id) = scope_id {
+            url.query_pairs_mut()
+                .append_pair("scope_id", &id.to_string());
+        }
+        let response = self.send(self.http_get(url.clone())).await?;
+        Ok(Self::handle_response(url, response).await?.json().await?)
+    }
+
+    pub async fn configure_broker_ingress_session(
+        &self,
+        scope_kind: &str,
+        scope_id: Option<Uuid>,
+        mode: &str,
+    ) -> Result<Value> {
+        self.put_json_value(
+            "/ingress_control/broker/session",
+            &json!({ "scope": { "kind": scope_kind, "id": scope_id }, "mode": mode }),
+        )
+        .await
+    }
+
+    pub async fn renew_broker_ingress_session(
+        &self,
+        scope_kind: &str,
+        scope_id: Option<Uuid>,
+    ) -> Result<Value> {
+        self.post_json_value(
+            "/ingress_control/broker/session/heartbeat",
+            &json!({ "scope": { "kind": scope_kind, "id": scope_id } }),
+        )
+        .await
+    }
+
+    pub async fn decide_broker_ingress(&self, id: Uuid, decision: &str) -> Result<Value> {
+        self.post_json_value(
+            &format!("/ingress_control/broker/{id}/{decision}"),
+            &json!({}),
+        )
+        .await
+    }
+
+    pub async fn fetch_audit_log(
+        &self,
+        actor: Option<Uuid>,
+        action: Option<&str>,
+        limit: i64,
+    ) -> Result<Value> {
+        let mut url = self.build_url("/audit_log").await?;
+        let mut query = url.query_pairs_mut();
+        if let Some(value) = actor {
+            query.append_pair("actor_id", &value.to_string());
+        }
+        if let Some(value) = action {
+            query.append_pair("action", value);
+        }
+        query.append_pair("limit", &limit.to_string());
+        drop(query);
+        let response = self.send(self.http_get(url.clone())).await?;
+        Ok(Self::handle_response(url, response).await?.json().await?)
+    }
+
+    pub async fn fetch_broker_messages(
+        &self,
+        workflow_run: Option<Uuid>,
+        pipeline_run: Option<Uuid>,
+        adapter: Option<Uuid>,
+        channel: Option<&str>,
+        limit: i64,
+    ) -> Result<Value> {
+        let mut url = self.build_url("/broker_messages").await?;
+        let mut query = url.query_pairs_mut();
+        for (key, value) in [
+            ("workflow_run_id", workflow_run),
+            ("pipeline_run_id", pipeline_run),
+            ("adapter_id", adapter),
+        ] {
+            if let Some(value) = value {
+                query.append_pair(key, &value.to_string());
+            }
+        }
+        if let Some(value) = channel {
+            query.append_pair("channel", value);
+        }
+        query.append_pair("limit", &limit.to_string());
+        drop(query);
+        let response = self.send(self.http_get(url.clone())).await?;
+        Ok(Self::handle_response(url, response).await?.json().await?)
+    }
+
+    pub async fn fetch_dead_letters(&self, channel: Option<&str>, limit: i64) -> Result<Value> {
+        let mut url = self.build_url("/dead_letters").await?;
+        let mut query = url.query_pairs_mut();
+        if let Some(value) = channel {
+            query.append_pair("channel", value);
+        }
+        query.append_pair("limit", &limit.to_string());
+        drop(query);
+        let response = self.send(self.http_get(url.clone())).await?;
+        Ok(Self::handle_response(url, response).await?.json().await?)
+    }
+
+    pub async fn fetch_record_collection(&self, collection: &str) -> Result<Value> {
+        self.get_json_path(&format!("/{collection}")).await
     }
 
     pub async fn create_automation_record(&self, path: &str, record: Value) -> Result<Value> {

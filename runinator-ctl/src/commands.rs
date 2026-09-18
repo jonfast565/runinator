@@ -28,9 +28,11 @@ use runinator_pack::source as pack;
 
 use crate::{output, params};
 use runinator_ctl_core::cli::{
-    AgentCommands, ApprovalCommands, ArtifactCommands, Cli, Commands, ExecutionProfileCommands,
-    FileCommands, FreezeCommands, NodeCommands, NotebookCommands, OrgCommands, ProviderCommands,
-    RexRapCommands, RunCommands, SettingsCommands, TriggerCommands, WorkflowCommands,
+    AgentCommands, ApprovalCommands, ArtifactCommands, AuditCommands, Cli, Commands,
+    ExecutionProfileCommands, FileCommands, FreezeCommands, GateCommands, IngressCommands,
+    NodeCommands, NotebookCommands, NotificationCommands, OrgCommands, ProviderCommands,
+    RecordCommands, RexRapCommands, RunCommands, SettingsCommands, TriggerCommands,
+    WorkflowCommands,
 };
 
 pub type Result<T> = std::result::Result<T, Box<dyn Error + Send + Sync>>;
@@ -68,6 +70,10 @@ pub async fn run_command(
         Commands::Workflows { command } => workflows::workflows(client, command, json_output).await,
         Commands::Runs { command } => runs::runs(client, command, json_output).await,
         Commands::Approvals { command } => approvals::approvals(client, command, json_output).await,
+        Commands::Notifications { command } => {
+            notifications::notifications(client, command, json_output).await
+        }
+        Commands::Gates { command } => gates::gates(client, command, json_output).await,
         Commands::Triggers { command } => triggers::triggers(client, command, json_output).await,
         Commands::Freeze { command } => freeze::freeze(client, command, json_output).await,
         Commands::Files { command } => files::files(client, command, json_output).await,
@@ -78,6 +84,9 @@ pub async fn run_command(
         Commands::Orchestrations { command } => {
             orchestrations::orchestrations(client, command, json_output).await
         }
+        Commands::Ingress { command } => ingress::ingress(client, command, json_output).await,
+        Commands::Audit { command } => audit::audit(client, command, json_output).await,
+        Commands::Records { command } => records::records(client, command, json_output).await,
         Commands::Missions { command } => missions::missions(client, command, json_output).await,
         Commands::Mcp {
             workflow_tools,
@@ -153,18 +162,23 @@ pub use workflows::workflows_scaffold;
 pub use workflows::workflows_test;
 mod approvals;
 mod artifacts;
+mod audit;
 mod files;
 mod freeze;
 mod functions;
+mod gates;
+mod ingress;
 pub use functions::functions_validate;
 mod console;
 mod execution_profiles;
 mod mcp;
 mod missions;
 mod notebooks;
+mod notifications;
 mod orchestrations;
 mod pipelines;
 mod providers;
+mod records;
 pub(crate) mod repl;
 mod repl_completer;
 mod replicas;

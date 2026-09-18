@@ -2,7 +2,10 @@ use super::*;
 
 use runinator_models::orchestration::{OrchestrationBinding, OrchestrationEventReduction};
 
-use runinator_ctl_core::cli::{OrchestrationAdapterCommands, OrchestrationCommands};
+use runinator_ctl_core::cli::{
+    OrchestrationAdapterCommands, OrchestrationCommands, OrchestrationDebugCommands,
+    OrchestrationOperationCommands,
+};
 
 const WATCH_INTERVAL_MINIMUM: u64 = 1;
 
@@ -52,6 +55,64 @@ pub(super) async fn orchestrations(
             }
             print_timeline(&events);
             Ok(())
+        }
+        OrchestrationCommands::Epochs { id } => {
+            print_serializable(&client.fetch_orchestration_epochs(*id).await?, json_output)
+        }
+        OrchestrationCommands::Commands { id } => print_serializable(
+            &client.fetch_orchestration_commands(*id).await?,
+            json_output,
+        ),
+        OrchestrationCommands::Evidence { id } => print_serializable(
+            &client.fetch_orchestration_evidence(*id).await?,
+            json_output,
+        ),
+        OrchestrationCommands::Workspaces { id } => print_serializable(
+            &client.fetch_orchestration_workspaces(*id).await?,
+            json_output,
+        ),
+        OrchestrationCommands::Operations { command } => {
+            let value = match command {
+                OrchestrationOperationCommands::List { id } => {
+                    client.fetch_orchestration_operations(*id).await?
+                }
+                OrchestrationOperationCommands::Resolve {
+                    id,
+                    operation_id,
+                    resolution,
+                    reason,
+                    receipt,
+                } => {
+                    let receipt = receipt.as_deref().map(params::load_json_file).transpose()?;
+                    client
+                        .resolve_orchestration_operation(
+                            *id,
+                            *operation_id,
+                            resolution.as_str(),
+                            reason,
+                            receipt,
+                        )
+                        .await?
+                }
+            };
+            print_value(&value, json_output)
+        }
+        OrchestrationCommands::Debug { command } => {
+            let value = match command {
+                OrchestrationDebugCommands::Show { pipeline } => {
+                    client.fetch_orchestration_debug(*pipeline).await?
+                }
+                OrchestrationDebugCommands::Pause { pipeline } => {
+                    client.set_orchestration_debug(*pipeline, true, 0).await?
+                }
+                OrchestrationDebugCommands::Resume { pipeline } => {
+                    client.set_orchestration_debug(*pipeline, false, 0).await?
+                }
+                OrchestrationDebugCommands::Step { pipeline } => {
+                    client.set_orchestration_debug(*pipeline, true, 1).await?
+                }
+            };
+            print_value(&value, json_output)
         }
         OrchestrationCommands::Watch { id, interval } => {
             let interval = Duration::from_secs((*interval).max(WATCH_INTERVAL_MINIMUM));
@@ -238,6 +299,14 @@ async fn orchestration_adapters(
             );
             Ok(())
         }
+        OrchestrationAdapterCommands::Summaries => {
+            let value = client.fetch_orchestration_adapter_summaries().await?;
+            print_value(&value, json_output)
+        }
+        OrchestrationAdapterCommands::Health => {
+            let value = client.fetch_orchestration_adapter_health().await?;
+            print_value(&value, json_output)
+        }
         OrchestrationAdapterCommands::Show { id } => {
             let adapter = client.fetch_orchestration_adapter(*id).await?;
             let revisions = client.fetch_orchestration_adapter_revisions(*id).await?;
@@ -391,6 +460,26 @@ async fn orchestration_adapters(
             print!("{}", output::value_table(&inspection)?);
             Ok(())
         }
+        OrchestrationAdapterCommands::InspectionSet { id, mode } => {
+            let value = client
+                .set_orchestration_adapter_inspection(*id, mode.as_str())
+                .await?;
+            print_value(&value, json_output)
+        }
+        OrchestrationAdapterCommands::DeliveryDecide {
+            id,
+            delivery_id,
+            decision,
+        } => {
+            let value = client
+                .decide_orchestration_adapter_delivery(*id, *delivery_id, decision.as_str())
+                .await?;
+            print_value(&value, json_output)
+        }
+        OrchestrationAdapterCommands::Release { id } => {
+            let value = client.release_orchestration_adapter_deliveries(*id).await?;
+            print_value(&value, json_output)
+        }
         OrchestrationAdapterCommands::Apply { file, id } => {
             let definition: Value = serde_json::from_slice(&fs::read(file)?)?;
             let adapter = client.apply_orchestration_adapter(*id, &definition).await?;
@@ -402,6 +491,24 @@ async fn orchestration_adapters(
                 adapter.name, adapter.id, adapter.current_revision
             );
             Ok(())
+        }
+        OrchestrationAdapterCommands::Validate { file } => {
+            let draft = params::load_json_file(file)?;
+            let value = client.validate_orchestration_adapter_draft(&draft).await?;
+            print_value(&value, json_output)
+        }
+        OrchestrationAdapterCommands::TestDraft { file, request } => {
+            let draft = params::load_json_file(file)?;
+            let request = params::load_json_file(request)?;
+            let headers = request.get("headers").cloned().unwrap_or_else(|| json!({}));
+            let body_base64 = request
+                .get("body_base64")
+                .and_then(Value::as_str)
+                .ok_or_else(|| err("draft test request requires body_base64"))?;
+            let value = client
+                .test_orchestration_adapter_draft(draft, headers, body_base64)
+                .await?;
+            print_value(&value, json_output)
         }
         OrchestrationAdapterCommands::Test { id, file } => {
             let sample: Value = serde_json::from_slice(&fs::read(file)?)?;
@@ -539,4 +646,16 @@ fn print_timeline(events: &[OrchestrationEventReduction]) {
             &rows,
         )
     );
+}
+
+fn print_serializable(value: &impl serde::Serialize, json_output: bool) -> Result<()> {
+    print_value(&serde_json::to_value(value)?.into(), json_output)
+}
+
+fn print_value(value: &Value, json_output: bool) -> Result<()> {
+    if json_output {
+        return output::json(value);
+    }
+    print!("{}", output::value_table(value)?);
+    Ok(())
 }

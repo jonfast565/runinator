@@ -31,6 +31,15 @@ fn lists_console_verbs_and_every_command_line_leaf() {
     assert!(names.contains(&"freeze calendar subscribe".to_string()));
     assert!(names.contains(&"files upload".to_string()));
     assert!(names.contains(&"notebooks cells run".to_string()));
+    assert!(names.contains(&"notifications policies apply".to_string()));
+    assert!(names.contains(&"gates open".to_string()));
+    assert!(names.contains(&"orchestrations operations resolve".to_string()));
+    assert!(names.contains(&"orchestrations adapters delivery-decide".to_string()));
+    assert!(names.contains(&"ingress external configure".to_string()));
+    assert!(names.contains(&"ingress broker renew".to_string()));
+    assert!(names.contains(&"ingress dead-letters list".to_string()));
+    assert!(names.contains(&"audit list".to_string()));
+    assert!(names.contains(&"records events".to_string()));
     assert!(entry("workspaces export").usage.contains("--filesystem"));
     assert!(entry("workspaces ls").usage.contains("--cursor"));
     assert!(names.contains(&"replicas list".to_string()));

@@ -69,3 +69,48 @@ runinatorctl notebooks cells delete CELL_UUID
 
 `workspaces delete --version` removes one immutable version; omitting it removes the workspace.
 Notebook source is read from a file so multiline REXRAP remains shell-safe and reproducible.
+
+## Notifications, gates, and orchestration recovery
+
+```sh
+runinatorctl notifications list --unread
+runinatorctl notifications read NOTIFICATION_UUID
+runinatorctl notifications read-all
+runinatorctl notifications action NOTIFICATION_UUID retry --input action.json
+runinatorctl notifications policies apply policy.json
+runinatorctl gates list --run-id RUN_UUID
+runinatorctl gates open GATE_UUID --reason "operator approved"
+
+runinatorctl orchestrations epochs ORCHESTRATION_UUID
+runinatorctl orchestrations commands ORCHESTRATION_UUID
+runinatorctl orchestrations evidence ORCHESTRATION_UUID
+runinatorctl orchestrations workspaces ORCHESTRATION_UUID
+runinatorctl orchestrations operations list ORCHESTRATION_UUID
+runinatorctl orchestrations operations resolve ORCHESTRATION_UUID OPERATION_UUID succeeded \
+  --reason "receipt verified" --receipt receipt.json
+runinatorctl orchestrations debug pause PIPELINE_UUID
+runinatorctl orchestrations debug step PIPELINE_UUID
+```
+
+Adapter diagnostics include `summaries`, `health`, draft `validate`/`test-draft`, inspection-mode
+changes, held-delivery decisions, and paused-delivery release beneath `orchestrations adapters`.
+
+## Ingress and operational evidence
+
+```sh
+runinatorctl ingress external list --state held
+runinatorctl ingress external configure workflow WORKFLOW_UUID review
+runinatorctl ingress external approve INBOX_UUID
+runinatorctl ingress external release workflow WORKFLOW_UUID
+runinatorctl ingress broker session organization --scope-id ORG_UUID
+runinatorctl ingress broker configure organization observe --scope-id ORG_UUID
+runinatorctl ingress broker renew organization --scope-id ORG_UUID
+runinatorctl ingress messages list --workflow-run RUN_UUID
+runinatorctl ingress dead-letters list --channel ingress
+runinatorctl audit list --action ingress.approve
+runinatorctl records external-items
+runinatorctl records events
+```
+
+Ingress decisions and orchestration operation resolutions remain subject to backend resource
+authorization. The CLI does not infer administrative access or bypass held-record state checks.

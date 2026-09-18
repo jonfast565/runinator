@@ -205,6 +205,16 @@ pub enum Commands {
         #[command(subcommand)]
         command: ApprovalCommands,
     },
+    /// Read and manage the notification inbox and delivery policies.
+    Notifications {
+        #[command(subcommand)]
+        command: NotificationCommands,
+    },
+    /// Inspect and decide workflow gates.
+    Gates {
+        #[command(subcommand)]
+        command: GateCommands,
+    },
     /// Inspect workflow triggers.
     Triggers {
         #[command(subcommand)]
@@ -245,6 +255,21 @@ pub enum Commands {
     Orchestrations {
         #[command(subcommand)]
         command: OrchestrationCommands,
+    },
+    /// Inspect and control external and broker ingress.
+    Ingress {
+        #[command(subcommand)]
+        command: IngressCommands,
+    },
+    /// Inspect the authorization audit trail.
+    Audit {
+        #[command(subcommand)]
+        command: AuditCommands,
+    },
+    /// Browse durable external-item and automation-event records.
+    Records {
+        #[command(subcommand)]
+        command: RecordCommands,
     },
     /// Start, inspect, and steer AI mission orchestrations. These commands are also exposed by
     /// `runinatorctl mcp`, giving Claude Code and Codex a narrow, auditable mission surface.
@@ -1415,6 +1440,24 @@ pub enum OrchestrationCommands {
     Show { id: Uuid },
     /// Show normalized-event reduction history for an instance.
     Timeline { id: Uuid },
+    /// Show durable orchestration epochs.
+    Epochs { id: Uuid },
+    /// Show durable commands issued to an orchestration.
+    Commands { id: Uuid },
+    /// Show evidence captured by an orchestration.
+    Evidence { id: Uuid },
+    /// Show workspace leases held by an orchestration.
+    Workspaces { id: Uuid },
+    /// Inspect and resolve external operations.
+    Operations {
+        #[command(subcommand)]
+        command: OrchestrationOperationCommands,
+    },
+    /// Inspect or control pipeline orchestration debugging.
+    Debug {
+        #[command(subcommand)]
+        command: OrchestrationDebugCommands,
+    },
     /// Refresh an instance until it reaches a terminal state.
     Watch {
         id: Uuid,
@@ -1509,6 +1552,10 @@ pub enum OrchestrationAdapterCommands {
     Kinds,
     /// List adapter instances in the selected organization.
     List,
+    /// Show fleet-wide adapter summaries.
+    Summaries,
+    /// Show adapter-host health.
+    Health,
     /// Show an adapter and its immutable revisions.
     Show { id: Uuid },
     /// Show durable checkpoint, schedule, and health for a polling adapter.
@@ -1521,6 +1568,21 @@ pub enum OrchestrationAdapterCommands {
     Attempts { id: Uuid },
     /// Show the adapter's ingress inspection gate.
     Inspection { id: Uuid },
+    /// Set the adapter ingress inspection mode.
+    InspectionSet {
+        id: Uuid,
+        #[arg(value_enum)]
+        mode: CliInspectionMode,
+    },
+    /// Approve, retry, or drop one held delivery.
+    DeliveryDecide {
+        id: Uuid,
+        delivery_id: Uuid,
+        #[arg(value_enum)]
+        decision: CliDeliveryDecision,
+    },
+    /// Release deliveries held while an adapter was paused.
+    Release { id: Uuid },
     /// Create or update an adapter from a JSON definition. Secret values must be stored Secret IDs.
     Apply {
         file: PathBuf,
@@ -1528,6 +1590,10 @@ pub enum OrchestrationAdapterCommands {
         #[arg(long)]
         id: Option<Uuid>,
     },
+    /// Validate an adapter draft without persisting it.
+    Validate { file: PathBuf },
+    /// Test a draft adapter against a captured request JSON document.
+    TestDraft { file: PathBuf, request: PathBuf },
     /// Verify and normalize a sample request described by a JSON file.
     Test { id: Uuid, file: PathBuf },
     /// Delete an adapter that has never admitted a binding.
@@ -1538,6 +1604,86 @@ pub enum OrchestrationAdapterCommands {
     Disable { id: Uuid },
     /// Reload filesystem-installed adapter plugins. Platform admin only.
     Reload,
+}
+
+#[derive(Debug, Clone, Copy, ValueEnum)]
+pub enum CliInspectionMode {
+    Disabled,
+    Paused,
+    Review,
+}
+
+impl CliInspectionMode {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Disabled => "disabled",
+            Self::Paused => "paused",
+            Self::Review => "review",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, ValueEnum)]
+pub enum CliDeliveryDecision {
+    Approve,
+    Retry,
+    Drop,
+}
+
+impl CliDeliveryDecision {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Approve => "approve",
+            Self::Retry => "retry",
+            Self::Drop => "drop",
+        }
+    }
+}
+
+#[derive(Debug, Subcommand)]
+pub enum OrchestrationOperationCommands {
+    /// List external operations for an orchestration.
+    List { id: Uuid },
+    /// Resolve an external operation from an operator receipt.
+    Resolve {
+        id: Uuid,
+        operation_id: Uuid,
+        #[arg(value_enum)]
+        resolution: CliOperationResolution,
+        #[arg(long)]
+        reason: String,
+        #[arg(long)]
+        receipt: Option<PathBuf>,
+    },
+}
+
+#[derive(Debug, Clone, Copy, ValueEnum)]
+pub enum CliOperationResolution {
+    Succeeded,
+    Failed,
+    Retry,
+}
+
+impl CliOperationResolution {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Succeeded => "succeeded",
+            Self::Failed => "failed",
+            Self::Retry => "retry",
+        }
+    }
+}
+
+#[derive(Debug, Subcommand)]
+pub enum OrchestrationDebugCommands {
+    /// Show the current debug control for a pipeline.
+    Show { pipeline: Uuid },
+    /// Pause orchestration processing for a pipeline.
+    Pause { pipeline: Uuid },
+    /// Resume orchestration processing for a pipeline.
+    Resume { pipeline: Uuid },
+    /// Process one orchestration step while paused.
+    Step { pipeline: Uuid },
 }
 
 /// CLI-facing decision for a pipeline run's open `inquire` pause.
@@ -1622,6 +1768,217 @@ pub enum ProviderCommands {
     List,
     /// Show one provider by name.
     Show { name: String },
+}
+
+#[derive(Debug, Subcommand)]
+pub enum NotificationCommands {
+    /// List inbox notifications.
+    List {
+        #[arg(long)]
+        unread: bool,
+        #[arg(long, default_value_t = 200)]
+        limit: i64,
+    },
+    /// Mark one notification read.
+    Read { id: Uuid },
+    /// Mark every notification read.
+    ReadAll,
+    /// Dismiss one notification.
+    Delete { id: Uuid },
+    /// Apply one notification interaction action.
+    Action {
+        id: Uuid,
+        action: String,
+        #[arg(long)]
+        input: Option<PathBuf>,
+    },
+    /// Manage notification policies.
+    Policies {
+        #[command(subcommand)]
+        command: NotificationPolicyCommands,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+pub enum NotificationPolicyCommands {
+    /// List notification policies, optionally for one workflow.
+    List {
+        #[arg(long)]
+        workflow: Option<Uuid>,
+    },
+    /// Create or update a policy from JSON.
+    Apply {
+        file: PathBuf,
+        #[arg(long)]
+        id: Option<Uuid>,
+    },
+    /// Delete a notification policy.
+    Delete { id: Uuid },
+}
+
+#[derive(Debug, Subcommand)]
+pub enum GateCommands {
+    /// List gates, optionally filtered by run and status.
+    List {
+        #[arg(long)]
+        run_id: Option<Uuid>,
+        #[arg(long)]
+        status: Option<String>,
+    },
+    /// Open a gate with an optional decision reason.
+    Open {
+        id: Uuid,
+        #[arg(long)]
+        reason: Option<String>,
+    },
+    /// Close a gate with an optional decision reason.
+    Close {
+        id: Uuid,
+        #[arg(long)]
+        reason: Option<String>,
+    },
+    /// Delete a gate record.
+    Delete { id: Uuid },
+}
+
+#[derive(Debug, Subcommand)]
+pub enum IngressCommands {
+    /// Inspect and control direct external ingress.
+    External {
+        #[command(subcommand)]
+        command: ExternalIngressCommands,
+    },
+    /// Inspect and control broker ingress.
+    Broker {
+        #[command(subcommand)]
+        command: BrokerIngressCommands,
+    },
+    /// Inspect broker message traces.
+    Messages {
+        #[command(subcommand)]
+        command: BrokerMessageCommands,
+    },
+    /// Inspect broker dead letters.
+    DeadLetters {
+        #[command(subcommand)]
+        command: DeadLetterCommands,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+pub enum ExternalIngressCommands {
+    /// List direct ingress inbox records.
+    List {
+        #[arg(long)]
+        target_kind: Option<String>,
+        #[arg(long)]
+        target_id: Option<Uuid>,
+        #[arg(long)]
+        state: Option<String>,
+        #[arg(long, default_value_t = 200)]
+        limit: i64,
+    },
+    /// Set a workflow or pipeline ingress gate mode.
+    Configure {
+        target_kind: String,
+        target_id: Uuid,
+        #[arg(value_enum)]
+        mode: CliInspectionMode,
+    },
+    /// Approve one held inbox record.
+    Approve { id: Uuid },
+    /// Drop one held inbox record.
+    Drop { id: Uuid },
+    /// Release paused records for a workflow or pipeline.
+    Release {
+        target_kind: String,
+        target_id: Uuid,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+pub enum BrokerIngressCommands {
+    /// List broker ingress inbox records.
+    List {
+        #[arg(long)]
+        state: Option<String>,
+        #[arg(long)]
+        channel: Option<String>,
+        #[arg(long, default_value_t = 200)]
+        limit: i64,
+    },
+    /// Show the broker ingress session for a scope.
+    Session {
+        scope_kind: String,
+        #[arg(long)]
+        scope_id: Option<Uuid>,
+    },
+    /// Configure a broker ingress session.
+    Configure {
+        scope_kind: String,
+        mode: String,
+        #[arg(long)]
+        scope_id: Option<Uuid>,
+    },
+    /// Renew a broker ingress session lease.
+    Renew {
+        scope_kind: String,
+        #[arg(long)]
+        scope_id: Option<Uuid>,
+    },
+    /// Approve one held broker inbox record.
+    Approve { id: Uuid },
+    /// Drop one held broker inbox record.
+    Drop { id: Uuid },
+}
+
+#[derive(Debug, Subcommand)]
+pub enum BrokerMessageCommands {
+    /// List broker messages with optional correlation filters.
+    List {
+        #[arg(long)]
+        workflow_run: Option<Uuid>,
+        #[arg(long)]
+        pipeline_run: Option<Uuid>,
+        #[arg(long)]
+        adapter: Option<Uuid>,
+        #[arg(long)]
+        channel: Option<String>,
+        #[arg(long, default_value_t = 250)]
+        limit: i64,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+pub enum DeadLetterCommands {
+    /// List dead letters.
+    List {
+        #[arg(long)]
+        channel: Option<String>,
+        #[arg(long, default_value_t = 200)]
+        limit: i64,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+pub enum AuditCommands {
+    /// List audit records.
+    List {
+        #[arg(long)]
+        actor: Option<Uuid>,
+        #[arg(long)]
+        action: Option<String>,
+        #[arg(long, default_value_t = 200)]
+        limit: i64,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+pub enum RecordCommands {
+    /// List external-item records.
+    ExternalItems,
+    /// List automation-event records.
+    Events,
 }
 
 #[derive(Debug, Clone, Subcommand)]
