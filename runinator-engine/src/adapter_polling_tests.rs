@@ -83,3 +83,41 @@ async fn injected_circuit_failure_keeps_its_cooldown() {
     assert_eq!(failure.retry_after_seconds, 123);
     assert_eq!(failure.message, "adapter-host circuit is open");
 }
+
+// a first poll over a busy source walks every item, so an operator needs a way to buy it more time
+// than the incremental polls that follow ever use.
+#[test]
+fn an_adapter_without_configuration_keeps_the_default_timeout() {
+    let configuration = runinator_models::value::Value::from(serde_json::json!({}));
+    assert_eq!(timeout_seconds(&configuration), DEFAULT_TIMEOUT_SECONDS);
+}
+
+#[test]
+fn a_configured_timeout_is_honoured() {
+    let configuration =
+        runinator_models::value::Value::from(serde_json::json!({"poll_timeout_seconds": 600}));
+    assert_eq!(timeout_seconds(&configuration), 600);
+}
+
+#[test]
+fn a_timeout_beyond_the_ceiling_is_clamped() {
+    let configuration =
+        runinator_models::value::Value::from(serde_json::json!({"poll_timeout_seconds": 86_400}));
+    assert_eq!(timeout_seconds(&configuration), MAX_TIMEOUT_SECONDS);
+}
+
+// zero or a negative would otherwise dispatch work that can never finish.
+#[test]
+fn a_nonsense_timeout_is_clamped_to_the_floor() {
+    let configuration =
+        runinator_models::value::Value::from(serde_json::json!({"poll_timeout_seconds": 0}));
+    assert_eq!(timeout_seconds(&configuration), MIN_TIMEOUT_SECONDS);
+}
+
+// the interval and the timeout are independent knobs; setting one must not move the other.
+#[test]
+fn the_interval_is_unaffected_by_the_timeout() {
+    let configuration =
+        runinator_models::value::Value::from(serde_json::json!({"poll_timeout_seconds": 600}));
+    assert_eq!(interval_seconds(&configuration), DEFAULT_RETRY_SECONDS);
+}

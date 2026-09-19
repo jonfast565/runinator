@@ -312,7 +312,9 @@ profile-backed polling is dispatched to a matching worker (the command center de
 `runner=desktop`) and uses the authenticated CLI session collected in that profile. Jira polling
 remains a server-side HTTP poller and requires `instance_id`, `base_url`, `email`, and `jql` plus an
 `api_token` Secret binding. Both adapters accept `poll_interval_seconds` from 30 through 3600,
-defaulting to 60.
+defaulting to 60, and `poll_timeout_seconds` from 30 through 900, defaulting to 120. Raise the
+timeout when an adapter's first poll must walk a large backlog; incremental polls that follow it
+finish well inside the default.
 
 Outbound workflows can use `github_cli.api`, `github_cli.graphql`, or the allowlisted
 `github_cli.run` command families (`pr`, `issue`, `run`, `workflow`, `release`, `repo`, and

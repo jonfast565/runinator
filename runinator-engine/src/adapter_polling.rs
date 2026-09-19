@@ -38,12 +38,26 @@ const DEFAULT_RETRY_SECONDS: i64 = 60;
 const MIN_INTERVAL_SECONDS: i64 = 30;
 const MAX_INTERVAL_SECONDS: i64 = 3_600;
 
+/// A cold poll walks every item the source has, so the first pass over a busy repository costs far
+/// more than the incremental passes that follow. The ceiling is generous for that reason.
+const DEFAULT_TIMEOUT_SECONDS: i64 = 120;
+const MIN_TIMEOUT_SECONDS: i64 = 30;
+const MAX_TIMEOUT_SECONDS: i64 = 900;
+
 fn interval_seconds(configuration: &runinator_models::value::Value) -> i64 {
     configuration
         .get("poll_interval_seconds")
         .and_then(|value| value.as_i64())
         .unwrap_or(DEFAULT_RETRY_SECONDS)
         .clamp(MIN_INTERVAL_SECONDS, MAX_INTERVAL_SECONDS)
+}
+
+fn timeout_seconds(configuration: &runinator_models::value::Value) -> i64 {
+    configuration
+        .get("poll_timeout_seconds")
+        .and_then(|value| value.as_i64())
+        .unwrap_or(DEFAULT_TIMEOUT_SECONDS)
+        .clamp(MIN_TIMEOUT_SECONDS, MAX_TIMEOUT_SECONDS)
 }
 
 async fn poll_one<T: BackgroundEngineStore>(
@@ -453,7 +467,7 @@ pub async fn create_poll_attempt<
             input: Value::from(
                 serde_json::json!({"kind":adapter.kind,"required_scopes":required_scopes,"request":request}),
             ),
-            timeout_seconds: Some(120),
+            timeout_seconds: Some(timeout_seconds(&revision.configuration)),
             retry: WorkflowRetry::default(),
             tags: Vec::new(),
             required_labels: required_labels.clone(),
